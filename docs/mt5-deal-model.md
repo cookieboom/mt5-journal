@@ -124,35 +124,37 @@ would then produce one nonsense record.
 seen, with the position_id in the message. Write a test asserting it raises.
 An honest crash beats a silently wrong trade.
 
-### Trap 5 — `DEAL_ENTRY_OUT_BY` — LIVE on this account
+### Trap 5 — `DEAL_ENTRY_OUT_BY` — possible, but never happened here
 
 "Close by" closes two opposite positions against each other in one execution.
-One deal, two `position_id`s involved (`position_by_id` on the order). Profit
-accounting is split across both, and the closing price on the OUT_BY side is not
-a market price you actually got.
+One deal, two `position_id`s involved. Profit accounting is split across both,
+and the closing price on the OUT_BY side is not a market price you actually got.
 
-**This account is hedging, so Close-by is available in the terminal UI and may
-appear in history.**
+This account is hedging, so the terminal offers Close-by. **But
+`SELECT DISTINCT entry FROM deals_raw` over all 140 deals returns `[0, 1]` —
+OUT_BY has never occurred.**
 
-→ First: check whether it *ever happened* (`SELECT DISTINCT entry FROM deals_raw`).
-  - **Not present** → `raise NotImplementedError` on encounter, test that it
-    raises, move on. Do not build for a case you have never triggered.
-  - **Present** → it must be implemented, and it needs its own fixture.
-→ Either way, never let an OUT_BY deal fall through the normal OUT path. Its
-volume and price will look plausible and quietly corrupt the VWAP exit.
+→ Decision: `raise NotImplementedError` on `entry == 3`, naming the position_id.
+Write a test asserting it raises. Do not build for a case that has never been
+triggered — but never let it fall through the normal OUT path either, because
+its volume and price look plausible and would quietly corrupt the VWAP exit.
+→ If it ever fires, that raise is your signal to come back and implement it.
 
 ### Trap 12 — Broker symbol suffixes
 
-This broker appends `c` (cent account): the tradeable symbol is `XAUUSDc`, and
-`symbol_info_tick("XAUUSD")` is a different thing — possibly `None`, possibly a
-non-tradeable feed. Other brokers use `.m`, `.raw`, `_ecn`, `#`, `-`.
+This broker appends `c` (cent account): the tradeable symbols are `XAUUSDc`,
+`BTCUSDc`, `EURUSDc`. `symbol_info_tick("XAUUSD")` returns nothing — the
+unsuffixed symbol **does not exist on this server**.
 
 → Two columns, always: `symbol` = verbatim from MT5, used for every MT5 call and
 stored in `_raw`. `symbol_base` = normalised, used for grouping in analytics.
-→ Normalisation lives in exactly one place, `domain/symbols.py`. It must be a
-**pure lookup + regex**, not a guess: strip a known suffix set, and if a symbol
-does not match, keep it verbatim and log once. Never silently mangle `USDCAD`
-into `USDCA` by stripping a trailing `d`. Write the test for that case first.
+→ Normalisation lives in exactly one place, `domain/symbols.py`.
+→ **The suffix set is `{"c"}` and nothing else.** Do not speculatively add
+`.m`, `.raw`, `_ecn`, `#`, `-` "just in case" — every extra rule is an extra way
+to silently mangle a symbol, for zero present benefit. Mention them in a comment.
+Widen the set only when a broker that uses them actually appears.
+→ Guard: strip only if the remainder is ≥ 3 characters. No match → return
+verbatim and log once. Test that `USDCAD` → `USDCAD`, unchanged.
 → Reason this matters later: if you ever move from this cent account to a
 standard one, `XAUUSDc` and `XAUUSD` must merge into one history, not two.
 
@@ -168,7 +170,29 @@ net_profit / risk_amount` is **unit-free and unaffected**. This is why analytics
 should lead with R and treat absolute P&L as secondary.
 → Verify once by hand: take one closed trade, compute expected risk in USC from
 `tick_size`/`tick_value`, and compare to what the code produced. Do this before
-trusting a single R number.
+trusting a single R number. See §7 for the reference figure.
+
+### Trap 14 — `currency_profit` is NOT the unit of `tick_value`
+
+Measured on this account: `XAUUSDc` reports `currency_profit = "USD"` while the
+account currency is `USC`. Read carelessly, `tick_value = 0.1` looks like $0.10.
+It is not. It is **0.1 US cents**.
+
+| Field | What it actually is |
+|---|---|
+| `SYMBOL_CURRENCY_PROFIT` | The symbol's **quote currency** — the "USD" in XAUUSD. Descriptive metadata about the instrument. |
+| `SYMBOL_TRADE_TICK_VALUE` | Value of one `tick_size` move, **in the deposit currency** — i.e. `account_info().currency`. MT5 has already done the conversion. |
+
+→ **Rule: the unit of `tick_value`, and therefore of `risk_amount`, is always
+`accounts.currency`. Never `symbol_specs.currency_profit`.** Store
+`currency_profit` for reference, but never label a money value with it.
+→ Cross-check that the numbers cohere before trusting them:
+`contract_size = 1.0` (1 lot = 1 oz), a `0.001` price move on 1 oz = $0.001
+= 0.1 cents = `tick_value` of `0.1` USC. ✓ Consistent.
+→ Caveat to note and move on: MT5 converts at *fetch* time, not at trade time.
+For a personal journal on a USD-quoted symbol with a USD-derived account
+currency, this error is nil. It would matter on e.g. EURGBP. Do not pretend it
+is exact; just record `symbol_specs.fetched_at`.
 
 ### Trap 6 — SL/TP: `0` and `NULL` are not the same thing
 
@@ -325,29 +349,46 @@ Confirmed by running the doctor script against the live bridge.
 
 | Fact | Value | Consequence |
 |---|---|---|
-| Adapter | `siliconmetatrader5`, `localhost:8001` | — |
-| `margin_mode` | **2 = RETAIL_HEDGING** | Trap 4 (INOUT) cannot occur → raise. Trap 5 (OUT_BY) CAN occur → must handle. |
+| Adapter | `siliconmetatrader5` v1.2.3, `localhost:8001` | — |
+| `margin_mode` | **2 = RETAIL_HEDGING** | Trap 4 (INOUT) cannot occur → raise. |
 | Account currency | **`USC` (US cents)** | All money columns are cents. R-multiple is unit-free — prefer it. |
-| Balance at measurement | 6047.22 USC (≈ $60.47) | Small account. Position sizing will be in 0.01 lots. |
-| Symbol suffix | **`c`** — trades `XAUUSDc` | See trap 12. |
-| Total deals in history | 140 | ≈ 60–70 trades. See §7. |
+| Balance at measurement | 6047.22 USC (≈ $60.47) | Small account, 0.01-lot sizing. |
+| **`server_utc_offset_s`** | **0 — CONFIRMED** | Measured on `XAUUSDc` with a 0-second-old tick. Broker server clock **is UTC**. Session analysis needs no conversion. WIB = UTC+7 for display only. **Still re-measure every sync** in case the broker introduces DST. |
+| `entry` values in history | **`[0, 1]` only** | IN and OUT only. **OUT_BY never occurred in 140 deals** → raise, do not implement (trap 5). INOUT impossible on hedging → raise (trap 4). Reconstruction is the simple path. |
+| Symbols traded | `XAUUSDc`, `BTCUSDc`, `EURUSDc` | Only suffix in use is **`c`**. `symbol_info_tick("XAUUSD")` returns nothing — the unsuffixed symbol does not exist here. |
+| `XAUUSDc` specs | `tick_size=0.001`, `tick_value=0.1`, `contract_size=1.0`, `currency_profit=USD` | 1 lot = 1 oz (not 100). **`tick_value` is in USC, not USD** — see trap 14. |
+| Total deals | 140 | ≈ 60–70 trades. See §8. |
 | `TradeDeal` fields | `ticket, order, time, time_msc, type, entry, magic, position_id, reason, volume, price, commission, swap, profit, fee, symbol, comment, external_id` | **No `sl`/`tp` — trap 6 confirmed.** `fee` exists and must be summed (trap 9). |
 
 Still open:
 
-- [ ] `server_utc_offset_s` — first measurement said 0, but it used `XAUUSD`
-      (wrong symbol; this account trades `XAUUSDc`). **Re-measure with the
-      correct symbol, during an open session, after `symbol_select(sym, True)`.**
-      0 is plausible (some brokers run UTC) but is not yet trusted. Until
-      confirmed, do not ship session/hour analytics.
-- [ ] Does `entry == 3` (OUT_BY) actually appear in this account's history?
-      If yes, trap 5 must be implemented, not raised.
-- [ ] `trade_tick_value` for `XAUUSDc` — expected to be denominated in USC.
-      Verify `risk_amount` against one hand-computed trade before trusting R.
 - [ ] Standalone commission deals, or folded into the trade deal?
+- [ ] `BTCUSDc` and `EURUSDc` specs — different tick_size/tick_value/contract_size
+      from gold. Must be fetched per symbol, never reused.
+- [ ] `BTCUSDc` trades weekends; forex does not. Session/day analytics must not
+      assume a 5-day week across all symbols.
 - [ ] `MaxBars` actually in effect in the container.
 
-## 7. Sample-size honesty
+## 7. Risk calculation — the reference figure
+
+Verified by hand against the specs above. Any code that disagrees is wrong.
+
+```
+Entry 4035.000, SL 4030.000, volume 0.10 lot, XAUUSDc
+
+ticks       = |4035.000 - 4030.000| / tick_size(0.001)  = 5000
+risk_amount = ticks × tick_value(0.1) × volume(0.10)    = 50 USC  (= $0.50)
+% of 6047.22 USC balance                                = 0.83%
+```
+
+If `risk_amount` comes out as `0.50` you have wrongly assumed USD.
+If it comes out as `5000` you forgot `tick_value`.
+If it comes out as `5.0` you forgot `volume`.
+
+**This is a required test case in `tests/test_risk.py`.** Write it before the
+risk code exists.
+
+## 8. Sample-size honesty
 
 140 deals ≈ 60–70 trades. At that size, win rate has a margin of error of roughly
 ±12 percentage points, and per-session or per-hour breakdowns will be single

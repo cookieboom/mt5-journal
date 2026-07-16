@@ -8,16 +8,25 @@ Single user, local-only, macOS (Apple Silicon M4).
 
 - Adapter: `siliconmetatrader5` bridge, Docker container on `localhost:8001`.
 - `margin_mode = 2` → **HEDGING**. One order = one position. `position_id` maps
-  cleanly to one trade. `DEAL_ENTRY_INOUT` will not occur — raise if it does.
-  `DEAL_ENTRY_OUT_BY` (Close-by) CAN occur — handle per docs.
+  cleanly to one trade. Only `entry` values `0` (IN) and `1` (OUT) exist in this
+  account's history — `INOUT` and `OUT_BY` have never occurred. Raise on both.
+- **`server_utc_offset_s = 0` — confirmed.** Broker server clock is UTC. Session
+  analytics need no conversion. WIB = UTC+7, display only. Re-measure each sync
+  anyway.
 - Account currency is **`USC` (US cents)**. Every `profit`/`commission`/`swap`/
-  `risk_amount` in this DB is in cents. Never print a bare number as "$".
-  Always render the currency code. R-multiple is a ratio and therefore unit-free
-  — prefer it over absolute P&L everywhere in analytics.
-- Broker uses a **`c` suffix**: the traded symbol is `XAUUSDc`, not `XAUUSD`.
-  Store the raw symbol in `_raw` tables; group analytics on `symbol_base`.
+  `tick_value`/`risk_amount` is in cents. Never print a bare number as "$".
+  R-multiple is a ratio and therefore unit-free — prefer it over absolute P&L
+  everywhere in analytics.
+- **`symbol_specs.currency_profit` is the symbol's quote currency, NOT the unit
+  of `tick_value`.** `XAUUSDc` reports `currency_profit = USD` while values are
+  in USC. The unit of any money figure is always `accounts.currency`.
+- Symbols traded: `XAUUSDc`, `BTCUSDc`, `EURUSDc`. The only suffix in use is
+  `c`; the unsuffixed symbols do not exist on this server. `XAUUSDc`:
+  `tick_size=0.001`, `tick_value=0.1`, `contract_size=1.0` (1 lot = 1 oz).
 - Several positions on the same symbol can be open at once (hedging). Analytics
   must not assume trades are non-overlapping.
+- ~140 deals ≈ 65 trades. Every reported statistic must show `n`, and buckets
+  with `n < 20` must be suppressed or greyed. See docs §8.
 
 ## Hard rules
 
@@ -49,7 +58,14 @@ Single user, local-only, macOS (Apple Silicon M4).
     login.** Fixtures must be sanitised (login → 0, broker name stripped).
 11. **Symbols are stored twice.** `symbol` = exactly what MT5 said (`XAUUSDc`);
     `symbol_base` = normalised (`XAUUSD`). Query MT5 with `symbol`. Group stats
-    by `symbol_base`. Normalisation lives in one function, `domain/symbols.py`.
+    by `symbol_base`. Normalisation lives in one function, `domain/symbols.py`,
+    and its suffix set is `{"c"}` — do not add suffixes speculatively.
+12. **No MT5 constants outside `adapter/live.py` either.** Rule 1 covers the
+    import; this covers the values. Timeframes cross the Protocol as strings
+    (`"M15"`), matching `candles.timeframe` — `live.py` maps `"M15"` →
+    `mt5.TIMEFRAME_M15`. Deal enums are our own `IntEnum`s in `adapter/base.py`
+    (`DealType`, `DealEntry`, `DealReason`); `live.py` asserts at init that they
+    match the bridge's values. `domain/` must never contain a magic `3`.
 
 ## Commands
 
