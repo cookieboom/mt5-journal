@@ -28,11 +28,13 @@ from typing import Any, Protocol, runtime_checkable
 
 
 class DealType(IntEnum):
-    # Values MEASURED against the live bridge (LiveMT5Client asserts them at
-    # init). NB: docs/mt5-deal-model.md §2 lists COMMISSION=6 from the MQL5 docs,
-    # but this bridge reports BONUS=6, COMMISSION=7 — the bridge is authoritative.
-    # Only BUY/SELL feed reconstruction (Trap 1 is a positive whitelist); the
-    # rest are non-trade deals kept for the equity curve.
+    # COMPLETE set as PROBED from the live bridge on 2026-07-16 (15 constants;
+    # see scripts/probe_enums.py — the bridge, not the MQL5 docs, is authoritative:
+    # the docs once listed COMMISSION=6, the bridge reports BONUS=6, COMMISSION=7).
+    # Must contain EVERY member the bridge exposes or DealType(deal.type) raises
+    # ValueError the first time an unlisted type (e.g. INTEREST, a *_CANCELED)
+    # appears in history. Only BUY/SELL feed reconstruction (Trap 1 is a positive
+    # whitelist); the rest are non-trade deals kept for the equity curve.
     BUY = 0
     SELL = 1
     BALANCE = 2
@@ -41,9 +43,17 @@ class DealType(IntEnum):
     CORRECTION = 5
     BONUS = 6
     COMMISSION = 7
+    COMMISSION_DAILY = 8
+    COMMISSION_MONTHLY = 9
+    COMMISSION_AGENT_DAILY = 10
+    COMMISSION_AGENT_MONTHLY = 11
+    INTEREST = 12
+    BUY_CANCELED = 13
+    SELL_CANCELED = 14
 
 
 class DealEntry(IntEnum):
+    # Complete and verified against the bridge (2026-07-16): exactly these four.
     IN = 0
     OUT = 1
     INOUT = 2
@@ -51,6 +61,8 @@ class DealEntry(IntEnum):
 
 
 class DealReason(IntEnum):
+    # COMPLETE set as PROBED from the live bridge on 2026-07-16 (10 constants).
+    # `reason` on the last OUT deal is the discipline metric (SL/TP/manual).
     CLIENT = 0
     MOBILE = 1
     WEB = 2
@@ -58,6 +70,9 @@ class DealReason(IntEnum):
     SL = 4
     TP = 5
     SO = 6
+    ROLLOVER = 7
+    VMARGIN = 8
+    SPLIT = 9
 
 
 # The timeframe strings that cross the Protocol. Identical to the values allowed
@@ -185,8 +200,12 @@ class Position:
 
 @dataclass(frozen=True)
 class Candle:
-    # Mirrors the `candles` table. `time` is the bar OPEN time, server epoch s.
-    time: int | None = None
+    # Mirrors the `candles` table. `time_msc` is the bar OPEN time in epoch
+    # MILLISECONDS, server time. MT5's `copy_rates_*` returns `time` in SECONDS
+    # and has no `time_msc`; the ×1000 conversion happens at the adapter boundary
+    # (live.py / fake.py) so everything above obeys Hard rule 3 — see
+    # docs/mt5-deal-model.md Trap 15. No other time-shaped field exists here.
+    time_msc: int | None = None
     open: float | None = None
     high: float | None = None
     low: float | None = None

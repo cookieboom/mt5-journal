@@ -88,7 +88,21 @@ class FakeMT5Client:
         self, symbol: str, timeframe: str, date_from: Any, date_to: Any
     ) -> list[Candle]:
         rows = self._load("rates", {}).get(f"{symbol}:{timeframe}", [])
-        return [_build(Candle, r) for r in rows]
+        # Fixtures store raw MT5 `time` in SECONDS (mirroring what the bridge
+        # returns); convert ×1000 at the boundary just like live.py (Trap 15).
+        return [
+            Candle(
+                time_msc=int(r["time"]) * 1000,
+                open=r.get("open"),
+                high=r.get("high"),
+                low=r.get("low"),
+                close=r.get("close"),
+                tick_volume=r.get("tick_volume"),
+                spread=r.get("spread"),
+                real_volume=r.get("real_volume"),
+            )
+            for r in rows
+        ]
 
     def history_deals_get(self, date_from: Any, date_to: Any) -> list[Deal]:
         return [_build(Deal, d) for d in self._load("deals", [])]

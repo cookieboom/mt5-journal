@@ -53,33 +53,50 @@ price_stoplimit, symbol, comment, external_id
 
 Has `sl` and `tp`. This is where `sl_initial` comes from — with a caveat (trap 6).
 
-### Enums you will need
+### Enums — do not copy these from memory. Probe the bridge.
+
+**This section was wrong once already.** It originally listed
+`DEAL_TYPE_COMMISSION = 6`. The live bridge reports `BONUS = 6, COMMISSION = 7`,
+and the bridge is authoritative. The `live.py` enum assertion caught it. That is
+the whole reason CLAUDE.md rule 12 exists.
+
+Generate the enums from ground truth, never from this document:
 
 ```python
-DEAL_TYPE_BUY = 0; DEAL_TYPE_SELL = 1
-DEAL_TYPE_BALANCE = 2; DEAL_TYPE_CREDIT = 3; DEAL_TYPE_CHARGE = 4
-DEAL_TYPE_CORRECTION = 5; DEAL_TYPE_COMMISSION = 6  # ...and more, all non-trades
-
-DEAL_ENTRY_IN = 0      # opening
-DEAL_ENTRY_OUT = 1     # closing
-DEAL_ENTRY_INOUT = 2   # reversal: closes and opens in one execution
-DEAL_ENTRY_OUT_BY = 3  # closed by an opposite position (hedging accounts)
-
-DEAL_REASON_CLIENT = 0   # desktop terminal
-DEAL_REASON_MOBILE = 1
-DEAL_REASON_WEB    = 2
-DEAL_REASON_EXPERT = 3   # EA
-DEAL_REASON_SL     = 4   # hit stop loss
-DEAL_REASON_TP     = 5   # hit take profit
-DEAL_REASON_SO     = 6   # stop out (margin call)
+{a: getattr(mt5, a) for a in dir(mt5) if a.startswith("DEAL_TYPE_")}
+{a: getattr(mt5, a) for a in dir(mt5) if a.startswith("DEAL_ENTRY_")}
+{a: getattr(mt5, a) for a in dir(mt5) if a.startswith("DEAL_REASON_")}
+{a: getattr(mt5, a) for a in dir(mt5) if a.startswith("ORDER_")}
 ```
+
+Measured on this bridge (2026-07-16), partial — **complete via the probe above**:
+
+```
+DEAL_TYPE_BUY = 0    DEAL_TYPE_SELL = 1        DEAL_TYPE_BALANCE = 2
+DEAL_TYPE_CREDIT = 3 DEAL_TYPE_CHARGE = 4      DEAL_TYPE_CORRECTION = 5
+DEAL_TYPE_BONUS = 6  DEAL_TYPE_COMMISSION = 7  ... continues past 7
+
+DEAL_ENTRY_IN = 0    DEAL_ENTRY_OUT = 1
+DEAL_ENTRY_INOUT = 2 DEAL_ENTRY_OUT_BY = 3     (verified, complete)
+
+DEAL_REASON_CLIENT = 0  MOBILE = 1  WEB = 2  EXPERT = 3
+DEAL_REASON_SL = 4      TP = 5      SO = 6   ... continues past 6
+```
+
+Rules that follow from this:
+
+→ `DealType` and `DealReason` must contain **every** member the bridge exposes.
+An incomplete `IntEnum` turns `DealType(deal.type)` into a `ValueError` the first
+time a rollover, dividend, or agent-commission deal appears in history.
+→ The `live.py` assertion should **assert when the bridge exposes the constant,
+and log a warning when it does not** — an unexposed constant is unverifiable, not
+a failure, and must not stop init.
+→ Reconstruction stays a **positive whitelist** on `BUY`/`SELL` (trap 1), so new
+deal types are ignored safely regardless. The enums exist for honest labelling
+and for the equity curve, not for filtering.
 
 `reason` on the **last OUT deal** is your free discipline metric: it tells you
 whether you hit TP, hit SL, or bailed out manually. Do not throw it away.
-
-> **VERIFY**: enum integer values above are from the MQL5 docs and should be
-> stable, but confirm against `mt5.DEAL_REASON_SL` etc. rather than hardcoding
-> the literals. Import them from the adapter.
 
 ---
 
@@ -140,60 +157,6 @@ triggered — but never let it fall through the normal OUT path either, because
 its volume and price look plausible and would quietly corrupt the VWAP exit.
 → If it ever fires, that raise is your signal to come back and implement it.
 
-### Trap 12 — Broker symbol suffixes
-
-This broker appends `c` (cent account): the tradeable symbols are `XAUUSDc`,
-`BTCUSDc`, `EURUSDc`. `symbol_info_tick("XAUUSD")` returns nothing — the
-unsuffixed symbol **does not exist on this server**.
-
-→ Two columns, always: `symbol` = verbatim from MT5, used for every MT5 call and
-stored in `_raw`. `symbol_base` = normalised, used for grouping in analytics.
-→ Normalisation lives in exactly one place, `domain/symbols.py`.
-→ **The suffix set is `{"c"}` and nothing else.** Do not speculatively add
-`.m`, `.raw`, `_ecn`, `#`, `-` "just in case" — every extra rule is an extra way
-to silently mangle a symbol, for zero present benefit. Mention them in a comment.
-Widen the set only when a broker that uses them actually appears.
-→ Guard: strip only if the remainder is ≥ 3 characters. No match → return
-verbatim and log once. Test that `USDCAD` → `USDCAD`, unchanged.
-→ Reason this matters later: if you ever move from this cent account to a
-standard one, `XAUUSDc` and `XAUUSD` must merge into one history, not two.
-
-### Trap 13 — Cent accounts
-
-Account currency `USC` = US cents. `profit`, `commission`, `swap`, `fee`, and
-`trade_tick_value` are all denominated in it. A balance of `6047.22` is $60.47.
-
-→ Never format a money column with a `$`. Always print the code from
-`accounts.currency`.
-→ `risk_amount` will be in USC too — which means `r_multiple =
-net_profit / risk_amount` is **unit-free and unaffected**. This is why analytics
-should lead with R and treat absolute P&L as secondary.
-→ Verify once by hand: take one closed trade, compute expected risk in USC from
-`tick_size`/`tick_value`, and compare to what the code produced. Do this before
-trusting a single R number. See §7 for the reference figure.
-
-### Trap 14 — `currency_profit` is NOT the unit of `tick_value`
-
-Measured on this account: `XAUUSDc` reports `currency_profit = "USD"` while the
-account currency is `USC`. Read carelessly, `tick_value = 0.1` looks like $0.10.
-It is not. It is **0.1 US cents**.
-
-| Field | What it actually is |
-|---|---|
-| `SYMBOL_CURRENCY_PROFIT` | The symbol's **quote currency** — the "USD" in XAUUSD. Descriptive metadata about the instrument. |
-| `SYMBOL_TRADE_TICK_VALUE` | Value of one `tick_size` move, **in the deposit currency** — i.e. `account_info().currency`. MT5 has already done the conversion. |
-
-→ **Rule: the unit of `tick_value`, and therefore of `risk_amount`, is always
-`accounts.currency`. Never `symbol_specs.currency_profit`.** Store
-`currency_profit` for reference, but never label a money value with it.
-→ Cross-check that the numbers cohere before trusting them:
-`contract_size = 1.0` (1 lot = 1 oz), a `0.001` price move on 1 oz = $0.001
-= 0.1 cents = `tick_value` of `0.1` USC. ✓ Consistent.
-→ Caveat to note and move on: MT5 converts at *fetch* time, not at trade time.
-For a personal journal on a USD-quoted symbol with a USD-derived account
-currency, this error is nil. It would matter on e.g. EURGBP. Do not pretend it
-is exact; just record `symbol_specs.fetched_at`.
-
 ### Trap 6 — SL/TP: `0` and `NULL` are not the same thing
 
 Deals carry no SL/TP. So `sl_initial` comes from the order that opened the
@@ -226,13 +189,26 @@ which is 05:00 or 06:00 WIB.
 
 → Measure the offset instead of assuming it:
 ```python
-server_now = mt5.symbol_info_tick("EURUSD").time  # server epoch
-true_now   = time.time()                           # real UTC epoch
+server_now = mt5.symbol_info_tick("XAUUSDc").time  # server epoch
+true_now   = time.time()                            # real UTC epoch
 offset_s   = round((server_now - true_now) / 900) * 900   # snap to 15 min
 ```
-Do this during an active market session (a stale weekend tick will lie to you).
-Store it in `sync_state.server_utc_offset_s` on every sync — **it changes with
-broker DST**, so a single hardcoded constant will corrupt two weeks per year.
+Do this during an active market session (a stale weekend tick will lie to you),
+on a symbol that actually exists on the server, after `symbol_select(sym, True)`.
+
+**Measured on this account: `offset_s = 0` — this broker's server clock IS UTC**
+(confirmed on `XAUUSDc` with a 2-second-old tick). Session analysis needs no
+conversion: London ≈ 07:00–16:00, NY ≈ 12:00–21:00, straight off `time_msc`.
+WIB = UTC+7 at display time only.
+
+→ Keep measuring it every sync and storing it in `sync_state.server_utc_offset_s`
+anyway. If the broker ever introduces a DST-shifting server, a hardcoded `0` would
+silently corrupt two weeks a year and you would never notice.
+
+→ Note the circularity: tick age is only meaningful once the offset is known, and
+the offset is only trustworthy from a fresh tick. It resolves here because the
+offset measured 0 against a 2-second-old tick during an open session. If that
+ever stops being true, re-derive both together — do not trust either alone.
 
 → Store `time_msc` **exactly as MT5 returned it** in `deals_raw` (raw = raw), and
 store the offset alongside. Convert to true UTC in `domain/`, not in `ingest/`.
@@ -285,6 +261,80 @@ journal this error is small; note it and move on. Don't silently pretend it's
 exact.
 
 ---
+
+### Trap 12 — Broker symbol suffixes
+
+This broker appends `c` (cent account): the tradeable symbols are `XAUUSDc`,
+`BTCUSDc`, `EURUSDc`. `symbol_info_tick("XAUUSD")` returns nothing — the
+unsuffixed symbol **does not exist on this server**.
+
+→ Two columns, always: `symbol` = verbatim from MT5, used for every MT5 call and
+stored in `_raw`. `symbol_base` = normalised, used for grouping in analytics.
+→ Normalisation lives in exactly one place, `domain/symbols.py`.
+→ **The suffix set is `{"c"}` and nothing else.** Do not speculatively add
+`.m`, `.raw`, `_ecn`, `#`, `-` "just in case" — every extra rule is an extra way
+to silently mangle a symbol, for zero present benefit. Mention them in a comment.
+Widen the set only when a broker that uses them actually appears.
+→ Guard: strip only if the remainder is ≥ 3 characters. No match → return
+verbatim and log once. Test that `USDCAD` → `USDCAD`, unchanged.
+→ Reason this matters later: if you ever move from this cent account to a
+standard one, `XAUUSDc` and `XAUUSD` must merge into one history, not two.
+
+### Trap 13 — Cent accounts
+
+Account currency `USC` = US cents. `profit`, `commission`, `swap`, `fee`, and
+`trade_tick_value` are all denominated in it. A balance of `6047.22` is $60.47.
+
+→ Never format a money column with a `$`. Always print the code from
+`accounts.currency`.
+→ `risk_amount` will be in USC too — which means `r_multiple =
+net_profit / risk_amount` is **unit-free and unaffected**. This is why analytics
+should lead with R and treat absolute P&L as secondary.
+→ Verify once by hand: take one closed trade, compute expected risk in USC from
+`tick_size`/`tick_value`, and compare to what the code produced. Do this before
+trusting a single R number. See §8 for the reference figure.
+
+### Trap 14 — `currency_profit` is NOT the unit of `tick_value`
+
+Measured on this account: `XAUUSDc` reports `currency_profit = "USD"` while the
+account currency is `USC`. Read carelessly, `tick_value = 0.1` looks like $0.10.
+It is not. It is **0.1 US cents**.
+
+| Field | What it actually is |
+|---|---|
+| `SYMBOL_CURRENCY_PROFIT` | The symbol's **quote currency** — the "USD" in XAUUSD. Descriptive metadata about the instrument. |
+| `SYMBOL_TRADE_TICK_VALUE` | Value of one `tick_size` move, **in the deposit currency** — i.e. `account_info().currency`. MT5 has already done the conversion. |
+
+→ **Rule: the unit of `tick_value`, and therefore of `risk_amount`, is always
+`accounts.currency`. Never `symbol_specs.currency_profit`.** Store
+`currency_profit` for reference, but never label a money value with it.
+→ Cross-check that the numbers cohere before trusting them:
+`contract_size = 1.0` (1 lot = 1 oz), a `0.001` price move on 1 oz = $0.001
+= 0.1 cents = `tick_value` of `0.1` USC. ✓ Consistent.
+→ Caveat to note and move on: MT5 converts at *fetch* time, not at trade time.
+For a personal journal on a USD-quoted symbol with a USD-derived account
+currency, this error is nil. It would matter on e.g. EURGBP. Do not pretend it
+is exact; just record `symbol_specs.fetched_at`.
+
+### Trap 15 — `copy_rates_*` returns SECONDS; the `candles` column is MILLISECONDS
+
+Deals carry both `time` (seconds) and `time_msc` (milliseconds). **Rates do not.**
+`copy_rates_range` gives you `time` in epoch **seconds** only. The `candles`
+table column is `time_msc`, and CLAUDE.md rule 3 says every timestamp outside the
+adapter is epoch milliseconds.
+
+So a ×1000 conversion must happen — and if nobody owns it, seconds land in a
+column named `_msc`. The renderer then queries
+`WHERE time_msc BETWEEN open_time_msc AND close_time_msc`, matches **zero rows**,
+and draws an empty chart. You will blame mplfinance for an hour.
+
+→ The conversion belongs at the **adapter boundary**, not in `ingest/`. The
+`Candle` dataclass carries `time_msc: int` and nothing else time-shaped;
+`live.py` does `int(row["time"]) * 1000`, `fake.py` does the same from fixtures.
+Everything above the adapter then obeys rule 3 with no exceptions to remember.
+→ Test: a fixture bar with `time = 1752624000` must surface as
+`Candle(time_msc=1752624000000)`. Assert the magnitude — a bar timestamp below
+`10**12` is seconds that leaked through.
 
 ## 4. Reconstruction algorithm
 
@@ -340,10 +390,97 @@ exact.
       `USDCAD` → `USDCAD` (unchanged — must not strip a real trailing letter)
 - [ ] money columns carry the account currency through; nothing formats as `$`
 - [ ] `rebuild` run twice → byte-identical trades table (idempotent)
+- [ ] **the balance invariant below holds to within 0.01 USC**
+
+## 6. The balance invariant — the one test that proves reconstruction is complete
+
+Unit tests prove each case works. This proves nothing was **lost or
+double-counted** across the whole history — the failure mode unit tests cannot
+see.
+
+MT5 balance is nothing more than the sum of every deal's cash effect:
+
+```
+sum(profit + commission + swap + fee) over ALL deals in deals_raw
+    == account_info().balance                                  (to within 0.01)
+```
+
+That includes `DEAL_TYPE_BALANCE` / `CREDIT` deposits, whose amount lives in the
+`profit` field. If this fails, ingest dropped or duplicated a deal — fix that
+before anything else.
+
+Then the reconstruction check:
+
+```
+sum(trades.net_profit WHERE status='closed')
+  + sum(profit+commission+swap+fee of all NON-trade deals)     -- deposits etc.
+    == account_info().balance                                  (to within 0.01)
+```
+
+Open positions are excluded because their floating P&L sits in *equity*, not
+*balance*. If the second identity fails while the first holds, the bug is in
+`reconstruct.py`: a position_id was skipped, a partial close was miscounted, or
+a cost component was dropped (trap 9).
+
+→ Ship this as `journal verify`, run it after every `rebuild`, and make it fail
+loudly. It costs one SQL query and catches an entire class of silent corruption.
+
+### Never absorb a gap into a tolerance
+
+When the identity fails, the temptation is `abs(delta) < 15.0`. **Do not.** That
+epsilon blinds the invariant to the exact failure it exists to catch — a dropped
+or duplicated deal worth less than the epsilon is now invisible forever.
+
+Instead every discrepancy gets a named row in `reconciliations`, and the
+invariant becomes:
+
+```
+sum(deals cash) - sum(reconciliations.amount) == balance      (within 0.01)
+```
+
+A row starts as `status='unexplained'` and stays visible in every report until a
+human writes a `reason`. The gap does not disappear; it acquires a name.
+
+### Measured 2026-07-16: an unexplained 14.50 USC
+
+```
+sum(all 140 deals) = 6061.72 USC
+balance            = 6047.22 USC
+delta              =  +14.50      (the account holds LESS than deals claim)
+```
+
+What is established:
+
+- The deal set is structurally complete: 68 trades × 2 legs + 3 balance ops
+  + 1 correction = 140. IN legs balance OUT legs exactly (42 long, 26 short).
+  `equity == balance`, `margin = 0` → no open positions. **Ingest lost nothing.**
+- `commission`, `swap`, and `fee` are `0.00` on **every one of the 140 deals** —
+  not merely zero in total.
+- Prime suspect: a `DEAL_TYPE_CORRECTION` deal at **2026-07-11 04:58:56**,
+  ticket 1399033630, with `profit = 0.00`. A zero-amount correction is
+  meaningless — and a correction is exactly how a broker claws money back.
+
+The question is therefore **not** "is it swap". It is:
+
+| MT5 Account History → Report shows | Meaning | Action |
+|---|---|---|
+| a swap/commission line ≈ −14.50 | **The bridge is not returning `swap`.** Adapter bug — `swap=0` everywhere is your data lying. | Stop. Fix the adapter before M2. Nothing downstream is trustworthy. |
+| swap 0, net profit 63.72, deposits 5998.00 | MT5's own numbers do not balance either. The 14.50 sits outside the deal history. | Open a `reconciliations` row, `status='unexplained'`, and proceed to M2. |
+
+> **Recording note:** the first fixture recording sanitised `comment -> ""` on all
+> 140 deals. That was wrong. Deal comments are execution metadata, not PII —
+> `[sl 4030.000]`, `[tp 4055.000]`, EA names, `so: 12.34` — and the comment on
+> that correction deal probably names the 14.50 outright. Redact `login`, `name`,
+> `server`, `company` only. **Keep `comment` and `external_id`.** Re-record.
+
+→ Independent cross-check, once, by hand: export MT5's own **Account History →
+Report** and compare its total profit and trade count against your `trades`
+table. Your reconstruction agreeing with the broker's own statement is the only
+external validation available.
 
 ---
 
-## 6. This account — measured 2026-07-16
+## 7. This account — measured 2026-07-16
 
 Confirmed by running the doctor script against the live bridge.
 
@@ -357,7 +494,7 @@ Confirmed by running the doctor script against the live bridge.
 | `entry` values in history | **`[0, 1]` only** | IN and OUT only. **OUT_BY never occurred in 140 deals** → raise, do not implement (trap 5). INOUT impossible on hedging → raise (trap 4). Reconstruction is the simple path. |
 | Symbols traded | `XAUUSDc`, `BTCUSDc`, `EURUSDc` | Only suffix in use is **`c`**. `symbol_info_tick("XAUUSD")` returns nothing — the unsuffixed symbol does not exist here. |
 | `XAUUSDc` specs | `tick_size=0.001`, `tick_value=0.1`, `contract_size=1.0`, `currency_profit=USD` | 1 lot = 1 oz (not 100). **`tick_value` is in USC, not USD** — see trap 14. |
-| Total deals | 140 | ≈ 60–70 trades. See §8. |
+| Total deals | 140 | ≈ 60–70 trades. See §9. |
 | `TradeDeal` fields | `ticket, order, time, time_msc, type, entry, magic, position_id, reason, volume, price, commission, swap, profit, fee, symbol, comment, external_id` | **No `sl`/`tp` — trap 6 confirmed.** `fee` exists and must be summed (trap 9). |
 
 Still open:
@@ -369,7 +506,7 @@ Still open:
       assume a 5-day week across all symbols.
 - [ ] `MaxBars` actually in effect in the container.
 
-## 7. Risk calculation — the reference figure
+## 8. Risk calculation — the reference figure
 
 Verified by hand against the specs above. Any code that disagrees is wrong.
 
@@ -388,7 +525,7 @@ If it comes out as `5.0` you forgot `volume`.
 **This is a required test case in `tests/test_risk.py`.** Write it before the
 risk code exists.
 
-## 8. Sample-size honesty
+## 9. Sample-size honesty
 
 140 deals ≈ 60–70 trades. At that size, win rate has a margin of error of roughly
 ±12 percentage points, and per-session or per-hour breakdowns will be single

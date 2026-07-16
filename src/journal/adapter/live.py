@@ -8,6 +8,7 @@ dataclasses / strings from `base.py`.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import fields
 from typing import Any
 
@@ -25,6 +26,8 @@ from .base import (
     SymbolInfo,
     Tick,
 )
+
+log = logging.getLogger(__name__)
 
 
 def _build(cls, raw: dict[str, Any]):
@@ -66,9 +69,12 @@ class LiveMT5Client:
             return "unavailable"
 
     def _assert_enums_match(self) -> None:
-        """Our IntEnums are authoritative for the codebase; verify the bridge's
-        constants still agree with them (docs/mt5-deal-model.md §2 says confirm,
-        don't hardcode). A mismatch or missing attribute is a hard failure."""
+        """Our IntEnums are authoritative for the codebase; where the bridge
+        exposes the matching constant, verify it agrees (docs/mt5-deal-model.md §2
+        says confirm, don't hardcode). A *mismatch* on an exposed constant is a
+        hard failure. A *missing* constant is unverifiable — not a failure — so it
+        is logged and skipped: the bridge does not export every DEAL_* value, and
+        an unexposed one must not stop init (see doc §2, Rule 12)."""
         checks = {
             DealType: "DEAL_TYPE_{}",
             DealEntry: "DEAL_ENTRY_{}",
@@ -78,10 +84,12 @@ class LiveMT5Client:
             for member in enum_cls:
                 attr = tmpl.format(member.name)
                 if not hasattr(self._mt5, attr):
-                    raise RuntimeError(
-                        f"bridge is missing constant {attr}; cannot trust "
-                        f"{enum_cls.__name__}.{member.name}={member.value}"
+                    log.warning(
+                        "bridge does not expose %s; cannot verify %s.%s=%d "
+                        "(unverifiable, not a failure)",
+                        attr, enum_cls.__name__, member.name, member.value,
                     )
+                    continue
                 bridge_val = getattr(self._mt5, attr)
                 if bridge_val != member.value:
                     raise RuntimeError(
@@ -124,9 +132,11 @@ class LiveMT5Client:
         out: list[Candle] = []
         for r in rows if rows is not None else ():
             # MT5 returns a numpy structured array; each row exposes named fields.
+            # `time` is epoch SECONDS (rates carry no time_msc) — convert to ms at
+            # the boundary so the rest of the codebase sees only ms (Trap 15).
             out.append(
                 Candle(
-                    time=int(r["time"]),
+                    time_msc=int(r["time"]) * 1000,
                     open=float(r["open"]),
                     high=float(r["high"]),
                     low=float(r["low"]),

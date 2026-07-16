@@ -21,8 +21,11 @@ def test_fake_conforms_to_protocol():
     assert isinstance(FakeMT5Client(), MT5Client)
 
 
-def test_list_methods_return_lists_on_empty_fixtures():
-    c = FakeMT5Client()
+def test_list_methods_return_lists_on_empty_fixtures(tmp_path):
+    # Hermetic: point at an empty dir so this asserts the missing/empty-fixture
+    # contract regardless of what real data lives in tests/fixtures/ (populated
+    # by scripts/record_fixtures.py for M1+).
+    c = FakeMT5Client(fixtures_dir=tmp_path)
     when = datetime(2000, 1, 1)
     assert c.symbols_get() == []
     assert c.history_deals_get(when, when) == []
@@ -31,8 +34,8 @@ def test_list_methods_return_lists_on_empty_fixtures():
     assert c.copy_rates_range("XAUUSDc", "M15", when, when) == []
 
 
-def test_scalar_methods_return_none_on_empty_fixtures():
-    c = FakeMT5Client()
+def test_scalar_methods_return_none_on_empty_fixtures(tmp_path):
+    c = FakeMT5Client(fixtures_dir=tmp_path)  # empty dir; see test above
     assert c.account_info() is None
     assert c.symbol_info("XAUUSDc") is None
     assert c.symbol_info_tick("XAUUSDc") is None
@@ -85,3 +88,19 @@ def test_builds_declared_types_from_fixtures(tmp_path):
 
     (candle,) = c.copy_rates_range("XAUUSDc", "M15", None, None)
     assert isinstance(candle, Candle) and candle.high == 2
+
+
+def test_candle_time_is_milliseconds(tmp_path):
+    # Trap 15: copy_rates_* returns `time` in SECONDS; the adapter must surface
+    # it as epoch MILLISECONDS so it lands correctly in candles.time_msc. A bar
+    # timestamp below 10**12 is seconds that leaked through the boundary.
+    fx = tmp_path / "fixtures"
+    fx.mkdir()
+    (fx / "rates.json").write_text(
+        '{"XAUUSDc:M15": [{"time": 1752624000, "open": 1, "high": 2, "low": 0.5, "close": 1.5}]}'
+    )
+    c = FakeMT5Client(fixtures_dir=fx)
+
+    (candle,) = c.copy_rates_range("XAUUSDc", "M15", None, None)
+    assert candle.time_msc == 1752624000000
+    assert candle.time_msc >= 10**12  # below this = seconds leaked (Trap 15)
