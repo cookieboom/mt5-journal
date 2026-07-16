@@ -4,24 +4,28 @@
 
 You sit in the **architect / reviewer** seat on mt5-journal. Not the implementer.
 
-- **You own:** `docs/`, `src/journal/store/schema.sql`, analysis scripts,
-  reviewing Claude Code's plans and diffs.
-- **Claude Code owns:** `src/` (except schema.sql), `tests/`, `pyproject.toml`.
-  **Do not touch them.**
+- **You own:** `docs/`, analysis scripts, reviewing Claude Code's plans and diffs.
+- **Claude Code owns:** `src/`, `tests/`, `pyproject.toml`. **Do not touch them.**
+- **`schema.sql` lives in the repo and the repo is canonical.** The reviewer
+  proposes schema changes in review; Claude Code applies them. The reviewer keeps
+  no working copy — a fork you cannot see is a fork you will review against by
+  mistake. It already happened once.
 - **Your value comes from not sharing Claude Code's context.** Every real bug
   found so far was caught because a second reader with no stake in the code
   looked at it cold. Write `src/` and you inherit its blind spots; the review
   loop collapses into two agents agreeing with each other.
 - **The design documents are the least reliable source in this project** — they
-  have been wrong twice. The bridge, the fixtures, and the account are
-  authoritative. When they disagree with a doc, the doc is wrong: patch it, and
-  record what was measured. Verify before you trust, including this file.
+  have been wrong three times, this file included. The bridge, the fixtures, the
+  account, and the broker's own report are authoritative. When they disagree with
+  a doc, the doc is wrong: patch it, and record what was measured.
 - **Never write trading signals, entry/exit logic, or position advice.** This
   tool describes patterns in past data. That is all it does.
 - Read `CLAUDE.md` and `docs/mt5-deal-model.md` before acting on anything they
   cover. They are dense and load-bearing.
 
-This file is the only project state that does not already live in the repo.
+**This file holds only what lives nowhere else: current state, seats, roadmap,
+error log.** It does not restate account facts, traps, or schema — those have one
+home each, and a second copy is a future lie. Point, never duplicate.
 
 ---
 
@@ -29,24 +33,48 @@ This file is the only project state that does not already live in the repo.
 
 **Last updated:** 2026-07-16
 
-**Done:** M0 (adapter + store + doctor, committed), M0.1 (Candle→ms fix, honest
-enums probed from the bridge, fixtures recorded).
+**Done:** M0 (adapter + store + doctor) · M0.1 (Candle→ms, enums probed from the
+bridge) · M0.2 (fixtures re-recorded with `comment` preserved, `a15cc5e`) ·
+M1 (ingest + verify + reconcile, 19 tests green, **not committed yet**).
 
-**In progress:** M0.2 — re-record fixtures with `comment` preserved.
+**Not blocked. Nothing is waiting on a human.**
 
-**BLOCKED ON A HUMAN:** the 14.50 USC balance gap. See
-`docs/mt5-deal-model.md` §6. Reisa must open MT5 → Account History → Report and
-read the **Swap** and **Commission** lines.
+**Next: M1.1** — three review findings, then the live smoke, then M2.
 
-- Report shows swap/commission ≈ −14.50 → **the adapter is dropping `swap`.**
-  Stop. Fix the adapter. Do not start M2 — every cost figure downstream is a lie.
-- Report shows swap 0.00 → the gap is outside deal history. Open a
-  `reconciliations` row with `status='unexplained'` and proceed to M2.
+1. `ingest/deals.py` carries a false docstring: "a widening residual is the
+   signal that the broker archived more history". It is not — see §6. Replace
+   with the set-difference detector in `sync`.
+2. `verify` reads balance live. Must read `accounts.balance` captured at sync
+   time — otherwise it cannot verify a backup, and a position closing between
+   sync and verify fails it spuriously. See §6.
+3. Bug: a sync with no fresh tick writes `server_utc_offset_s = NULL` over a good
+   measurement. `COALESCE` it.
 
-Do not let anyone resolve this with a tolerance. See §6.
+### The 14.50 USC gap — RESOLVED, do not reopen
 
-**Next after that:** M2 — `domain/reconstruct.py`. The hardest and most important
-milestone in the project.
+Cause: **the broker archived deals and deleted them from history.** Correction
+deal `1399033630` @ 2026-07-11 04:58:56, amount `0.00`, comment `"Archived
+deals"`. The deleted deals netted −14.50 USC.
+
+Confirmed against MT5's own `Account History → Report`: the report's cumulative
+Balance column ends at **6061.72** while its `Balance:` line reads **6047.22** —
+MT5's own export carries the identical gap. **Not an adapter bug.** Swap and
+commission are genuinely `0.00` (swap-free cent account); the bridge is faithful.
+
+Full evidence and arithmetic: `docs/mt5-deal-model.md` §6 and Trap 16.
+
+At M1/M2 this becomes one `reconciliations` row with `status='explained'` — not
+`unexplained`, and never a tolerance. §6 has the exact row.
+
+### What this discovery changed
+
+**MT5 is not a durable record of your trading. This journal is.** The broker
+deletes history — already observed, five days before M0 began. Every day without
+a sync is a day something can vanish for good.
+
+That promotes M4 (poller) from convenience to the reason the project exists, and
+turns `deals_raw` being append-only from a style rule into an archival guarantee.
+See Trap 16.
 
 ---
 
@@ -54,18 +82,16 @@ milestone in the project.
 
 | Seat | Tool | Owns | Never touches |
 |---|---|---|---|
-| **Architect / reviewer** (you) | Cowork | `docs/`, `schema.sql`, analysis scripts, reviewing Claude Code's plans | `src/`, `tests/` |
-| **Implementer** | Claude Code | `src/`, `tests/`, `pyproject.toml` | `docs/`, `CLAUDE.md` |
+| **Architect / reviewer** (you) | Cowork | `docs/`, analysis scripts, reviewing Claude Code's plans | `src/`, `tests/`, `schema.sql` |
+| **Implementer** | Claude Code | `src/`, `tests/`, `schema.sql`, `pyproject.toml` | `docs/`, `CLAUDE.md` |
 
 **This separation is the point, not bureaucracy.** The reviewer's value comes
-entirely from *not sharing the implementer's context*. Every real bug caught so
-far was caught because a second reader with no stake in the code looked at it
-cold. If you start writing `src/`, you become the implementer, you inherit its
-blind spots, and the review loop degrades into two agents agreeing with each
-other.
+entirely from *not sharing the implementer's context*. If you start writing
+`src/`, you become the implementer, you inherit its blind spots, and the review
+loop degrades into two agents agreeing with each other.
 
-If Claude Code's plan looks fine to you, say so — but read the actual diff or
-the actual data first, not the summary of it.
+If Claude Code's plan looks fine to you, say so — but read the actual diff or the
+actual data first, not the summary of it.
 
 ---
 
@@ -83,22 +109,30 @@ the actual data first, not the summary of it.
 5. **Measure, do not recall.** See the error log below.
 6. **The human runs anything that writes to git or touches the live account.**
    Fixture recording included — sanitisation review is a human job.
+7. **State dependencies out loud.** When handing over more than one task, say
+   which are parallel and which gate which. An instruction that arrives alongside
+   doubt about whether it still applies cannot be executed with confidence.
 
 ---
 
 ## Error log — why "measure, don't recall" is a rule
 
-Both of these were caught by machinery we deliberately built, not by luck.
+Every one of these was caught by machinery deliberately built for it, not by luck.
 
 | What | Who was wrong | Caught by |
 |---|---|---|
-| `DEAL_TYPE_COMMISSION = 6` in the design docs | **The docs.** The bridge reports `BONUS=6, COMMISSION=7`. | The `live.py` enum assertion (CLAUDE.md rule 12) |
-| `Candle.time` in seconds → `candles.time_msc` column | The plan. Would have silently produced empty charts at M3. | Independent review of `base.py` against `schema.sql` |
-| Sanitising `comment -> ""` on all 140 deals | **The reviewer's own spec.** Destroyed `[sl 4030.000]` markers and probably the explanation for the 14.50 gap. | Counting non-empty comments in the recorded fixture |
+| `DEAL_TYPE_COMMISSION = 6` in the design docs | **The docs.** Bridge reports `BONUS=6, COMMISSION=7`. | The `live.py` enum assertion (CLAUDE.md rule 12) |
+| `Candle.time` seconds → `candles.time_msc` column | The plan. Would have silently produced empty charts at M3. | Independent review of `base.py` against `schema.sql` |
+| Sanitising `comment -> ""` on all 140 deals | **The reviewer's own spec.** Destroyed the string `"Archived deals"` — the literal answer to the 14.50 question — and every `[sl]`/`[tp]` marker. | Counting non-empty comments in the recorded fixture |
+| "The 14.50 might be swap the bridge is dropping" | The hypothesis. `swap = 0.00` on all 140 deals and in MT5's own report. | Reading the report instead of theorising about it |
+| "A widening residual means the broker archived more history" | **The reviewer's M1 spec.** Archiving moves no money, so the residual never budges. Shipped as a false docstring in `ingest/deals.py`. | Reasoning through what archiving actually does to a balance |
+| The reviewer's `schema.sql` working copy | **The reviewer.** It was never installed; Claude Code wrote a better `reconciliations` table (dropped a redundant column, dropped an unused state, better placement). The reviewer had been reviewing against a file that did not exist. | Reading the repo instead of the working copy |
+| This file claiming the 14.50 was "BLOCKED ON A HUMAN" after it was resolved | **This file.** A stale handoff is worse than none: it sends a fresh reader to redo finished work, then hands them a decision rule that is now wrong. | Auditing the repo against what was actually asked for |
 
 The pattern: **the design documents are the least reliable source in this
-project.** The bridge, the fixtures, and the account are authoritative. When they
-disagree with a doc, the doc is wrong — patch it, and note what was measured.
+project.** The bridge, the fixtures, the account, and the broker's own report are
+authoritative. When they disagree with a doc, the doc is wrong — patch it, and
+note what was measured.
 
 ---
 
@@ -108,11 +142,12 @@ disagree with a doc, the doc is wrong — patch it, and note what was measured.
 |---|---|---|
 | M0 | Adapter protocol, symbol normalisation, DB bootstrap, `doctor` | done |
 | M0.1 | Candle→ms, probed enums | done |
-| M0.2 | Re-record fixtures with comments | in progress |
-| M1 | Ingest deals/orders → `_raw` tables, `journal verify` | next |
+| M0.2 | Re-record fixtures with comments preserved | done (`a15cc5e`) |
+| M1 | Ingest deals/orders → `_raw` tables, `journal verify` | built, uncommitted |
+| M1.1 | Archive detector, balance snapshot, offset COALESCE | **next** |
 | M2 | **`reconstruct.py`: deals → trades** | the hard one |
 | M3 | Candle store + mplfinance renderer (`journal chart <id>`) | |
-| M4 | SL/TP poller — makes `sl_initial` knowable going forward | |
+| M4 | SL/TP poller — makes `sl_initial` knowable, and outruns the archiver | |
 | M5 | Analytics: R-multiple, MAE/MFE, sessions, behaviour | |
 | M6 | Annotations + weekly report | |
 
@@ -120,28 +155,34 @@ M0–M3 delivers the original ask: an automatic journal with charts.
 
 ---
 
-## Facts about this account you must not re-derive
+## Account facts
 
-All measured, all in `docs/mt5-deal-model.md` §7. The load-bearing ones:
+**One home: `docs/mt5-deal-model.md` §7.** All measured against the live bridge.
+Do not copy them here — a second copy drifts, and then two documents disagree
+with no way to tell which one lies. Read §7.
 
-- Currency is **USC (US cents)**, balance 6047.22 ≈ $60.47. Never print `$`.
-- **Server clock is UTC** (offset measured 0). Sessions need no conversion.
-- **Hedging** account. Only `entry` 0 and 1 exist in 140 deals — no INOUT, no
-  OUT_BY. Reconstruction takes the simple path.
-- Symbols: `XAUUSDc`, `BTCUSDc`, `EURUSDc`. Suffix set is `{"c"}` and nothing
-  else. `XAUUSDc`: tick_size 0.001, tick_value 0.1 **USC**, contract_size 1.0.
-- 68 closed trades. **Statistics on n=68 are mostly noise** — every report must
-  show `n` and suppress buckets under 20. This is a rule (§9), not a caveat.
-- 12 deals carry `magic != 0` and 6 closed with reason EXPERT. **An EA touched
-  part of this history.** At M5, EA trades and discretionary trades must be
-  separated or both populations become meaningless.
+The three worth a pointer, because they change how you work:
+
+- **Trap 16** — the broker deletes history. The most important fact in the
+  project. It is why the journal exists.
+- **§9** — n=68. Every report must show `n` and suppress buckets under 20. A rule,
+  not a caveat.
+- **An EA touched part of this history** (12 deals with `magic != 0`, 6 closes
+  with reason EXPERT). At M5, EA and discretionary trades must be separated or
+  both populations are meaningless.
 
 ---
 
 ## Open questions
 
-- [ ] The 14.50 gap (blocking — see CURRENT STATE)
-- [ ] Does this broker emit standalone commission deals? (all `commission` fields
-      currently read 0.00 — suspicious until the MT5 report confirms)
-- [ ] `BTCUSDc` / `EURUSDc` contract specs — gold's do **not** transfer
-- [ ] `MaxBars` actually in effect in the container (matters at M3)
+- [ ] `MaxBars` actually in effect in the container (matters at M3).
+- [ ] Funding-deal comments (`D-IDQRISGT-…`, `W-ALLINT-…`) are payment
+      references, now committed to git. Zero analytical value. If this repo is
+      ever pushed anywhere public, redact `comment` on funding deals only
+      (`DEAL_TYPE_BALANCE/CREDIT/CHARGE/BONUS`) — never on trades, never on the
+      correction. Already in history, so the cost of deciding rises with time.
+
+**Closed:** the 14.50 gap (archived deals — see CURRENT STATE) · standalone
+commission deals (none; MT5's report confirms `commission = 0.00`) ·
+`BTCUSDc`/`EURUSDc` specs (M1 `symbol_specs`: tick_value 0.1 / 0.01 / 1.0 —
+genuinely distinct, gold's transfer nowhere).

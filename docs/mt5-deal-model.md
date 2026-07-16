@@ -353,8 +353,11 @@ exists.
 → `deals_raw` being append-only stops mattering as a style choice and starts
 mattering as an archival guarantee: once a deal is captured locally, no broker
 action can remove it. Never add a delete path to `deals_raw`.
-→ `journal verify` must treat a widening balance gap as the signal that another
-archive event happened. Each one gets its own `reconciliations` row.
+→ `journal sync` must detect every future archive event by set difference:
+`{ticket in deals_raw} - {ticket returned by the broker}`. Non-empty means the
+broker deleted deals you still hold — report it loudly and positively. The
+balance invariant **cannot** see this: archiving moves no money, so the residual
+never budges. See §6.
 → Analytics caveat: your history contains the trades that *survived*. Any total
 predating the first sync is a lower bound, not a count. Say so in reports.
 → `DEAL_TYPE_CORRECTION` with amount `0.00` is the marker to watch for. Do not
@@ -448,6 +451,47 @@ a cost component was dropped (trap 9).
 
 → Ship this as `journal verify`, run it after every `rebuild`, and make it fail
 loudly. It costs one SQL query and catches an entire class of silent corruption.
+
+### Pair the balance with the deals, or the invariant lies
+
+`balance` must be the snapshot **captured by the same sync that captured the
+deals** (`accounts.balance`), never a live `account_info()` read at verify time.
+
+Two reasons, and the second is the important one:
+
+1. **Spurious failures.** Sync at 10:00, a position closes at 10:05, verify at
+   10:10 → balance moved, `deals_raw` did not, residual is garbage. The invariant
+   asks "do the deals I captured at time T explain the balance at time T". Both
+   halves must come from T.
+2. **Self-sufficiency.** A `verify` that needs a live bridge cannot check a
+   backup, cannot run in CI, and cannot run when the broker is down. Trap 16 says
+   this journal — not MT5 — is the durable record. An invariant that depends on
+   the broker being reachable contradicts the thesis of the whole project.
+
+→ `sync` writes `accounts.balance` and `accounts.equity`. `verify` is pure SQL
+against the store and takes no client at all.
+
+### The residual does NOT detect future archiving
+
+**Archiving removes the record, not the money.** The balance does not move — the
+cash changed hands long ago. And `deals_raw` is append-only, so our sum does not
+move either. **The residual stays flat and `verify` keeps passing.** An archive
+event is invisible to the balance invariant.
+
+The 14.50 below exists only because those deals were archived *before* the first
+sync ever ran. It is a one-time historical scar, not a live detector. Do not
+write "a widening residual means the broker archived more" anywhere — it is false.
+
+The real detector is a set difference, and `sync` already holds both sides:
+
+```sql
+archived = {ticket FROM deals_raw} - {ticket returned by history_deals_get}
+```
+
+Non-empty → the broker has deleted deals this journal still holds. That is not an
+error condition. **It is proof the journal is doing its job**, and the only place
+those trades still exist. Report it prominently; count it; never let it pass
+silently.
 
 ### Never absorb a gap into a tolerance
 

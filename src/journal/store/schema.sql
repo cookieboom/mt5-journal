@@ -31,6 +31,8 @@ CREATE TABLE IF NOT EXISTS accounts (
     leverage        INTEGER,
     margin_mode     INTEGER,            -- 0=netting 1=exchange 2=hedging
     is_demo         INTEGER,            -- 0/1
+    balance         REAL,               -- SNAPSHOT at last sync; the balance-invariant half (§6). Money = accounts.currency (USC).
+    equity          REAL,               -- SNAPSHOT at last sync; balance + floating P&L of open positions.
     first_seen_at   INTEGER NOT NULL,
     last_synced_at  INTEGER
 );
@@ -228,6 +230,28 @@ CREATE TABLE IF NOT EXISTS tags (
 );
 
 CREATE INDEX IF NOT EXISTS ix_tags_tag ON tags (account_login, tag);
+
+-- Named explanations for balance-invariant discrepancies (docs/mt5-deal-model.md
+-- §6 + trap 16). A gap is NEVER absorbed into a tolerance — it gets a row here.
+-- A row starts 'unexplained' and stays visible in every report until a human
+-- writes a `reason`; it does not disappear, it acquires a name. Human-authored,
+-- so it lives in this never-rebuilt section alongside annotations.
+--   amount: account currency (USC). Signed + when sum(deal cash) exceeds balance.
+--   The invariant `journal verify` enforces:
+--     sum(deals cash) - sum(reconciliations.amount) == balance   (within 0.01)
+CREATE TABLE IF NOT EXISTS reconciliations (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_login  INTEGER NOT NULL,
+    amount         REAL NOT NULL,
+    effective_msc  INTEGER,               -- when the gap occurred (e.g. the correction deal's time_msc)
+    status         TEXT NOT NULL DEFAULT 'unexplained'
+                     CHECK (status IN ('unexplained','explained')),
+    reason         TEXT,                  -- stays 'unexplained' until a human writes this
+    evidence       TEXT,                  -- deal ticket, MT5 report figures, etc.
+    created_at     INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS ix_recon_account ON reconciliations (account_login);
 
 -- ---------------------------------------------------------------- convenience
 
