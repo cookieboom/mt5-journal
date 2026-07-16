@@ -149,10 +149,9 @@ def _upsert_account(conn: sqlite3.Connection, acct: Account, ts: int) -> None:
     # is preserved on conflict; everything else refreshes. is_demo from trade_mode
     # (0=demo 1=contest 2=real). balance/equity are captured HERE, by the same sync
     # that captured the deals, so `verify` can check the §6 invariant with no bridge
-    # (both halves come from time T). `equity` has no typed field on Account — read
-    # it from the raw _asdict() dump, the blessed carrier for un-modelled fields.
+    # (both halves come from time T).
     is_demo = 1 if acct.trade_mode == 0 else 0
-    equity = acct.raw.get("equity")
+    equity = acct.equity
     conn.execute(
         """
         INSERT INTO accounts

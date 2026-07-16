@@ -90,6 +90,23 @@ def test_builds_declared_types_from_fixtures(tmp_path):
     assert isinstance(candle, Candle) and candle.high == 2
 
 
+def test_account_equity_maps_from_fixture_and_defaults_none(tmp_path):
+    # equity is a first-class Account field (M1.2), NOT read from .raw. Present in
+    # the fixture -> mapped; absent -> a deliberate None, never a silent .raw.get miss
+    # (rule 12: the MT5 field name stays inside the adapter).
+    fx = tmp_path / "fixtures"
+    fx.mkdir()
+    (fx / "account.json").write_text('{"login": 0, "equity": 6047.22}')
+    assert FakeMT5Client(fixtures_dir=fx).account_info().equity == 6047.22
+
+    fx2 = tmp_path / "no_equity"
+    fx2.mkdir()
+    (fx2 / "account.json").write_text('{"login": 0, "balance": 6047.22}')
+    acct = FakeMT5Client(fixtures_dir=fx2).account_info()
+    assert acct.equity is None  # explicit absence, not a silent .raw.get miss
+    assert acct.raw["balance"] == 6047.22  # raw dump still complete
+
+
 def test_candle_time_is_milliseconds(tmp_path):
     # Trap 15: copy_rates_* returns `time` in SECONDS; the adapter must surface
     # it as epoch MILLISECONDS so it lands correctly in candles.time_msc. A bar

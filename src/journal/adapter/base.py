@@ -90,6 +90,7 @@ class Account:
     login: int | None = None
     currency: str | None = None
     balance: float | None = None
+    equity: float | None = None  # snapshot; balance + floating P&L of open positions
     margin_mode: int | None = None  # 0=netting 1=exchange 2=hedging
     leverage: int | None = None
     server: str | None = None
