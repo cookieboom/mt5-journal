@@ -336,6 +336,30 @@ Everything above the adapter then obeys rule 3 with no exceptions to remember.
 `Candle(time_msc=1752624000000)`. Assert the magnitude — a bar timestamp below
 `10**12` is seconds that leaked through.
 
+### Trap 16 — The broker deletes your history
+
+**Observed on this account, 2026-07-11.** Exness archived old deals: removed them
+from retrievable history and left a `DEAL_TYPE_CORRECTION` marker with amount
+`0.00` and comment `"Archived deals"`. The deals it took netted −14.50 USC.
+`history_deals_get(2000-01-01, now)` cannot return them. Neither can MT5's own
+report. They are gone.
+
+This is the single most important fact about this project.
+
+→ **MT5 is not a durable record of your trading. This journal is.** Every day
+without a sync is a day the broker may delete something you will never get back.
+The M4 poller is therefore not a nice-to-have; it is the reason the project
+exists.
+→ `deals_raw` being append-only stops mattering as a style choice and starts
+mattering as an archival guarantee: once a deal is captured locally, no broker
+action can remove it. Never add a delete path to `deals_raw`.
+→ `journal verify` must treat a widening balance gap as the signal that another
+archive event happened. Each one gets its own `reconciliations` row.
+→ Analytics caveat: your history contains the trades that *survived*. Any total
+predating the first sync is a lower bound, not a count. Say so in reports.
+→ `DEAL_TYPE_CORRECTION` with amount `0.00` is the marker to watch for. Do not
+dismiss it as a no-op — it is a headstone.
+
 ## 4. Reconstruction algorithm
 
 ```
@@ -441,7 +465,7 @@ sum(deals cash) - sum(reconciliations.amount) == balance      (within 0.01)
 A row starts as `status='unexplained'` and stays visible in every report until a
 human writes a `reason`. The gap does not disappear; it acquires a name.
 
-### Measured 2026-07-16: an unexplained 14.50 USC
+### Measured 2026-07-16: the 14.50 USC gap — RESOLVED
 
 ```
 sum(all 140 deals) = 6061.72 USC
@@ -449,29 +473,52 @@ balance            = 6047.22 USC
 delta              =  +14.50      (the account holds LESS than deals claim)
 ```
 
-What is established:
+**Cause: the broker archived deals and deleted them from history.**
 
-- The deal set is structurally complete: 68 trades × 2 legs + 3 balance ops
-  + 1 correction = 140. IN legs balance OUT legs exactly (42 long, 26 short).
-  `equity == balance`, `margin = 0` → no open positions. **Ingest lost nothing.**
-- `commission`, `swap`, and `fee` are `0.00` on **every one of the 140 deals** —
-  not merely zero in total.
-- Prime suspect: a `DEAL_TYPE_CORRECTION` deal at **2026-07-11 04:58:56**,
-  ticket 1399033630, with `profit = 0.00`. A zero-amount correction is
-  meaningless — and a correction is exactly how a broker claws money back.
+Confirmed against MT5's own `Account History → Report` (Exness-MT5Real36):
 
-The question is therefore **not** "is it swap". It is:
+- The report's own cumulative Balance column ends at **6061.72** while its
+  `Balance:` line reads **6047.22**. **MT5's own export contains the identical
+  gap.** The bridge is faithful — this is not an adapter bug.
+- `Commission` and `Swap` are `0.00` in the report too. This is a swap-free cent
+  account; `swap = 0` on every deal is the truth, not a dropped field.
+- Every fixture figure matches the report exactly: net profit 63.72, 68 trades,
+  deposits/withdrawals 5998.00.
+- Report row 297: deal **1399033630**, type `correction`, `2026-07-11 04:58:56`,
+  amount `0.00`, comment **`"Archived deals"`**.
 
-| MT5 Account History → Report shows | Meaning | Action |
-|---|---|---|
-| a swap/commission line ≈ −14.50 | **The bridge is not returning `swap`.** Adapter bug — `swap=0` everywhere is your data lying. | Stop. Fix the adapter before M2. Nothing downstream is trustworthy. |
-| swap 0, net profit 63.72, deposits 5998.00 | MT5's own numbers do not balance either. The 14.50 sits outside the deal history. | Open a `reconciliations` row, `status='unexplained'`, and proceed to M2. |
+The arithmetic lands exactly on that timestamp:
 
-> **Recording note:** the first fixture recording sanitised `comment -> ""` on all
-> 140 deals. That was wrong. Deal comments are execution metadata, not PII —
-> `[sl 4030.000]`, `[tp 4055.000]`, EA names, `so: 12.34` — and the comment on
-> that correction deal probably names the 14.50 outright. Redact `login`, `name`,
-> `server`, `company` only. **Keep `comment` and `external_id`.** Re-record.
+```
+running balance at the correction   = 6051.32
+trades after it                     = 6061.72 - 6051.32 = +10.40
+true balance minus those trades     = 6047.22 - 10.40   = 6036.82
+6051.32 - 6036.82                   = 14.50   ← the gap, at the correction
+```
+
+On 2026-07-11 the broker archived old deals — removed them from retrievable
+history — and inserted correction #1399033630 as a marker carrying `0.00`. The
+archived deals netted −14.50 USC. That amount is real and sits in the balance,
+but **no deal you can fetch contains it, from MT5 or the bridge. It is gone.**
+
+Resolution: one `reconciliations` row, `status='explained'`:
+
+```
+amount        = 14.50
+effective_msc = 2026-07-11 04:58:56 UTC
+reason        = "Broker archived deals; underlying deals unrecoverable."
+evidence      = "correction deal 1399033630, comment 'Archived deals';
+                 MT5 report cum-balance 6061.72 vs Balance: 6047.22"
+```
+
+`journal verify` then passes honestly, and the 14.50 stays named forever instead
+of dissolving into an epsilon.
+
+> **Recording note, now proven:** the first fixture recording sanitised
+> `comment -> ""` on all 140 deals. That destroyed the string `"Archived deals"`
+> — the literal answer to this question — along with every `[sl 4035.112]` and
+> `[tp 4057.193]` marker. Deal comments are execution metadata, not PII. Redact
+> `login`, `name`, `server`, `company` only. **Keep `comment` and `external_id`.**
 
 → Independent cross-check, once, by hand: export MT5's own **Account History →
 Report** and compare its total profit and trade count against your `trades`

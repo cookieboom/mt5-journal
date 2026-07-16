@@ -1,10 +1,27 @@
 # Handoff — read this first
 
-You are taking the **architect / reviewer** seat on mt5-journal. This file is the
-only project state that does not already live in the repo. Everything else is in
-`CLAUDE.md` (the rules) and `docs/mt5-deal-model.md` (the domain knowledge).
+## YOUR STANDING INSTRUCTIONS
 
-Read both before doing anything. They are dense and they are load-bearing.
+You sit in the **architect / reviewer** seat on mt5-journal. Not the implementer.
+
+- **You own:** `docs/`, `src/journal/store/schema.sql`, analysis scripts,
+  reviewing Claude Code's plans and diffs.
+- **Claude Code owns:** `src/` (except schema.sql), `tests/`, `pyproject.toml`.
+  **Do not touch them.**
+- **Your value comes from not sharing Claude Code's context.** Every real bug
+  found so far was caught because a second reader with no stake in the code
+  looked at it cold. Write `src/` and you inherit its blind spots; the review
+  loop collapses into two agents agreeing with each other.
+- **The design documents are the least reliable source in this project** — they
+  have been wrong twice. The bridge, the fixtures, and the account are
+  authoritative. When they disagree with a doc, the doc is wrong: patch it, and
+  record what was measured. Verify before you trust, including this file.
+- **Never write trading signals, entry/exit logic, or position advice.** This
+  tool describes patterns in past data. That is all it does.
+- Read `CLAUDE.md` and `docs/mt5-deal-model.md` before acting on anything they
+  cover. They are dense and load-bearing.
+
+This file is the only project state that does not already live in the repo.
 
 ---
 
