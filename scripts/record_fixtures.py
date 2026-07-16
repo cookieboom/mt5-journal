@@ -13,9 +13,10 @@ the one module allowed to import it (Rule 1). We read `.raw` off each dataclass.
 Sanitisation (what lands in git):
     login   -> 0
     server  -> "REDACTED"     company -> "REDACTED"     account name -> "REDACTED"
-    comment -> ""
-NEVER touched: ticket, order, position_id  (reconstruction keys on them).
-Symbol `name` is NOT redacted — that is the instrument, not PII.
+NEVER touched: ticket, order, position_id  (reconstruction keys on them);
+    comment, external_id  (execution metadata, not PII — the "Archived deals"
+    marker and [sl]/[tp] tags live here; see Trap 16). Symbol `name` is the
+    instrument, not PII, so it survives too.
 
 Usage:
     uv run python scripts/record_fixtures.py [--host localhost] [--port 8001]
@@ -38,7 +39,13 @@ EPOCH_START = datetime(2000, 1, 1)  # full backfill; take everything (Trap 8)
 def sanitise(d: dict[str, Any]) -> dict[str, Any]:
     """Generic, key-based scrub applied to every record. Only touches keys that
     are unambiguously identifying wherever they appear. `name` is handled
-    separately (symbol name must survive; account holder name must not)."""
+    separately (symbol name must survive; account holder name must not).
+
+    Deliberately does NOT touch `comment` or `external_id`: those are execution
+    metadata, not PII (`[sl 4030.000]`, `[tp 4055.000]`, EA names, and the
+    broker's own `"Archived deals"` marker — the literal explanation for the
+    14.50 USC gap). The first recording blanked `comment` and destroyed exactly
+    that evidence; see docs/mt5-deal-model.md §6 and Trap 16."""
     d = dict(d)
     if "login" in d:
         d["login"] = 0
@@ -46,8 +53,6 @@ def sanitise(d: dict[str, Any]) -> dict[str, Any]:
         d["server"] = "REDACTED"
     if "company" in d:
         d["company"] = "REDACTED"
-    if "comment" in d:
-        d["comment"] = ""
     return d
 
 

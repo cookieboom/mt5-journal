@@ -1,6 +1,6 @@
 [
   {
-    "comment": "",
+    "comment": "D-IDQRISGT-USC-939362934790",
     "commission": 0.0,
     "entry": 0,
     "external_id": "",
@@ -40,7 +40,7 @@
     "volume": 0.01
   },
   {
-    "comment": "",
+    "comment": "[sl 4198.327]",
     "commission": 0.0,
     "entry": 1,
     "external_id": "",
@@ -60,7 +60,7 @@
     "volume": 0.01
   },
   {
-    "comment": "",
+    "comment": "W-ALLINT-USC-INT-308226625541",
     "commission": 0.0,
     "entry": 0,
     "external_id": "",
@@ -80,7 +80,7 @@
     "volume": 0.0
   },
   {
-    "comment": "",
+    "comment": "D-IDQRISGT-USC-100398136115",
     "commission": 0.0,
     "entry": 0,
     "external_id": "",
@@ -120,7 +120,7 @@
     "volume": 0.01
   },
   {
-    "comment": "",
+    "comment": "[sl 91506.33000]",
     "commission": 0.0,
     "entry": 1,
     "external_id": "proactive",
@@ -160,7 +160,7 @@
     "volume": 0.01
   },
   {
-    "comment": "",
+    "comment": "[sl 91585.31000]",
     "commission": 0.0,
     "entry": 1,
     "external_id": "proactive",
@@ -200,7 +200,7 @@
     "volume": 0.01
   },
   {
-    "comment": "",
+    "comment": "[tp 4596.73000]",
     "commission": 0.0,
     "entry": 1,
     "external_id": "proactive",
@@ -240,7 +240,7 @@
     "volume": 0.02
   },
   {
-    "comment": "",
+    "comment": "[sl 4817.47200]",
     "commission": 0.0,
     "entry": 1,
     "external_id": "proactive",
@@ -280,7 +280,7 @@
     "volume": 0.01
   },
   {
-    "comment": "",
+    "comment": "[sl 1.17064]",
     "commission": 0.0,
     "entry": 1,
     "external_id": "",
@@ -320,7 +320,7 @@
     "volume": 0.01
   },
   {
-    "comment": "",
+    "comment": "[sl 4967.37500]",
     "commission": 0.0,
     "entry": 1,
     "external_id": "proactive",
@@ -380,7 +380,7 @@
     "volume": 0.01
   },
   {
-    "comment": "",
+    "comment": "[sl 4918.737]",
     "commission": 0.0,
     "entry": 1,
     "external_id": "",
@@ -400,7 +400,7 @@
     "volume": 0.01
   },
   {
-    "comment": "",
+    "comment": "[tp 4918.16000]",
     "commission": 0.0,
     "entry": 1,
     "external_id": "proactive",
@@ -460,7 +460,7 @@
     "volume": 0.01
   },
   {
-    "comment": "",
+    "comment": "[sl 5054.69200]",
     "commission": 0.0,
     "entry": 1,
     "external_id": "proactive",
@@ -520,7 +520,7 @@
     "volume": 0.01
   },
   {
-    "comment": "",
+    "comment": "[sl 5049.10800]",
     "commission": 0.0,
     "entry": 1,
     "external_id": "proactive",
@@ -600,7 +600,7 @@
     "volume": 0.01
   },
   {
-    "comment": "",
+    "comment": "[sl 5007.065]",
     "commission": 0.0,
     "entry": 1,
     "external_id": "",
@@ -640,7 +640,7 @@
     "volume": 0.01
   },
   {
-    "comment": "",
+    "comment": "[sl 5007.70000]",
     "commission": 0.0,
     "entry": 1,
     "external_id": "proactive",
@@ -680,7 +680,7 @@
     "volume": 0.01
   },
   {
-    "comment": "",
+    "comment": "[sl 5004.55600]",
     "commission": 0.0,
     "entry": 1,
     "external_id": "proactive",
@@ -720,7 +720,7 @@
     "volume": 0.01
   },
   {
-    "comment": "",
+    "comment": "[sl 5003.634]",
     "commission": 0.0,
     "entry": 1,
     "external_id": "",
@@ -760,7 +760,7 @@
     "volume": 0.01
   },
   {
-    "comment": "",
+    "comment": "[sl 5005.450]",
     "commission": 0.0,
     "entry": 1,
     "external_id": "",
@@ -800,7 +800,7 @@
     "volume": 0.01
   },
   {
-    "comment": "",
+    "comment": "[sl 5005.17700]",
     "commission": 0.0,
     "entry": 1,
     "external_id": "proactive",
@@ -840,7 +840,7 @@
     "volume": 0.01
   },
   {
-    "comment": "",
+    "comment": "[sl 5407.64500]",
     "commission": 0.0,
     "entry": 1,
     "external_id": "proactive",
@@ -880,7 +880,7 @@
     "volume": 0.01
   },
   {
-    "comment": "",
+    "comment": "[sl 5406.81000]",
     "commission": 0.0,
     "entry": 1,
     "external_id": "proactive",
@@ -960,7 +960,7 @@
     "volume": 0.01
   },
   {
-    "comment": "",
+    "comment": "[sl 4663.24300]",
     "commission": 0.0,
     "entry": 1,
     "external_id": "proactive",
@@ -1000,7 +1000,7 @@
     "volume": 0.01
   },
   {
-    "comment": "",
+    "comment": "[tp 4750.57900]",
     "commission": 0.0,
     "entry": 1,
     "external_id": "proactive",
@@ -1160,7 +1160,7 @@
     "volume": 0.01
   },
   {
-    "comment": "",
+    "comment": "[sl 4728.06000]",
     "commission": 0.0,
     "entry": 1,
     "external_id": "proactive",
@@ -1200,7 +1200,7 @@
     "volume": 0.01
   },
   {
-    "comment": "",
+    "comment": "[tp 4729.35500]",
     "commission": 0.0,
     "entry": 1,
     "external_id": "proactive",
@@ -1240,7 +1240,7 @@
     "volume": 0.01
   },
   {
-    "comment": "",
+    "comment": "[tp 4728.12700]",
     "commission": 0.0,
     "entry": 1,
     "external_id": "proactive",
@@ -1280,7 +1280,7 @@
     "volume": 0.01
   },
   {
-    "comment": "",
+    "comment": "[sl 4712.993]",
     "commission": 0.0,
     "entry": 1,
     "external_id": "",
@@ -1360,7 +1360,7 @@
     "volume": 0.01
   },
   {
-    "comment": "",
+    "comment": "[sl 4791.74500]",
     "commission": 0.0,
     "entry": 1,
     "external_id": "proactive",
@@ -1400,7 +1400,7 @@
     "volume": 0.01
   },
   {
-    "comment": "",
+    "comment": "[tp 4761.32600]",
     "commission": 0.0,
     "entry": 1,
     "external_id": "proactive",
@@ -1440,7 +1440,7 @@
     "volume": 0.01
   },
   {
-    "comment": "",
+    "comment": "[tp 4710.33500]",
     "commission": 0.0,
     "entry": 1,
     "external_id": "proactive",
@@ -1480,7 +1480,7 @@
     "volume": 0.01
   },
   {
-    "comment": "",
+    "comment": "[tp 4697.01600]",
     "commission": 0.0,
     "entry": 1,
     "external_id": "proactive",
@@ -1520,7 +1520,7 @@
     "volume": 0.01
   },
   {
-    "comment": "",
+    "comment": "[sl 4696.788]",
     "commission": 0.0,
     "entry": 1,
     "external_id": "",
@@ -1600,7 +1600,7 @@
     "volume": 0.01
   },
   {
-    "comment": "",
+    "comment": "[tp 4699.87200]",
     "commission": 0.0,
     "entry": 1,
     "external_id": "proactive",
@@ -1640,7 +1640,7 @@
     "volume": 0.01
   },
   {
-    "comment": "",
+    "comment": "[tp 4706.29300]",
     "commission": 0.0,
     "entry": 1,
     "external_id": "proactive",
@@ -1680,7 +1680,7 @@
     "volume": 0.01
   },
   {
-    "comment": "",
+    "comment": "[sl 4690.910]",
     "commission": 0.0,
     "entry": 1,
     "external_id": "",
@@ -1720,7 +1720,7 @@
     "volume": 0.01
   },
   {
-    "comment": "",
+    "comment": "[sl 4693.47800]",
     "commission": 0.0,
     "entry": 1,
     "external_id": "proactive",
@@ -1760,7 +1760,7 @@
     "volume": 0.01
   },
   {
-    "comment": "",
+    "comment": "[sl 4697.45100]",
     "commission": 0.0,
     "entry": 1,
     "external_id": "proactive",
@@ -1800,7 +1800,7 @@
     "volume": 0.01
   },
   {
-    "comment": "",
+    "comment": "[sl 4667.10900]",
     "commission": 0.0,
     "entry": 1,
     "external_id": "proactive",
@@ -1840,7 +1840,7 @@
     "volume": 0.01
   },
   {
-    "comment": "",
+    "comment": "[sl 4678.82500]",
     "commission": 0.0,
     "entry": 1,
     "external_id": "proactive",
@@ -1920,7 +1920,7 @@
     "volume": 0.01
   },
   {
-    "comment": "",
+    "comment": "[sl 4325.235]",
     "commission": 0.0,
     "entry": 1,
     "external_id": "",
@@ -2000,7 +2000,7 @@
     "volume": 0.01
   },
   {
-    "comment": "",
+    "comment": "[tp 4198.43500]",
     "commission": 0.0,
     "entry": 1,
     "external_id": "proactive",
@@ -2040,7 +2040,7 @@
     "volume": 0.01
   },
   {
-    "comment": "",
+    "comment": "[sl 4203.69100]",
     "commission": 0.0,
     "entry": 1,
     "external_id": "proactive",
@@ -2080,7 +2080,7 @@
     "volume": 0.01
   },
   {
-    "comment": "",
+    "comment": "[sl 4173.52900]",
     "commission": 0.0,
     "entry": 1,
     "external_id": "proactive",
@@ -2160,7 +2160,7 @@
     "volume": 0.01
   },
   {
-    "comment": "",
+    "comment": "[sl 4136.76400]",
     "commission": 0.0,
     "entry": 1,
     "external_id": "proactive",
@@ -2240,7 +2240,7 @@
     "volume": 0.01
   },
   {
-    "comment": "",
+    "comment": "[sl 4111.08800]",
     "commission": 0.0,
     "entry": 1,
     "external_id": "proactive",
@@ -2420,7 +2420,7 @@
     "volume": 0.01
   },
   {
-    "comment": "",
+    "comment": "Archived deals",
     "commission": 0.0,
     "entry": 0,
     "external_id": "",
@@ -2460,7 +2460,7 @@
     "volume": 0.01
   },
   {
-    "comment": "",
+    "comment": "[sl 4022.050]",
     "commission": 0.0,
     "entry": 1,
     "external_id": "",
@@ -2500,7 +2500,7 @@
     "volume": 0.01
   },
   {
-    "comment": "",
+    "comment": "[tp 4017.70900]",
     "commission": 0.0,
     "entry": 1,
     "external_id": "proactive",
@@ -2540,7 +2540,7 @@
     "volume": 0.01
   },
   {
-    "comment": "",
+    "comment": "[sl 4025.34400]",
     "commission": 0.0,
     "entry": 1,
     "external_id": "proactive",
@@ -2620,7 +2620,7 @@
     "volume": 0.01
   },
   {
-    "comment": "",
+    "comment": "[sl 4038.17300]",
     "commission": 0.0,
     "entry": 1,
     "external_id": "proactive",
@@ -2660,7 +2660,7 @@
     "volume": 0.01
   },
   {
-    "comment": "",
+    "comment": "[sl 4027.72700]",
     "commission": 0.0,
     "entry": 1,
     "external_id": "proactive",
@@ -2700,7 +2700,7 @@
     "volume": 0.01
   },
   {
-    "comment": "",
+    "comment": "[sl 4035.112]",
     "commission": 0.0,
     "entry": 1,
     "external_id": "",
@@ -2740,7 +2740,7 @@
     "volume": 0.01
   },
   {
-    "comment": "",
+    "comment": "[sl 4027.71000]",
     "commission": 0.0,
     "entry": 1,
     "external_id": "proactive",
@@ -2780,7 +2780,7 @@
     "volume": 0.01
   },
   {
-    "comment": "",
+    "comment": "[tp 4057.19300]",
     "commission": 0.0,
     "entry": 1,
     "external_id": "proactive",
