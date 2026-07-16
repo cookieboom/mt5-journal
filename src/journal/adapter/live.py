@@ -1,0 +1,151 @@
+"""The live MT5 adapter. THE ONLY FILE ALLOWED TO IMPORT THE BRIDGE.
+
+CLAUDE.md Hard rule 1 (import) and Hard rule 12 (values): the MT5 vocabulary —
+the `siliconmetatrader5` module, its `TIMEFRAME_*` constants, its `DEAL_*`
+integers — is confined to this file. Everything leaving here is one of our own
+dataclasses / strings from `base.py`.
+"""
+
+from __future__ import annotations
+
+from dataclasses import fields
+from typing import Any
+
+from siliconmetatrader5 import MetaTrader5  # noqa: the one permitted import
+
+from .base import (
+    Account,
+    Candle,
+    Deal,
+    DealEntry,
+    DealReason,
+    DealType,
+    Order,
+    Position,
+    SymbolInfo,
+    Tick,
+)
+
+
+def _build(cls, raw: dict[str, Any]):
+    """Map a bridge `._asdict()` into our dataclass: keep declared fields, stash
+    the whole dict in `raw`. Unknown MT5 fields survive in `raw` (forward-compat)."""
+    known = {f.name for f in fields(cls)} - {"raw"}
+    kwargs = {k: raw[k] for k in known if k in raw}
+    return cls(**kwargs, raw=dict(raw))
+
+
+class LiveMT5Client:
+    """Implements `MT5Client` over the siliconmetatrader5 bridge."""
+
+    def __init__(
+        self, host: str = "localhost", port: int = 8001, keepalive: bool = True
+    ) -> None:
+        self._mt5 = MetaTrader5(host=host, port=port, keepalive=keepalive)
+        if not self._mt5.initialize():
+            raise RuntimeError(
+                f"MT5 bridge initialize() failed on {host}:{port} — is the "
+                f"Docker container up? last_error={self._safe_last_error()}"
+            )
+        self._assert_enums_match()
+        # Map our timeframe strings to the bridge constants. Built here so no
+        # MT5 TIMEFRAME_* value ever leaves this file (Rule 12).
+        self._tf = {
+            "M1": self._mt5.TIMEFRAME_M1,
+            "M5": self._mt5.TIMEFRAME_M5,
+            "M15": self._mt5.TIMEFRAME_M15,
+            "H1": self._mt5.TIMEFRAME_H1,
+            "H4": self._mt5.TIMEFRAME_H4,
+            "D1": self._mt5.TIMEFRAME_D1,
+        }
+
+    def _safe_last_error(self) -> Any:
+        try:
+            return self._mt5.last_error()
+        except Exception:  # pragma: no cover - diagnostic only
+            return "unavailable"
+
+    def _assert_enums_match(self) -> None:
+        """Our IntEnums are authoritative for the codebase; verify the bridge's
+        constants still agree with them (docs/mt5-deal-model.md §2 says confirm,
+        don't hardcode). A mismatch or missing attribute is a hard failure."""
+        checks = {
+            DealType: "DEAL_TYPE_{}",
+            DealEntry: "DEAL_ENTRY_{}",
+            DealReason: "DEAL_REASON_{}",
+        }
+        for enum_cls, tmpl in checks.items():
+            for member in enum_cls:
+                attr = tmpl.format(member.name)
+                if not hasattr(self._mt5, attr):
+                    raise RuntimeError(
+                        f"bridge is missing constant {attr}; cannot trust "
+                        f"{enum_cls.__name__}.{member.name}={member.value}"
+                    )
+                bridge_val = getattr(self._mt5, attr)
+                if bridge_val != member.value:
+                    raise RuntimeError(
+                        f"enum mismatch: {enum_cls.__name__}.{member.name}="
+                        f"{member.value} but bridge {attr}={bridge_val}"
+                    )
+
+    # --------------------------------------------------------------- methods
+
+    def account_info(self) -> Account | None:
+        info = self._mt5.account_info()
+        return _build(Account, info._asdict()) if info is not None else None
+
+    def symbol_info(self, symbol: str) -> SymbolInfo | None:
+        # Select into Market Watch first, else out-of-watch symbols return None
+        # silently (trap 12).
+        self._mt5.symbol_select(symbol, True)
+        info = self._mt5.symbol_info(symbol)
+        return _build(SymbolInfo, info._asdict()) if info is not None else None
+
+    def symbol_info_tick(self, symbol: str) -> Tick | None:
+        self._mt5.symbol_select(symbol, True)  # trap 12
+        tick = self._mt5.symbol_info_tick(symbol)
+        return _build(Tick, tick._asdict()) if tick is not None else None
+
+    def symbols_get(self, group: str | None = None) -> list[SymbolInfo]:
+        syms = self._mt5.symbols_get(group) if group else self._mt5.symbols_get()
+        return [_build(SymbolInfo, s._asdict()) for s in (syms or ())]
+
+    def copy_rates_range(
+        self, symbol: str, timeframe: str, date_from: Any, date_to: Any
+    ) -> list[Candle]:
+        if timeframe not in self._tf:
+            raise ValueError(
+                f"unknown timeframe {timeframe!r}; expected one of {list(self._tf)}"
+            )
+        rows = self._mt5.copy_rates_range(
+            symbol, self._tf[timeframe], date_from, date_to
+        )
+        out: list[Candle] = []
+        for r in rows if rows is not None else ():
+            # MT5 returns a numpy structured array; each row exposes named fields.
+            out.append(
+                Candle(
+                    time=int(r["time"]),
+                    open=float(r["open"]),
+                    high=float(r["high"]),
+                    low=float(r["low"]),
+                    close=float(r["close"]),
+                    tick_volume=int(r["tick_volume"]),
+                    spread=int(r["spread"]),
+                    real_volume=int(r["real_volume"]),
+                )
+            )
+        return out
+
+    def history_deals_get(self, date_from: Any, date_to: Any) -> list[Deal]:
+        deals = self._mt5.history_deals_get(date_from, date_to)
+        return [_build(Deal, d._asdict()) for d in (deals or ())]
+
+    def history_orders_get(self, date_from: Any, date_to: Any) -> list[Order]:
+        orders = self._mt5.history_orders_get(date_from, date_to)
+        return [_build(Order, o._asdict()) for o in (orders or ())]
+
+    def positions_get(self) -> list[Position]:
+        positions = self._mt5.positions_get()
+        return [_build(Position, p._asdict()) for p in (positions or ())]
