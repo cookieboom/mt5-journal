@@ -31,14 +31,39 @@ home each, and a second copy is a future lie. Point, never duplicate.
 
 ## CURRENT STATE — update this section every session
 
-**Last updated:** 2026-07-16
+**Last updated:** 2026-07-17
 
 **Done:** M0 (adapter + store + doctor) · M0.1 (Candle→ms, enums probed from the
 bridge) · M0.2 (fixtures re-recorded with `comment` preserved, `a15cc5e`) ·
 M1 + M1.1 + M1.2 (ingest, archive detector, bridge-free `verify`, reconcile,
-`equity` modelled — 24 tests green, `1d086c2` / `10d9141`).
+`equity` modelled — `1d086c2` / `10d9141`) · **M2 + M2.1** (`reconstruct.py`:
+deals → trades, `journal rebuild`, `journal verify` §6 identity 2 — 55 tests
+green, `48a4cc7`).
 
-**The live smoke passed, and it is the strongest evidence this project has.**
+**M2 closed the milestone everything since M0 was built to make verifiable.**
+Reconstruction is a *partition* of the deals, and the §6 identity-2 invariant
+now proves it lost or double-counted nothing:
+
+```
+offline (140-deal fixture):  sum(trades.net) 63.72 + non-trade 5998.00 = 6061.72
+live (traded since):         sum(trades.net) 71.72 + non-trade 5998.00 = 6069.72
+```
+
+Both partition the balance exactly. Offline drive: rebuild → 68 trades →
+reconcile 14.50 → verify PASS both identities → rebuild idempotent. The live
+identity-2 check passed too (71.72 + 5998.00 = 6069.72) — the invariant held on
+data that did not exist when the code was written.
+
+Two facts M2 *measured* (numbers in `docs/mt5-deal-model.md` §7):
+- `sl_initial` is recoverable from `orders_raw` for only **6 of 68** trades, and
+  those six are exactly the EA set: `{sl!=0} == {magic!=0} == {reason==EXPERT}`.
+  Discretionary R-coverage is **0 of 62**. So one side of the EA/discretionary
+  split M5 requires is empty until the M4 poller records SLs going forward —
+  another way M4 is load-bearing, not a nicety.
+- 62 of 68 trades therefore carry `sl_initial IS NULL` / `r_multiple IS NULL`,
+  correctly excluded from R stats (never coerced to 0 — Trap 6).
+
+**The M1.2 live smoke still stands as the strongest ingest evidence:**
 
 ```
 sum(deal cash):  6061.72 → 6069.72   (+8.00, traded since the fixtures)
@@ -48,32 +73,16 @@ residual:          14.50 →   14.50   (unmoved)
 
 The broker returned 148 deals, not the 140 in the fixtures. Both sides of the
 identity moved by exactly the same amount and the gap did not budge — the
-prediction held against real money, on data that did not exist when the code was
-written. `archived: none` (the Trap 16 tripwire is armed and quiet). Offset
-measured 0 this sync, not inherited.
+prediction held against real money. `archived: none` (the Trap 16 tripwire is
+armed and quiet). Offset measured 0 that sync, not inherited.
 
 **Not blocked.**
 
-**Next: M2 — `domain/reconstruct.py`.** The hard one. Everything built so far
-exists to make it verifiable.
-
-1. `ingest/deals.py` reads `equity = acct.raw.get("equity")`, justified in a
-   comment as "the raw dump, the blessed carrier for un-modelled fields". It is
-   not. `raw` was blessed for exactly one job — verbatim archival into
-   `raw_json`, so the store survives MT5 adding fields. It is not a read path for
-   semantic fields. Reading it from `ingest/` puts the MT5 field name `"equity"`
-   outside the adapter (rule 12), returns `None` silently when absent, and sets
-   the precedent "need a field? grab it from `.raw`" — which will be everywhere by
-   M5, leaving the Protocol decorative. Fix: model `equity` on `Account` in
-   `base.py`, map it in `live.py` and `fake.py`. Three lines, right file.
-2. **The live smoke has never run.** Every drive so far used `FakeMT5Client`
-   against a frozen fixture snapshot. `journal sync` via the CLI hardcodes
-   `LiveMT5Client`, and that path has been executed zero times. `data/journal.db`
-   does not exist.
-   Prediction to check it against: live residual should be **exactly +14.50**
-   however much has been traded since — each new deal moves `sum(deals)` and
-   `balance` by the same amount, so the gap cannot drift. Anything else means
-   something is broken; stop and find it before M2.
+**Next: M3 — candle store + mplfinance renderer (`journal chart <id>`).** Two
+things wait there: **Trap 15** (`copy_rates_*` returns epoch SECONDS while the
+`candles` column is `_msc` — the ×1000 lives at the adapter boundary; get it
+wrong and the renderer matches zero rows and draws an empty chart), and the open
+question on **`MaxBars`** actually in effect in the container.
 
 ### The 14.50 USC gap — RESOLVED, do not reopen
 
@@ -171,8 +180,9 @@ note what was measured.
 | M1 | Ingest deals/orders → `_raw` tables, `journal verify` | done (`1d086c2`) |
 | M1.1 | Archive detector, bridge-free verify, offset COALESCE | done (`1d086c2`) |
 | M1.2 | Model `equity` on `Account`; live smoke passed | done (`10d9141`) |
-| M2 | **`reconstruct.py`: deals → trades** | **next — the hard one** |
-| M3 | Candle store + mplfinance renderer (`journal chart <id>`) | |
+| M2 | `reconstruct.py`: deals → trades, `rebuild`, §6 identity 2 | done (`48a4cc7`) |
+| M2.1 | Review fixes: zero-risk R guard, NULL time_msc reject, guard dedup | done (`48a4cc7`) |
+| M3 | Candle store + mplfinance renderer (`journal chart <id>`) | **next** |
 | M4 | SL/TP poller — makes `sl_initial` knowable, and outruns the archiver | |
 | M5 | Analytics: R-multiple, MAE/MFE, sessions, behaviour | |
 | M6 | Annotations + weekly report | |
