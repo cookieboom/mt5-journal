@@ -655,6 +655,60 @@ The three are the **same six trades**: `S == M == E`, `|S ∩ M ∩ E| = 6`.
 So `sl_initial` (hence `risk_amount`, hence `r_multiple`) is recoverable from
 `orders_raw` for the **6 EA trades only**; discretionary R-coverage is **0 of 62**.
 
+### Trade duration profile — measured 2026-07-17 (gates M3)
+
+Computed directly from the 140-deal fixture, not recalled. 136 trade deals + 4
+non-trade (3 `BALANCE`, 1 `CORRECTION`) → **68 trades, all closed**, `entry`
+values `[0, 1]` only. Confirms §7's headline figures independently.
+
+| Fact | Value |
+|---|---|
+| History span | 2025-12-08 13:56 → 2026-07-15 12:35 UTC (**218.9 days**) |
+| Duration min / p25 / median / p75 / max | 1s / 2m13s / **6m13s** / 20m18s / 11h25m |
+| Under 15min · 5min · 1min | 47/68 · 31/68 · 11/68 |
+| Symbols | `XAUUSDc` 65 · `BTCUSDc` 2 · `EURUSDc` 1 |
+
+**How many bars the trade itself spans, per timeframe:**
+
+| TF | trade fits in ≤1 bar | median bars |
+|---|---:|---:|
+| M1 | 11/68 | 7 |
+| M5 | 31/68 | 2 |
+| M15 | **47/68** | 1 |
+| H1 | 63/68 | 1 |
+
+→ **M15 renders the median trade as a single candle.** The `"XAUUSDc:M15"` used
+throughout this doc and in `fake.py`/`test_adapter.py` is an *illustrative
+fixture key*, not a recommended renderer default. M1 is the only supported TF
+where the median trade has visible structure.
+→ **11/68 trades are shorter than one M1 bar** (min 1s). No supported TF can show
+their entry and exit as separate bars. Decide honestly what to render for them;
+do not fake precision.
+→ Symbol skew is decisive for M5: `BTCUSDc` n=2, `EURUSDc` n=1. Under §9's n<20
+rule neither will ever yield a reportable statistic. They matter as code paths,
+not as populations.
+
+### Three different causes of "empty chart, no error" — M3's real hazard
+
+Trap 15 is **already implemented and tested** (`live.py`/`fake.py` both do
+`int(r["time"]) * 1000`; `test_adapter.py::test_candle_time_is_milliseconds`
+asserts `1752624000 → 1752624000000` plus a `>= 10**12` guard). The M3 risk is no
+longer *forgetting* the ×1000 — it is **adding a second one** in
+`ingest/candles.py`, and two other faults that present identically:
+
+| Cause | Symptom | Distinguished by |
+|---|---|---|
+| Trap 15 — seconds in a `_msc` column | window query matches 0 rows | magnitude assert (`< 10**12`) |
+| `MaxBars` truncation — bars never existed to fetch | `copy_rates_range` returns `[]` | probe: earliest bar actually returned per TF |
+| Symbol not in Market Watch (trap 12) | `copy_rates_range` returns `[]` | probe: same call with/without `symbol_select` |
+
+**Open: `live.py.copy_rates_range()` does NOT call `symbol_select(symbol, True)`,
+while `symbol_info()` and `symbol_info_tick()` both do** — the latter carrying the
+comment "else out-of-watch symbols return None silently (trap 12)". If the trap
+applies to rates, this is a latent silent-empty-chart bug. **Measure it before
+M3 designs around it** (`scripts/probe_rates.py`).
+
+
 ## 8. Risk calculation — the reference figure
 
 Verified by hand against the specs above. Any code that disagrees is wrong.
