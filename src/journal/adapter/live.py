@@ -126,6 +126,13 @@ class LiveMT5Client:
             raise ValueError(
                 f"unknown timeframe {timeframe!r}; expected one of {list(self._tf)}"
             )
+        # Select into Market Watch first, else out-of-watch symbols return None/[]
+        # silently (trap 12) — same reasoning as symbol_info/symbol_info_tick above.
+        # Idempotent; one call per windowed fetch, not per bar. Not a proven bug on
+        # this bridge (the 2026-07-17 probe tested an already-selected symbol and
+        # could not settle it either way) — cheap insurance against a fresh
+        # container / reset Market Watch silently drawing an empty chart.
+        self._mt5.symbol_select(symbol, True)
         rows = self._mt5.copy_rates_range(
             symbol, self._tf[timeframe], date_from, date_to
         )

@@ -41,10 +41,14 @@ def test_scalar_methods_return_none_on_empty_fixtures(tmp_path):
     assert c.symbol_info_tick("XAUUSDc") is None
 
 
-def test_timeframe_is_a_string_not_an_int():
-    # Rule 12: the Protocol takes a string timeframe. A populated rates fixture is
-    # keyed "SYMBOL:TIMEFRAME"; here we just confirm the string call path works.
-    c = FakeMT5Client()
+def test_timeframe_is_a_string_not_an_int(tmp_path):
+    # Rule 12: the Protocol takes a string timeframe. Hermetic: point at an empty
+    # dir like its neighbours above, so this asserts the missing-fixture contract
+    # regardless of what real data lives in tests/fixtures/ (M3 populates
+    # rates.json with real XAUUSDc:M1 bars via scripts/record_fixtures.py, which
+    # would otherwise make "XAUUSDc:M15" non-empty and break this on an unrelated
+    # key -- fix the fixture dir, never weaken the assertion).
+    c = FakeMT5Client(fixtures_dir=tmp_path)
     assert c.copy_rates_range("XAUUSDc", "M15", None, None) == []
 
 

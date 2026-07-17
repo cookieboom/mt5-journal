@@ -287,6 +287,79 @@ def rebuild(db: str = typer.Option(_DEFAULT_DB, help="SQLite DB path.")) -> None
     typer.echo("\nNext: `journal verify` — check identity 2 (trades partition the deals).")
 
 
+# ------------------------------------------------------------------ candles
+
+
+@app.command()
+def candles(db: str = typer.Option(_DEFAULT_DB, help="SQLite DB path.")) -> None:
+    """Fetch OHLC bars for every closed trade's chart window into `candles` (M3).
+
+    Needs the live bridge (client-bearing, like `sync`). Idempotent: bars already
+    stored are skipped (PK-deduped on `symbol, timeframe, time_msc`). Run this
+    after `journal rebuild` and before `journal chart`.
+    """
+    from .adapter.live import LiveMT5Client
+    from .ingest.candles import sync_candles
+
+    client = LiveMT5Client()
+    conn = connect(db)
+    try:
+        r = sync_candles(client, conn)
+    finally:
+        conn.close()
+
+    typer.echo("== candles ==")
+    typer.echo(f"account:        {r.account_login}")
+    typer.echo(
+        f"trades:         {r.trades_seen} closed windowed, "
+        f"{r.trades_skipped_open} open/partial skipped (no close yet)"
+    )
+    typer.echo(f"bars:           {r.bars_new} new, {r.bars_seen - r.bars_new} already had")
+    typer.echo(f"symbols:        {', '.join(r.symbols) or '(none)'}")
+
+
+# --------------------------------------------------------------------- chart
+
+
+@app.command()
+def chart(
+    position_id: int = typer.Argument(
+        ..., help="trades.position_id — the STABLE key (survives rebuild)."
+    ),
+    tf: str = typer.Option(None, help="Override the duration-based timeframe pick."),
+    cache_dir: str = typer.Option("cache", help="Directory PNGs are written to."),
+    db: str = typer.Option(_DEFAULT_DB, help="SQLite DB path."),
+) -> None:
+    """Render one trade to a PNG in `cache/` (M3). Pure DB, no bridge needed —
+    reads `trades` + `candles` (run `journal candles` first if the window is
+    empty).
+
+    Takes `position_id`, never `trades.id`: `trades.id` is AUTOINCREMENT and
+    renumbers on every `rebuild` (docs/mt5-deal-model.md §5), so a saved command
+    built on it could silently chart the WRONG trade after a rebuild. The cache
+    filename is keyed the same way, so charts survive rebuilds too.
+    """
+    from .render.chart import NoCandlesError, TradeNotFoundError, render_trade
+
+    conn = connect(db)
+    try:
+        try:
+            r = render_trade(conn, position_id, tf=tf, cache_dir=cache_dir)
+        except (TradeNotFoundError, NoCandlesError) as e:
+            typer.echo(str(e))
+            raise typer.Exit(code=1)
+    finally:
+        conn.close()
+
+    typer.echo("== chart ==")
+    typer.echo(f"path:           {r.path}")
+    typer.echo(f"timeframe:      {r.timeframe}")
+    typer.echo(f"bars:           {r.n_bars} total ({r.n_trade_bars} span the trade)")
+    if r.same_bar:
+        typer.echo("note:           entry & exit fall within a single bar (sub-bar trade)")
+    typer.echo(f"sl drawn:       {r.sl_drawn}   tp drawn: {r.tp_drawn}")
+
+
 # -------------------------------------------------------------- reconcile
 
 reconcile_app = typer.Typer(help="Name balance-invariant residuals (never swallow them).")

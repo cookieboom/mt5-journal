@@ -1,10 +1,10 @@
 #!/usr/bin/env python
 """Snapshot the live account into tests/fixtures/*.json for the fake adapter.
 
-Records five streams — account, symbols, deals, orders, positions — dumping each
-record's full raw `._asdict()` so fixtures survive MT5 adding fields, then
-SANITISES the copy that goes into git. Run against the live bridge; review the
-resulting diff by hand before committing (CLAUDE.md Rule 10).
+Records six streams — account, symbols, deals, orders, positions, rates —
+dumping each record's full raw `._asdict()` so fixtures survive MT5 adding
+fields, then SANITISES the copy that goes into git. Run against the live
+bridge; review the resulting diff by hand before committing (CLAUDE.md Rule 10).
 
 This is a dev-only script under scripts/, not part of the importable package, so
 it may touch the bridge — and it does so through adapter.LiveMT5Client, which is
@@ -16,7 +16,8 @@ Sanitisation (what lands in git):
 NEVER touched: ticket, order, position_id  (reconstruction keys on them);
     comment, external_id  (execution metadata, not PII — the "Archived deals"
     marker and [sl]/[tp] tags live here; see Trap 16). Symbol `name` is the
-    instrument, not PII, so it survives too.
+    instrument, not PII, so it survives too. `rates` (candles) carry no PII at
+    all — no sanitisation needed.
 
 Usage:
     uv run python scripts/record_fixtures.py [--host localhost] [--port 8001]
@@ -26,11 +27,16 @@ from __future__ import annotations
 
 import argparse
 import json
-from datetime import datetime
+import statistics
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from journal.adapter.fake import FakeMT5Client
 from journal.adapter.live import LiveMT5Client
+from journal.domain.reconstruct import SymbolSpec, reconstruct
+from journal.domain.symbols import to_base
+from journal.render.chart import choose_timeframe, window_for
 
 FIXTURES = Path(__file__).resolve().parents[1] / "tests" / "fixtures"
 EPOCH_START = datetime(2000, 1, 1)  # full backfill; take everything (Trap 8)
@@ -71,6 +77,27 @@ def main() -> None:
     ap.add_argument("--port", type=int, default=8001)
     args = ap.parse_args()
 
+    # Read whatever is ALREADY committed on disk, before anything below
+    # overwrites it -- this is the frozen anchor the rates section uses so
+    # re-running this script never drifts rates.json away from the deals/orders
+    # snapshot the M1/M2 test suite hardcodes. Empty on a first-ever run (no
+    # fixtures committed yet); the rates section below degrades to writing an
+    # empty rates.json in that case, which is fine -- a bootstrap run's job is to
+    # seed deals.json first, then a SECOND run adds rates against it.
+    frozen = FakeMT5Client(fixtures_dir=FIXTURES)
+    frozen_deals = frozen.history_deals_get(None, None)
+    frozen_orders = frozen.history_orders_get(None, None)
+    frozen_symbols = frozen.symbols_get()
+    frozen_specs = {
+        s.name: SymbolSpec(
+            symbol=s.name, symbol_base=to_base(s.name),
+            tick_size=s.trade_tick_size, tick_value=s.trade_tick_value,
+            contract_size=s.trade_contract_size,
+        )
+        for s in frozen_symbols
+        if s.name
+    }
+
     client = LiveMT5Client(host=args.host, port=args.port)
     now = datetime.now()
 
@@ -98,11 +125,77 @@ def main() -> None:
         | {p.symbol for p in positions if p.symbol}
     )
     symbols = []
+    specs: dict[str, SymbolSpec] = {}
     for sym in traded:
         info = client.symbol_info(sym)
         if info is not None:
             symbols.append(sanitise(info.raw))  # keeps `name` = the symbol
+            specs[sym] = SymbolSpec(
+                symbol=sym, symbol_base=to_base(sym),
+                tick_size=info.trade_tick_size, tick_value=info.trade_tick_value,
+                contract_size=info.trade_contract_size,
+            )
     write("symbols", symbols)
+
+    # --- rates: one windowed chart per traded symbol ---------------------
+    # Anchored to the FROZEN, already-committed deals/orders/symbols on disk
+    # (read at the very top of main(), BEFORE this run's live fetch above
+    # overwrote them) -- NOT to this run's fresh pull. The account trades
+    # continuously; a fresh pull every run would pick a different "representative"
+    # trade each time and drift deals.json/orders.json/etc away from the exact
+    # frozen 2026-07-16 snapshot tests/test_ingest.py and tests/test_reconstruct.py
+    # hardcode (140 deals, 68 trades, balance 6047.22, ...). Reusing the REAL
+    # reconstruction (domain.reconstruct.reconstruct) on the FROZEN data -- no DB
+    # needed, same pure function `journal rebuild` calls -- keeps rates.json
+    # consistent with that same frozen snapshot across every re-run. Picks, per
+    # symbol, the CLOSED trade whose duration is closest to that symbol's median
+    # (a representative trade, not the extreme), then fetches exactly the render
+    # window `journal chart` would ask for (choose_timeframe + window_for, M3) --
+    # small and windowed, never a bulk unwindowed pull (220k+ M1 bars for
+    # XAUUSDc alone). The live client is still used here, but ONLY for
+    # `copy_rates_range` on that historical window -- never to re-select which
+    # trade is "representative".
+    frozen_orders_by_ticket = {
+        o.ticket: o for o in frozen_orders if o.ticket is not None
+    }
+    frozen_trades = reconstruct(
+        frozen_deals, frozen_orders_by_ticket, frozen_specs, account_login=acct.login
+    )
+    closed = [t for t in frozen_trades if t.status == "closed"]
+
+    rates: dict[str, list[dict[str, Any]]] = {}
+    rates_summary: list[str] = []
+    for sym in sorted({t.symbol for t in closed}):
+        sym_trades = [t for t in closed if t.symbol == sym]
+        durations = [t.duration_s for t in sym_trades]
+        median = statistics.median(durations)
+        rep = min(sym_trades, key=lambda t: abs(t.duration_s - median))
+
+        tf = choose_timeframe(rep.duration_s)
+        from_msc, to_msc = window_for(rep.open_time_msc, rep.close_time_msc, tf)
+        from_dt = datetime.fromtimestamp(from_msc / 1000, tz=timezone.utc)
+        to_dt = datetime.fromtimestamp(to_msc / 1000, tz=timezone.utc)
+        candles = client.copy_rates_range(sym, tf, from_dt, to_dt)
+
+        # Fixture contract stores raw SECONDS (mirrors what the bridge returns
+        # over the wire); FakeMT5Client re-applies the x1000 itself, exactly like
+        # live.py does (Trap 15). `copy_rates_range` already gave us `time_msc`
+        # in ms, so `// 1000` is the one exact inverse that restores the wire
+        # value -- round-trips precisely since bridge time is integer seconds.
+        rates[f"{sym}:{tf}"] = [
+            {
+                "time": c.time_msc // 1000,
+                "open": c.open, "high": c.high, "low": c.low, "close": c.close,
+                "tick_volume": c.tick_volume, "spread": c.spread,
+                "real_volume": c.real_volume,
+            }
+            for c in candles
+        ]
+        rates_summary.append(
+            f"{sym}: position_id={rep.position_id} duration={rep.duration_s}s "
+            f"tf={tf} bars={len(candles)}"
+        )
+    write("rates", rates)
 
     # --- summary ---------------------------------------------------------
     print("recorded fixtures ->", FIXTURES)
@@ -111,6 +204,11 @@ def main() -> None:
     print(f"  orders     : {len(orders)}")
     print(f"  positions  : {len(positions)}")
     print(f"  symbols    : {len(symbols)} ({', '.join(traded) or 'none'})")
+    rates_path = FIXTURES / "rates.json"
+    print(f"  rates      : {len(rates)} symbol:tf window(s), "
+          f"{rates_path.stat().st_size} bytes")
+    for line in rates_summary:
+        print(f"    - {line}")
 
     # --- balance invariant, §6 first identity ---------------------------
     # sum(profit + commission + swap + fee) over ALL deals == account.balance
