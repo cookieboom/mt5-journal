@@ -360,6 +360,67 @@ def chart(
     typer.echo(f"sl drawn:       {r.sl_drawn}   tp drawn: {r.tp_drawn}")
 
 
+# ---------------------------------------------------------------------- poll
+
+
+@app.command()
+def poll(
+    interval: float = typer.Option(5.0, help="Seconds between snapshot cycles."),
+    once: bool = typer.Option(
+        False, help="Run a single cycle and exit (cron-friendly / smoke test)."
+    ),
+    duration: float = typer.Option(
+        None, help="Stop after this many seconds (default: run until Ctrl+C)."
+    ),
+    db: str = typer.Option(_DEFAULT_DB, help="SQLite DB path."),
+) -> None:
+    """Snapshot live open positions' SL/TP into `sl_tp_snapshots` (M4).
+
+    Needs the live bridge (client-bearing, like `sync`/`candles`) and an account
+    already known to the store (`journal sync` first). `positions_get()` only
+    returns CURRENTLY OPEN positions — this recovers `sl_initial` for the 62/68
+    discretionary trades going forward only; it cannot retroactively help a
+    trade that already closed (docs/mt5-deal-model.md Trap 6). Change-only
+    logging: a row is written only when SL/TP/volume actually changes, so an
+    idle account writes nothing. Ctrl+C stops cleanly.
+    """
+    from .adapter.live import LiveMT5Client
+    from .ingest.poller import poll_loop
+
+    def _echo_cycle(r) -> None:
+        # `journal poll` (no --once) is a FOREGROUND command a human watches;
+        # log.info alone is invisible with no handler configured, so without
+        # this the process would look hung until Ctrl+C even while working.
+        # Change-only philosophy carries over here too: stay silent on an idle
+        # cycle, print only when something real happened.
+        if r.snapshots_written:
+            when = datetime.fromtimestamp(r.observed_msc / 1000, tz=timezone.utc)
+            typer.echo(
+                f"  [{when:%H:%M:%S} UTC] {r.snapshots_written} new snapshot(s), "
+                f"{r.positions_seen} open position(s)"
+            )
+
+    conn = connect(db)
+    try:
+        login = _one_account_login(conn)  # friendly exit if `sync` never ran
+        client = LiveMT5Client()
+        typer.echo(
+            f"polling every {interval}s"
+            + ("" if once else " — Ctrl+C to stop" + (f", max {duration}s" if duration else ""))
+        )
+        r = poll_loop(
+            client, conn, login, interval=interval, once=once, duration=duration,
+            on_cycle=_echo_cycle,
+        )
+    finally:
+        conn.close()
+
+    typer.echo("== poll ==")
+    typer.echo(f"cycles:         {r.cycles}")
+    typer.echo(f"new snapshots:  {r.snapshots_written}")
+    typer.echo(f"stopped by:     {r.stopped_by}")
+
+
 # -------------------------------------------------------------- reconcile
 
 reconcile_app = typer.Typer(help="Name balance-invariant residuals (never swallow them).")

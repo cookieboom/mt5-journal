@@ -19,7 +19,7 @@ import pytest
 
 from journal.adapter.base import Deal, DealEntry, DealReason, DealType, Order
 from journal.adapter.fake import FakeMT5Client
-from journal.domain.reconstruct import SymbolSpec, Trade, rebuild, reconstruct
+from journal.domain.reconstruct import SlTpSnapshot, SymbolSpec, Trade, rebuild, reconstruct
 from journal.ingest.deals import add_reconciliation, sync, verify
 from journal.store.db import connect
 
@@ -51,6 +51,10 @@ def _deal(pid, entry, dtype, price, volume, ticket, *, order=0, time_msc=0,
 
 def _order(ticket, *, sl=0.0, tp=0.0, symbol="XAUUSDc"):
     return Order(ticket=ticket, sl=sl, tp=tp, symbol=symbol)
+
+
+def _snap(observed_msc, *, sl=None, tp=None, volume=None):
+    return SlTpSnapshot(observed_msc=observed_msc, sl=sl, tp=tp, volume=volume)
 
 
 def _one(trades) -> Trade:
@@ -241,6 +245,123 @@ def test_sl_exactly_at_entry_is_known_zero_risk_not_unknown():
     assert t.r_multiple is None                       # R undefined, but no crash
 
 
+# --- M4: SL/TP resolved from the poller when the order gives nothing --------
+
+
+def test_poller_earliest_nonzero_becomes_sl_initial():
+    # Order shows no SL (the 62-discretionary-trade case, docs §7). The poller
+    # observed no SL at t=1, then a real one at t=2 -- Trap 6's "actual first SL,
+    # regardless of how it was set". Risk & R become computable, same as the
+    # order-derived case.
+    deals = [
+        _deal(20, DealEntry.IN, DealType.BUY, 4000.0, 0.10, 1, order=400, time_msc=1),
+        _deal(20, DealEntry.OUT, DealType.SELL, 4010.0, 0.10, 2, time_msc=2, profit=10.0),
+    ]
+    orders = {400: _order(400, sl=0.0)}
+    snaps = {20: [_snap(1, sl=0.0), _snap(2, sl=3999.0)]}
+    t = _one(reconstruct(deals, orders, _SPECS, snapshots=snaps))
+    assert t.sl_source == "poller"
+    assert abs(t.sl_initial - 3999.0) < 1e-9
+    assert abs(t.risk_amount - 10.0) < 1e-9   # (1.0/0.001)*0.1*0.10
+    assert abs(t.r_multiple - 1.0) < 1e-9
+
+
+def test_poller_confirmed_no_sl_stores_zero_but_risk_stays_none():
+    # THE key guard test (plan decision 2). Every poller observation shows sl=0
+    # -> a POSITIVE confirmation (rule 4: "0 means none set"), stored as a real
+    # 0.0 -- but that 0.0 must NEVER reach risk_amount() as a price, or it
+    # computes a huge garbage number (|4000 - 0|/0.001 * 0.1 * 0.10 = 4000.0,
+    # not the correct "undefined"). risk_amount/r_multiple must be None, exactly
+    # like the fully-unknown case -- confirmed-absent is not the same as
+    # zero-risk (Trap 6: an SL AT entry is zero risk; NO SL is unbounded risk).
+    deals = [
+        _deal(21, DealEntry.IN, DealType.BUY, 4000.0, 0.10, 1, order=401, time_msc=1),
+        _deal(21, DealEntry.OUT, DealType.SELL, 4010.0, 0.10, 2, time_msc=2, profit=10.0),
+    ]
+    orders = {401: _order(401, sl=0.0)}
+    snaps = {21: [_snap(1, sl=0.0), _snap(2, sl=0.0)]}
+    t = _one(reconstruct(deals, orders, _SPECS, snapshots=snaps))
+    assert t.sl_initial == 0.0            # stored: a real, auditable fact
+    assert t.sl_source == "poller"
+    assert t.risk_amount is None          # NOT a huge number, NOT a false 0
+    assert t.r_multiple is None
+
+
+def test_no_poller_coverage_is_unchanged_m2_behavior():
+    # No snapshots at all for this position (poller wasn't running, or the trade
+    # closed before the poller ever saw it) -> falls back exactly as M2 did.
+    deals = [
+        _deal(22, DealEntry.IN, DealType.BUY, 4000.0, 0.10, 1, order=402, time_msc=1),
+        _deal(22, DealEntry.OUT, DealType.SELL, 4010.0, 0.10, 2, time_msc=2),
+    ]
+    orders = {402: _order(402, sl=0.0)}
+    t = _one(reconstruct(deals, orders, _SPECS, snapshots={}))
+    assert t.sl_initial is None
+    assert t.sl_source == "unknown"
+    assert t.risk_amount is None
+    assert t.r_multiple is None
+    # Omitting `snapshots` entirely must behave identically (backward compat).
+    t2 = _one(reconstruct(deals, orders, _SPECS))
+    assert t2.sl_initial is None and t2.sl_source == "unknown"
+
+
+def test_order_sl_wins_over_poller_data():
+    # Priority regression guard: when the order DOES give a real SL, poller data
+    # present for the same position must be irrelevant -- order still wins.
+    deals = [
+        _deal(23, DealEntry.IN, DealType.BUY, 4000.0, 0.10, 1, order=403, time_msc=1),
+        _deal(23, DealEntry.OUT, DealType.SELL, 4010.0, 0.10, 2, time_msc=2, profit=10.0),
+    ]
+    orders = {403: _order(403, sl=3990.0)}
+    snaps = {23: [_snap(1, sl=3900.0)]}  # a DIFFERENT value -- must be ignored
+    t = _one(reconstruct(deals, orders, _SPECS, snapshots=snaps))
+    assert t.sl_source == "order"
+    assert abs(t.sl_initial - 3990.0) < 1e-9
+
+
+def test_poller_scans_past_leading_zeros_to_first_real_price():
+    # [0, 0, 3990, 3990] must resolve to 3990, not misclassify as "confirmed
+    # none" by looking only at the first row.
+    deals = [
+        _deal(24, DealEntry.IN, DealType.BUY, 4000.0, 0.10, 1, order=404, time_msc=1),
+        _deal(24, DealEntry.OUT, DealType.SELL, 4010.0, 0.10, 2, time_msc=2, profit=10.0),
+    ]
+    orders = {404: _order(404, sl=0.0)}
+    snaps = {24: [_snap(1, sl=0.0), _snap(2, sl=0.0), _snap(3, sl=3990.0), _snap(4, sl=3990.0)]}
+    t = _one(reconstruct(deals, orders, _SPECS, snapshots=snaps))
+    assert t.sl_source == "poller"
+    assert abs(t.sl_initial - 3990.0) < 1e-9
+
+
+def test_poller_observed_sl_at_entry_is_known_zero_risk():
+    # Mirrors test_sl_exactly_at_entry_is_known_zero_risk_not_unknown, but the
+    # price comes from the poller instead of the order.
+    deals = [
+        _deal(25, DealEntry.IN, DealType.BUY, 4000.0, 0.10, 1, order=405, time_msc=1),
+        _deal(25, DealEntry.OUT, DealType.SELL, 4010.0, 0.10, 2, time_msc=2, profit=10.0),
+    ]
+    orders = {405: _order(405, sl=0.0)}
+    snaps = {25: [_snap(1, sl=4000.0)]}  # == open_price
+    t = _one(reconstruct(deals, orders, _SPECS, snapshots=snaps))
+    assert t.sl_source == "poller"
+    assert t.risk_amount is not None and t.risk_amount == 0.0
+    assert t.r_multiple is None  # undefined, not a crash
+
+
+def test_tp_resolves_from_poller_independently_of_sl():
+    # A position can have SL confirmed-none but a real TP -- they resolve
+    # independently (plan decision 1). tp has no dedicated source column.
+    deals = [
+        _deal(26, DealEntry.IN, DealType.BUY, 4000.0, 0.10, 1, order=406, time_msc=1),
+        _deal(26, DealEntry.OUT, DealType.SELL, 4010.0, 0.10, 2, time_msc=2, profit=10.0),
+    ]
+    orders = {406: _order(406, sl=0.0, tp=0.0)}
+    snaps = {26: [_snap(1, sl=0.0, tp=0.0), _snap(2, sl=0.0, tp=4050.0)]}
+    t = _one(reconstruct(deals, orders, _SPECS, snapshots=snaps))
+    assert t.sl_initial == 0.0 and t.sl_source == "poller"   # confirmed none
+    assert abs(t.tp_initial - 4050.0) < 1e-9                  # real TP recovered
+
+
 def test_deal_with_null_time_msc_is_filtered_not_sorted_as_1970():
     # Amendment #2: a trade deal with time_msc=None must be rejected by the Trap-1
     # filter, never sorted as an epoch-0 (1970) timestamp — the silent error the whole
@@ -404,6 +525,89 @@ def test_rebuild_reads_typed_columns_not_raw_json(conn, client):
     conn.commit()
     rebuild(conn)  # would raise TypeError if it did Deal(**json.loads(raw_json))
     assert conn.execute("SELECT COUNT(*) FROM trades").fetchone()[0] == 68
+
+
+def test_rebuild_applies_poller_snapshots_scanning_past_leading_zeros(conn, client):
+    # DB-level version of test_poller_scans_past_leading_zeros_to_first_real_price
+    # -- exercises _load_sl_snapshots' ORDER BY (position_id, observed_msc)
+    # against a real discretionary trade from the fixture, not a hand-built one.
+    sync(client, conn)
+    rebuild(conn)
+    row = conn.execute(
+        "SELECT position_id, open_price FROM trades WHERE sl_source = 'unknown' LIMIT 1"
+    ).fetchone()
+    assert row is not None, "fixture must contain at least one discretionary trade"
+    pid, open_price = row["position_id"], row["open_price"]
+
+    # An early zero (no SL yet), then a real SL moments later. The loader must
+    # preserve this order so resolution scans past the leading zero.
+    conn.execute(
+        "INSERT INTO sl_tp_snapshots (account_login, position_id, observed_msc, sl, tp, volume) "
+        "VALUES (?, ?, 1, 0.0, 0.0, 0.1)",
+        (_LOGIN, pid),
+    )
+    conn.execute(
+        "INSERT INTO sl_tp_snapshots (account_login, position_id, observed_msc, sl, tp, volume) "
+        "VALUES (?, ?, 2, ?, 0.0, 0.1)",
+        (_LOGIN, pid, open_price - 5.0),
+    )
+    conn.commit()
+
+    rebuild(conn)
+    t = conn.execute(
+        "SELECT sl_source, sl_initial FROM trades WHERE position_id = ?", (pid,)
+    ).fetchone()
+    assert t["sl_source"] == "poller"
+    assert abs(t["sl_initial"] - (open_price - 5.0)) < 1e-9
+
+
+def test_rebuild_idempotent_with_poller_snapshots_present(conn, client):
+    sync(client, conn)
+    rebuild(conn)
+    pid = conn.execute(
+        "SELECT position_id FROM trades WHERE sl_source = 'unknown' LIMIT 1"
+    ).fetchone()["position_id"]
+    conn.execute(
+        "INSERT INTO sl_tp_snapshots (account_login, position_id, observed_msc, sl, tp, volume) "
+        "VALUES (?, ?, 1, 0.0, 0.0, 0.1)",
+        (_LOGIN, pid),
+    )
+    conn.commit()
+
+    rebuild(conn)
+    cols = _trade_value_cols(conn)
+    first = _snapshot(conn, cols)
+    rebuild(conn)  # sl_tp_snapshots is append-only + read-only here: must reproduce exactly
+    second = _snapshot(conn, cols)
+    assert first == second
+
+
+def test_killer_identity_2_holds_with_poller_snapshots_present(conn, client):
+    # sl_tp_snapshots feeds sl_initial/risk/r_multiple only -- none of those enter
+    # the cash partition (§6 identity 2 = SUM(net_profit) + non-trade cash). This
+    # proves that structurally, not just by assertion.
+    sync(client, conn)
+    rebuild(conn)
+    pid = conn.execute(
+        "SELECT position_id FROM trades WHERE sl_source = 'unknown' LIMIT 1"
+    ).fetchone()["position_id"]
+    conn.execute(
+        "INSERT INTO sl_tp_snapshots (account_login, position_id, observed_msc, sl, tp, volume) "
+        "VALUES (?, ?, 1, 0.0, 0.0, 0.1)",
+        (_LOGIN, pid),
+    )
+    conn.commit()
+    rebuild(conn)
+
+    add_reconciliation(
+        conn, _LOGIN, _GAP, effective_msc=1783745936454,
+        reason="Broker archived deals; underlying deals unrecoverable.",
+        evidence="correction deal 1399033630, comment 'Archived deals'",
+    )
+    v = verify(conn)
+    assert v.passed
+    assert abs(v.residual2) < _TOL
+    assert abs(v.trades_net - 63.72) < _TOL   # unchanged by the poller data
 
 
 def test_killer_balance_identity_2_holds_over_real_history(conn, client):

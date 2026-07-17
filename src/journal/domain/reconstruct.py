@@ -1,4 +1,4 @@
-"""Deals -> trades. The hard milestone (M2).
+"""Deals -> trades. The hard milestone (M2), extended by the poller (M4).
 
 A "trade" is not an MT5 object; it is the human idea *I entered here, I exited
 there*, reconstructed by grouping deals on `position_id` (docs/mt5-deal-model.md §1).
@@ -10,15 +10,19 @@ silently-wrong number is paid for:
   - Trap 4/5 INOUT / OUT_BY raise NotImplementedError (impossible / never-seen on
              this hedging account) — never fall through the OUT path and corrupt VWAP.
   - Trap 6  sl_initial from the opening order; 0.0 and missing both mean NULL, not 0.
+             M4 adds a second source (`sl_tp_snapshots`, the poller) that CAN
+             positively confirm "no SL was ever set" as a real 0.0 (CLAUDE.md
+             rule 4) — but that 0.0 must never reach `risk_amount()` as a price.
+             See `_real_sl_price`.
   - Trap 8  an OUT with no IN is an orphan — skip and warn, never guess the entry.
   - Trap 9  net_profit sums profit+commission+swap+fee over EVERY deal in the group.
   - Trap 11 risk needs contract specs (domain/risk.py), not price distance.
 
-`reconstruct()` is pure: hand it deals + an order map + a spec map and it returns
-`Trade`s, no DB, no bridge (CLAUDE.md rule 7). `rebuild()` is the DB orchestrator:
-it reads the append-only `_raw` tables, calls `reconstruct()`, then DELETEs and
-re-INSERTs `trades` — never UPDATE (rule 2, §4 step 5). Enums come from the adapter;
-`domain/` holds no MT5 magic integer (rule 12).
+`reconstruct()` is pure: hand it deals + an order map + a spec map (+ optionally a
+poller-snapshot map) and it returns `Trade`s, no DB, no bridge (CLAUDE.md rule 7).
+`rebuild()` is the DB orchestrator: it reads the append-only `_raw` tables, calls
+`reconstruct()`, then DELETEs and re-INSERTs `trades` — never UPDATE (rule 2, §4
+step 5). Enums come from the adapter; `domain/` holds no MT5 magic integer (rule 12).
 """
 
 from __future__ import annotations
@@ -49,6 +53,19 @@ class SymbolSpec:
     tick_size: float | None = None
     tick_value: float | None = None
     contract_size: float | None = None
+
+
+@dataclass(frozen=True)
+class SlTpSnapshot:
+    """One poller observation of a live position's SL/TP (`sl_tp_snapshots`, M4).
+    `observed_msc` is TRUE UTC — `now_ms()`, the poller's own wall clock — UNLIKE
+    deal/order times, which are broker SERVER time (Trap 7). Never compare the two
+    without offset-correcting first (see `_resolve_poller_price`'s docstring)."""
+
+    observed_msc: int
+    sl: float | None = None
+    tp: float | None = None
+    volume: float | None = None
 
 
 @dataclass
@@ -128,8 +145,10 @@ def _vwap(deals: list[Deal]) -> float:
 
 def _sl_from_order(order: Order | None) -> float | None:
     """A price is a real level only when the order exists AND carries a non-zero SL.
-    0.0 means 'not set on this order' (Trap 6), which is NULL until the M4 poller
-    can say otherwise — never 0."""
+    0.0 means 'not set on this order' (Trap 6) — ambiguous on its own (the trader
+    may have added an SL seconds later; the order can't tell), so this returns
+    NULL, never 0. `reconstruct()` asks the M4 poller next; only ITS data can
+    positively confirm absence."""
     if order is None or order.sl is None or abs(order.sl) < _VOL_TOL:
         return None
     return order.sl
@@ -141,17 +160,72 @@ def _tp_from_order(order: Order | None) -> float | None:
     return order.tp
 
 
+def _resolve_poller_price(
+    snaps: list[SlTpSnapshot], field: str
+) -> tuple[float | None, str | None]:
+    """The earliest KNOWN state of `field` ('sl' or 'tp') from a chronological
+    list of poller observations (M4). Priority:
+
+      1. earliest NONZERO value — a real level, however/whenever it was set
+         (Trap 6: "the actual first SL... regardless of how it was set").
+      2. `0.0` — every observation showed none set, AND at least one exists.
+         A positive confirmation (CLAUDE.md rule 4: "0 means none set"), not a
+         guess — unlike the order-derived 0.0 in `_sl_from_order`, which is
+         ambiguous because an order is only ONE snapshot, taken at entry.
+      3. `(None, None)` — no poller coverage at all for this position.
+
+    Known limitation, accepted rather than solved (see `reconstruct` docstring):
+    if the poller's FIRST sample for a position arrives well after entry and
+    happens to show 0, branch 2 still fires — there is no proximity-to-open_time
+    guard. Building one correctly needs the server/UTC offset (`observed_msc` is
+    poller wall-clock UTC; `open_time_msc` is broker SERVER time, Trap 7) and
+    isn't worth the complexity for a case that degrades to `unknown`-equivalent
+    (see `_real_sl_price`), never to a wrong statistic. If a trade you KNOW had
+    an SL ever shows `sl_source='poller', sl_initial=0.0`, that's the signal to
+    build the offset-corrected guard."""
+    nonzero = [
+        getattr(s, field)
+        for s in snaps
+        if getattr(s, field) is not None and abs(getattr(s, field)) > _VOL_TOL
+    ]
+    if nonzero:
+        return nonzero[0], "poller"
+    if snaps:
+        return 0.0, "poller"
+    return None, None
+
+
+def _real_sl_price(sl: float | None) -> float | None:
+    """The SL as a PRICE for risk math — NOT the same question as "what does
+    trades.sl_initial store". A stored `0.0` means 'no SL was ever set' (rule 4
+    / Trap 6), never a price near zero. Feeding it to `risk_amount()` would treat
+    0 as a literal price level and return a huge, wrong number
+    (`|open_price - 0| / tick_size * tick_value * volume`) on the first
+    confirmed-no-SL trade the M4 poller produces. A real breakeven-at-entry SL
+    is a nonzero price and passes through unchanged, so the known-zero-risk case
+    (Trap 6's table) is untouched. Every value `_sl_from_order` could already
+    produce (`None` or a real nonzero price) maps to itself here — this only
+    starts doing new work once the poller can legitimately write a confirmed
+    0.0, which no order-only path could before M4."""
+    return sl if (sl is not None and abs(sl) > _VOL_TOL) else None
+
+
 def reconstruct(
     deals: list[Deal],
     orders: dict[int, Order],
     specs: dict[str, SymbolSpec],
     account_login: int | None = None,
+    snapshots: dict[int, list[SlTpSnapshot]] | None = None,
 ) -> list[Trade]:
     """Group trade deals by `position_id` and fold each group into a `Trade`.
 
     `orders` maps order ticket -> Order (source of sl_initial); `specs` maps symbol ->
-    SymbolSpec (source of risk). Orphans are skipped with a warning; INOUT/OUT_BY
-    raise. Deterministic: deals within a group are ordered by (time_msc, ticket)."""
+    SymbolSpec (source of risk); `snapshots` maps position_id -> chronological poller
+    observations (M4, `sl_tp_snapshots` — consulted only when `orders` gives nothing,
+    see `_resolve_poller_price`). `snapshots` defaults to empty so every M2 call site
+    that predates the poller keeps working unchanged. Orphans are skipped with a
+    warning; INOUT/OUT_BY raise. Deterministic: deals within a group are ordered by
+    (time_msc, ticket)."""
     groups: dict[int, list[Deal]] = {}
     for d in deals:
         if _is_trade_deal(d):
@@ -216,13 +290,25 @@ def reconstruct(
         open_order = orders.get(ins[0].order)
         sl_initial = _sl_from_order(open_order)
         tp_initial = _tp_from_order(open_order)
-        sl_source = "order" if sl_initial is not None else "unknown"
+        sl_source = "order" if sl_initial is not None else None
+
+        # M4: the order gave nothing (None) -> ask the poller. It CAN positively
+        # confirm "no SL ever" as a real 0.0 (rule 4), where the order alone could
+        # only ever be ambiguous. SL and TP resolve INDEPENDENTLY — a position can
+        # have a real SL and no TP, or vice versa.
+        snaps = (snapshots or {}).get(pid, [])
+        if sl_initial is None:
+            sl_initial, sl_source = _resolve_poller_price(snaps, "sl")
+        if tp_initial is None:
+            tp_initial, _ = _resolve_poller_price(snaps, "tp")
+        if sl_source is None:
+            sl_source = "unknown"
 
         open_price = _vwap(ins)
         volume = vol_in
         risk = (
             risk_amount(
-                open_price, sl_initial,
+                open_price, _real_sl_price(sl_initial),
                 spec.tick_size if spec else None,
                 spec.tick_value if spec else None,
                 volume,
@@ -338,6 +424,28 @@ def _load_specs(conn: sqlite3.Connection) -> dict[str, SymbolSpec]:
     }
 
 
+def _load_sl_snapshots(conn: sqlite3.Connection, login: int) -> dict[int, list[SlTpSnapshot]]:
+    """Every M4 poller observation, grouped by position_id, in chronological order
+    (the SQL ORDER BY guarantees this — `_resolve_poller_price` needs the WHOLE
+    ordered list to scan past leading zeros to the first real price, not just the
+    single earliest row). `sl_tp_snapshots` is append-only and read-only from here
+    — reconstruction never writes it."""
+    rows = conn.execute(
+        "SELECT position_id, observed_msc, sl, tp, volume FROM sl_tp_snapshots "
+        "WHERE account_login = ? ORDER BY position_id, observed_msc",
+        (login,),
+    ).fetchall()
+    out: dict[int, list[SlTpSnapshot]] = {}
+    for r in rows:
+        out.setdefault(r["position_id"], []).append(
+            SlTpSnapshot(
+                observed_msc=r["observed_msc"], sl=r["sl"], tp=r["tp"],
+                volume=r["volume"],
+            )
+        )
+    return out
+
+
 def rebuild(conn: sqlite3.Connection) -> RebuildReport:
     """DELETE + re-INSERT `trades` for the account from the append-only `_raw` tables.
     NEVER UPDATE (rule 2): `trades` is fully derived and must be reproducible. One
@@ -346,8 +454,9 @@ def rebuild(conn: sqlite3.Connection) -> RebuildReport:
     deals = _load_deals(conn, login)
     orders = _load_orders(conn, login)
     specs = _load_specs(conn)
+    snapshots = _load_sl_snapshots(conn, login)
 
-    trades = reconstruct(deals, orders, specs, account_login=login)
+    trades = reconstruct(deals, orders, specs, account_login=login, snapshots=snapshots)
     ts = now_ms()
 
     conn.execute("DELETE FROM trades WHERE account_login = ?", (login,))
