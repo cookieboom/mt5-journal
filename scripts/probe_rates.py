@@ -88,10 +88,17 @@ def load_trades() -> list[dict[str, Any]]:
 def probe_select_dependency(mt5: MetaTrader5, symbol: str, when: dt.datetime) -> None:
     """Does copy_rates_range need symbol_select()? live.py assumes not.
 
-    Ordering matters and is the whole point: we must ask for rates BEFORE the
-    symbol has been selected in this session. Any earlier symbol_info() call would
-    have already selected it and the probe would report a false 'no dependency'.
-    Run this first, before anything else touches the symbol.
+    KNOWN-WEAK EXPERIMENT — read the verdict accordingly. Ordering within this
+    session is controlled (rates are fetched before we select), but Market Watch
+    PERSISTS IN THE CONTAINER'S TERMINAL ACROSS SESSIONS, and every symbol in the
+    fixture is a traded symbol that record_fixtures.py selects on every run via
+    symbol_info(). So the "without select" arm is almost certainly measuring an
+    already-selected symbol: both arms are the same arm.
+
+    A conclusive test needs a symbol that exists on the server and has NEVER been
+    selected. Until then this probe can only report a POSITIVE (select is
+    required) — it can never earn a negative. The 2026-07-17 run printed a
+    negative anyway; see docs/HANDOFF.md error log.
     """
     print("=" * 72)
     print("1. DOES copy_rates_range NEED symbol_select()?  (trap 12 on rates)")
@@ -113,15 +120,20 @@ def probe_select_dependency(mt5: MetaTrader5, symbol: str, when: dt.datetime) ->
     print(f"   WITH symbol_select    : {n_after:6} bars\n")
 
     if n_before == 0 and n_after > 0:
-        print("   >>> VERDICT: rates DO require symbol_select().")
-        print("   >>> live.py.copy_rates_range() HAS A LATENT BUG — it would")
-        print("   >>> return [] for any symbol not already in Market Watch,")
-        print("   >>> and the renderer would draw an empty chart with no error.")
-        print("   >>> This is a src/ fix and belongs to Claude Code.")
+        print("   >>> POSITIVE RESULT (this probe CAN earn this one):")
+        print("   >>> rates DO require symbol_select(). live.py.copy_rates_range()")
+        print("   >>> has a latent bug — it returns [] for any symbol not already")
+        print("   >>> in Market Watch, and the renderer draws an empty chart with")
+        print("   >>> no error. This is a src/ fix and belongs to Claude Code.")
     elif n_before > 0 and n_before == n_after:
-        print("   >>> VERDICT: no dependency. live.py is correct as written.")
+        print("   >>> INCONCLUSIVE — NOT a clean bill of health.")
+        print(f"   >>> {symbol} is a traded symbol and is almost certainly already")
+        print("   >>> in the container's persistent Market Watch, so both arms")
+        print("   >>> measured the same state. This probe cannot earn a negative.")
+        print("   >>> Treat the question as OPEN. A conclusive test needs a symbol")
+        print("   >>> that exists on the server and has never been selected.")
     else:
-        print(f"   >>> VERDICT: AMBIGUOUS ({n_before} -> {n_after}). Do not guess.")
+        print(f"   >>> AMBIGUOUS ({n_before} -> {n_after}). Do not guess.")
         print("   >>> Re-run during an open session before concluding.")
     print()
 

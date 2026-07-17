@@ -627,15 +627,54 @@ Confirmed by running the doctor script against the live bridge.
 | Total deals | 140 | ≈ 60–70 trades. See §9. |
 | `TradeDeal` fields | `ticket, order, time, time_msc, type, entry, magic, position_id, reason, volume, price, commission, swap, profit, fee, symbol, comment, external_id` | **No `sl`/`tp` — trap 6 confirmed.** `fee` exists and must be summed (trap 9). |
 
+### Candle availability — measured 2026-07-17 (`scripts/probe_rates.py`)
+
+Probed against the live container. **Both of §7's open questions are now closed,
+and M3 is simpler than feared.**
+
+**`MaxBars = 1,000,000`** — CLOSED. Requesting 2025-12-01 → 2026-07-18 (228 days)
+returned bars on every symbol at every timeframe, back to the requested floor:
+
+| symbol | M1 | M5 | M15 | H1 | H4 | D1 |
+|---|---:|---:|---:|---:|---:|---:|
+| `BTCUSDc` | 328,302 | 65,669 | 21,893 | 5,474 | 1,369 | 228 |
+| `EURUSDc` | 232,876 | 46,634 | 15,561 | 3,891 | 1,007 | 196 |
+| `XAUUSDc` | 220,623 | 44,219 | 14,744 | 3,689 | 998 | 195 |
+
+→ **All 68 trades are chartable at every timeframe** (0 lost, oldest 2025-12-08).
+No TF-fallback ladder is needed; no urgent backfill. At ~968 M1 bars/day for
+`XAUUSDc`, the 1M cap is ~2.8 years of M1 — the "Trap 16 for market data" worry
+(bars ageing out the way deals do) **does not apply at this horizon**. Candles are
+not under archival threat; deals still are.
+→ Precision note: the earliest bar returned equals the *requested* floor
+(2025-12-01), so this measures **coverage, not the true history floor** — history
+may reach further back. Irrelevant here (68/68 covered), but do not quote 228 days
+as a limit.
+
+**Session hours per symbol — CLOSED** (was: "`BTCUSDc` trades weekends; forex does
+not"). The M1 bar counts measure it directly against 328,320 calendar minutes:
+
+| symbol | % of calendar | avg hours/day | reading |
+|---|---:|---:|---|
+| `BTCUSDc` | 100.0% | 24.0 | 24/7 — confirmed |
+| `EURUSDc` | 70.9% | 17.0 | ≈ 24h × 5d (ref 71.4%) |
+| `XAUUSDc` | 67.2% | 16.1 | ≈ 23h × 5d (ref 68.5%) — gold has a ~1h daily break |
+
+→ Confirms the caution that motivated the question: session/day analytics must
+not assume a 5-day week across all symbols, and must not assume a 24h day for
+gold either. At M5 this is a real bucketing hazard, not a footnote.
+
 Still open:
 
-- [ ] `BTCUSDc` trades weekends; forex does not. Session/day analytics must not
-      assume a 5-day week across all symbols.
-- [ ] `MaxBars` actually in effect in the container (matters at M3).
+- [ ] Does `copy_rates_range` require `symbol_select`? Probe inconclusive — see
+      "Three different causes of empty chart" above. Low stakes; insurance
+      recommended, bug not proven.
 
 Closed: standalone commission deals (none — MT5's own report confirms
 `commission = 0.00`) · `BTCUSDc`/`EURUSDc` specs (M1 `symbol_specs`: tick_value
-0.1 / 0.01 / 1.0 — genuinely distinct; gold's transfer nowhere).
+0.1 / 0.01 / 1.0 — genuinely distinct; gold's transfer nowhere) · `MaxBars`
+(1,000,000; all 68 trades chartable at every TF) · per-symbol session hours
+(measured above).
 
 ### SL provenance is EA-only — measured 2026-07-17
 
@@ -702,11 +741,27 @@ longer *forgetting* the ×1000 — it is **adding a second one** in
 | `MaxBars` truncation — bars never existed to fetch | `copy_rates_range` returns `[]` | probe: earliest bar actually returned per TF |
 | Symbol not in Market Watch (trap 12) | `copy_rates_range` returns `[]` | probe: same call with/without `symbol_select` |
 
-**Open: `live.py.copy_rates_range()` does NOT call `symbol_select(symbol, True)`,
-while `symbol_info()` and `symbol_info_tick()` both do** — the latter carrying the
-comment "else out-of-watch symbols return None silently (trap 12)". If the trap
-applies to rates, this is a latent silent-empty-chart bug. **Measure it before
-M3 designs around it** (`scripts/probe_rates.py`).
+**`live.py.copy_rates_range()` does NOT call `symbol_select(symbol, True)`, while
+`symbol_info()` and `symbol_info_tick()` both do** — the latter carrying the
+comment "else out-of-watch symbols return None silently (trap 12)".
+
+`scripts/probe_rates.py` tried to settle this on 2026-07-17 and **could not**.
+It fetched `BTCUSDc` M1 rates before calling `symbol_select` and got 1440 bars
+either way, then printed "VERDICT: no dependency". **That verdict is not earned
+and the script overclaimed.** Market Watch persists in the container's terminal
+across sessions, and `BTCUSDc` is a traded symbol that `record_fixtures.py`
+selects every run via `symbol_info()`. The probe cannot distinguish "rates need
+no select" from "this symbol was already selected". Settling it properly needs a
+symbol that exists on the server but has never been selected.
+
+→ Status: **unresolved, low stakes, cheap insurance.** The recommendation is to
+call `symbol_select(symbol, True)` in `copy_rates_range` anyway: it is idempotent,
+costs one call per windowed fetch (not per bar), and matches what the two
+neighbouring methods already do for the same documented reason. This is
+consistency + insurance, **not a proven bug** — do not record it as one. The
+failure it insures against (fresh container, Market Watch reset to broker
+defaults, renderer silently draws nothing) is exactly the class this project
+refuses to ship.
 
 
 ## 8. Risk calculation — the reference figure

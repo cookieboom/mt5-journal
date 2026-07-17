@@ -78,11 +78,21 @@ armed and quiet). Offset measured 0 that sync, not inherited.
 
 **Not blocked.**
 
-**Next: M3 — candle store + mplfinance renderer (`journal chart <id>`).** Two
-things wait there: **Trap 15** (`copy_rates_*` returns epoch SECONDS while the
-`candles` column is `_msc` — the ×1000 lives at the adapter boundary; get it
-wrong and the renderer matches zero rows and draws an empty chart), and the open
-question on **`MaxBars`** actually in effect in the container.
+**Next: M3 — candle store + mplfinance renderer (`journal chart <id>`).** Both
+things that were said to wait there are now measured and neither blocks:
+
+- **Trap 15 is already done and tested.** `live.py`/`fake.py` both do
+  `int(r["time"]) * 1000`; `test_adapter.py::test_candle_time_is_milliseconds`
+  asserts `1752624000 → 1752624000000` plus a `>= 10**12` guard. The live M3 risk
+  is the opposite one: **a second ×1000** added in `ingest/candles.py`.
+- **`MaxBars` = 1,000,000 — closed.** All 68 trades are chartable at every TF; no
+  fallback ladder, no urgent backfill. Doc §7 "Candle availability".
+
+What M3 actually turns on is a fact no document held until now: **the median trade
+is 6m13s and 47/68 close inside 15 minutes**, so M15 draws the median trade as one
+candle and the renderer must pick its TF from trade duration. Doc §7 "Trade
+duration profile". The `schema.sql` `candles` table already exists — M3 needs no
+migration.
 
 ### The 14.50 USC gap — RESOLVED, do not reopen
 
@@ -163,6 +173,7 @@ Every one of these was caught by machinery deliberately built for it, not by luc
 | The reviewer's `schema.sql` working copy | **The reviewer.** It was never installed; Claude Code wrote a better `reconciliations` table (dropped a redundant column, dropped an unused state, better placement). The reviewer had been reviewing against a file that did not exist. | Reading the repo instead of the working copy |
 | This file claiming the 14.50 was "BLOCKED ON A HUMAN" after it was resolved | **This file.** A stale handoff is worse than none: it sends a fresh reader to redo finished work, then hands them a decision rule that is now wrong. | Auditing the repo against what was actually asked for |
 | A second `schema.sql` at repo root, frozen since M0.1 (`e653905`), diverged from `src/journal/store/schema.sql` — missing `accounts.balance`/`equity`, and a `reconciliations` table pre-dating the M2 review fix (3 statuses instead of 2, different column order) | **Nobody's edit — an old tracked file nobody deleted.** `db.py` only ever reads `src/journal/store/schema.sql`; the root copy was dead but readable, and reading it first gives you wrong facts about the schema with no error to warn you. | A fresh reviewer session diffing both files byte-for-byte before trusting either |
+| `probe_rates.py` printing "VERDICT: no dependency. live.py is correct as written" | **The reviewer's own probe.** It tested `symbol_select` on `BTCUSDc` — a traded symbol already in the container's persistent Market Watch — so both arms of the experiment were the same arm. The script asserted a conclusion its design could not reach, in the confident voice reserved for measurements. A probe that overclaims is worse than no probe: it closes a question that is still open. | Re-reading the probe's own method after seeing the result it wanted |
 
 The pattern: **the design documents are the least reliable source in this
 project.** The bridge, the fixtures, the account, and the broker's own report are
@@ -212,7 +223,9 @@ The three worth a pointer, because they change how you work:
 
 ## Open questions
 
-- [ ] `MaxBars` actually in effect in the container (matters at M3).
+- [ ] Does `copy_rates_range` need `symbol_select`? Probe inconclusive (it tested
+      an already-selected symbol). Low stakes; doc §7 recommends the defensive
+      call as insurance, not as a bug fix.
 - [ ] Funding-deal comments (`D-IDQRISGT-…`, `W-ALLINT-…`) are payment
       references, now committed to git. Zero analytical value. If this repo is
       ever pushed anywhere public, redact `comment` on funding deals only
@@ -222,4 +235,5 @@ The three worth a pointer, because they change how you work:
 **Closed:** the 14.50 gap (archived deals — see CURRENT STATE) · standalone
 commission deals (none; MT5's report confirms `commission = 0.00`) ·
 `BTCUSDc`/`EURUSDc` specs (M1 `symbol_specs`: tick_value 0.1 / 0.01 / 1.0 —
-genuinely distinct, gold's transfer nowhere).
+genuinely distinct, gold's transfer nowhere) · `MaxBars` (1,000,000 — doc §7) ·
+per-symbol session hours (BTC 24/7, EUR ≈24h×5d, XAU ≈23h×5d — doc §7).
