@@ -197,24 +197,94 @@ def verify(db: str = typer.Option(_DEFAULT_DB, help="SQLite DB path.")) -> None:
     finally:
         conn.close()
 
-    typer.echo("== verify (balance invariant) ==")
+    # Identity 1 — ingest integrity.
+    typer.echo("== verify: identity 1 (ingest — deals vs balance) ==")
     typer.echo(f"sum(deal cash):   {v.deals_cash:.2f} {ccy}")
     typer.echo(f"reconciliations:  {v.reconciled:.2f} {ccy}")
     typer.echo(f"balance:          {v.balance:.2f} {ccy}")
-    typer.echo(f"residual:         {v.residual:+.2f} {ccy}")
+    typer.echo(f"residual:         {v.residual:+.2f} {ccy}   "
+               f"[{'PASS' if v.passed1 else 'FAIL'}]")
+
+    # Identity 2 — reconstruction partition. Printed separately so a failure here vs
+    # identity 1 tells you it is `reconstruct.py`, not ingest.
+    typer.echo("\n== verify: identity 2 (reconstruct — trades partition the deals) ==")
+    typer.echo(f"sum(trades.net):  {v.trades_net:.2f} {ccy}   "
+               f"({v.trades_count} trades)")
+    typer.echo(f"non-trade cash:   {v.nontrade_cash:.2f} {ccy}")
+    typer.echo(f"reconciliations:  {v.reconciled:.2f} {ccy}")
+    typer.echo(f"balance:          {v.balance:.2f} {ccy}")
+    if v.id2_state == "not_run":
+        typer.echo("residual:         N/A — no trades and no trade deals yet [NOT RUN]")
+    elif v.id2_state == "fail" and v.residual2 is None:
+        typer.echo(
+            f"residual:         N/A [FAIL]\n\n"
+            f"!! {v.trade_deals_count} trade deal(s) in deals_raw but 0 trades — "
+            f"reconstruction produced nothing.\n"
+            f"   Run `journal rebuild`. If it still shows 0 trades, that is a "
+            f"reconstruct.py bug, not ingest."
+        )
+    else:
+        typer.echo(f"residual:         {v.residual2:+.2f} {ccy}   "
+                   f"[{'PASS' if v.id2_state == 'ok' else 'FAIL'}]")
 
     if v.passed:
-        typer.echo("\nPASS — deals reconstruct to balance.")
+        typer.echo("\nPASS — deals reconstruct to balance (both identities).")
         return
 
-    typer.echo(
-        f"\nFAIL — residual {v.residual:+.2f} {ccy} is unexplained. Do NOT widen a "
-        f"tolerance. Record it as a named reconciliation:\n\n"
-        f'  journal reconcile add --amount {v.residual:.2f} '
-        f'--effective "YYYY-MM-DD HH:MM:SS" '
-        f'--reason "why this gap exists" --evidence "deal ticket / report figures"\n'
-    )
+    if not v.passed1:
+        typer.echo(
+            f"\nFAIL (identity 1) — residual {v.residual:+.2f} {ccy} is unexplained. Do "
+            f"NOT widen a tolerance. Record it as a named reconciliation:\n\n"
+            f'  journal reconcile add --amount {v.residual:.2f} '
+            f'--effective "YYYY-MM-DD HH:MM:SS" '
+            f'--reason "why this gap exists" --evidence "deal ticket / report figures"\n'
+        )
+    elif v.id2_state == "fail" and v.residual2 is not None:
+        # Only a genuine partition MISMATCH gets this explanation. The empty-trades /
+        # no-rebuild case (residual2 is None) already told the user to run rebuild in
+        # the identity-2 block above — repeating a "miscounted partition" cause here
+        # would contradict it.
+        typer.echo(
+            "\nFAIL (identity 2) — identity 1 holds but the trades do not partition the "
+            "deals. The bug is in reconstruct.py: a position_id skipped, a partial close "
+            "miscounted, or a cost component dropped (Trap 9)."
+        )
     raise typer.Exit(code=1)
+
+
+# ---------------------------------------------------------------- rebuild
+
+
+@app.command()
+def rebuild(db: str = typer.Option(_DEFAULT_DB, help="SQLite DB path.")) -> None:
+    """Rebuild `trades` from the append-only `_raw` tables (M2).
+
+    DELETEs every trade for the account and re-INSERTs from `deals_raw`/`orders_raw` —
+    never UPDATE. `trades` is fully derived, so this is always safe to re-run. Needs
+    no bridge; it reads the store `sync` already populated. Run `journal verify`
+    afterwards to check the reconstruction partitions the deals (§6 identity 2).
+    """
+    from .domain.reconstruct import rebuild as run_rebuild
+
+    conn = connect(db)
+    try:
+        r = run_rebuild(conn)
+    finally:
+        conn.close()
+
+    typer.echo("== rebuild ==")
+    typer.echo(f"account:      {r.account_login}")
+    typer.echo(f"trades:       {r.n_trades}")
+    typer.echo(
+        f"  by status:  {r.n_closed} closed, {r.n_open} open, "
+        f"{r.n_partial} partially_open"
+    )
+    # sl_initial is recoverable from orders_raw for only a minority of trades on this
+    # account (docs §7) — most SLs were set after entry and are lost until the M4
+    # poller. R can only be computed where sl_initial is known, hence the two counts.
+    typer.echo(f"  sl_initial: {r.n_with_sl} known, {r.n_trades - r.n_with_sl} unknown")
+    typer.echo(f"  r_multiple: {r.n_with_r} computable")
+    typer.echo("\nNext: `journal verify` — check identity 2 (trades partition the deals).")
 
 
 # -------------------------------------------------------------- reconcile
@@ -224,14 +294,15 @@ app.add_typer(reconcile_app, name="reconcile")
 
 
 def _one_account_login(conn: sqlite3.Connection) -> int:
-    rows = conn.execute("SELECT login FROM accounts ORDER BY login").fetchall()
-    if not rows:
-        typer.echo("No account in the DB yet — run `journal sync` first.")
+    """CLI wrapper over the single-source guard in store/db.py — translates its
+    RuntimeError into a friendly typer.Exit so the selection logic lives in one place."""
+    from .store.db import one_account_login
+
+    try:
+        return one_account_login(conn)
+    except RuntimeError as e:
+        typer.echo(str(e))
         raise typer.Exit(code=1)
-    if len(rows) > 1:
-        typer.echo(f"Multiple accounts present {[r[0] for r in rows]}; disambiguation not yet supported.")
-        raise typer.Exit(code=1)
-    return int(rows[0][0])
 
 
 def _parse_effective(s: str) -> int:

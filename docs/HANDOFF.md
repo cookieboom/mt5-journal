@@ -35,20 +35,45 @@ home each, and a second copy is a future lie. Point, never duplicate.
 
 **Done:** M0 (adapter + store + doctor) · M0.1 (Candle→ms, enums probed from the
 bridge) · M0.2 (fixtures re-recorded with `comment` preserved, `a15cc5e`) ·
-M1 (ingest + verify + reconcile, 19 tests green, **not committed yet**).
+M1 + M1.1 + M1.2 (ingest, archive detector, bridge-free `verify`, reconcile,
+`equity` modelled — 24 tests green, `1d086c2` / `10d9141`).
 
-**Not blocked. Nothing is waiting on a human.**
+**The live smoke passed, and it is the strongest evidence this project has.**
 
-**Next: M1.1** — three review findings, then the live smoke, then M2.
+```
+sum(deal cash):  6061.72 → 6069.72   (+8.00, traded since the fixtures)
+balance:         6047.22 → 6055.22   (+8.00)
+residual:          14.50 →   14.50   (unmoved)
+```
 
-1. `ingest/deals.py` carries a false docstring: "a widening residual is the
-   signal that the broker archived more history". It is not — see §6. Replace
-   with the set-difference detector in `sync`.
-2. `verify` reads balance live. Must read `accounts.balance` captured at sync
-   time — otherwise it cannot verify a backup, and a position closing between
-   sync and verify fails it spuriously. See §6.
-3. Bug: a sync with no fresh tick writes `server_utc_offset_s = NULL` over a good
-   measurement. `COALESCE` it.
+The broker returned 148 deals, not the 140 in the fixtures. Both sides of the
+identity moved by exactly the same amount and the gap did not budge — the
+prediction held against real money, on data that did not exist when the code was
+written. `archived: none` (the Trap 16 tripwire is armed and quiet). Offset
+measured 0 this sync, not inherited.
+
+**Not blocked.**
+
+**Next: M2 — `domain/reconstruct.py`.** The hard one. Everything built so far
+exists to make it verifiable.
+
+1. `ingest/deals.py` reads `equity = acct.raw.get("equity")`, justified in a
+   comment as "the raw dump, the blessed carrier for un-modelled fields". It is
+   not. `raw` was blessed for exactly one job — verbatim archival into
+   `raw_json`, so the store survives MT5 adding fields. It is not a read path for
+   semantic fields. Reading it from `ingest/` puts the MT5 field name `"equity"`
+   outside the adapter (rule 12), returns `None` silently when absent, and sets
+   the precedent "need a field? grab it from `.raw`" — which will be everywhere by
+   M5, leaving the Protocol decorative. Fix: model `equity` on `Account` in
+   `base.py`, map it in `live.py` and `fake.py`. Three lines, right file.
+2. **The live smoke has never run.** Every drive so far used `FakeMT5Client`
+   against a frozen fixture snapshot. `journal sync` via the CLI hardcodes
+   `LiveMT5Client`, and that path has been executed zero times. `data/journal.db`
+   does not exist.
+   Prediction to check it against: live residual should be **exactly +14.50**
+   however much has been traded since — each new deal moves `sum(deals)` and
+   `balance` by the same amount, so the gap cannot drift. Anything else means
+   something is broken; stop and find it before M2.
 
 ### The 14.50 USC gap — RESOLVED, do not reopen
 
@@ -143,9 +168,10 @@ note what was measured.
 | M0 | Adapter protocol, symbol normalisation, DB bootstrap, `doctor` | done |
 | M0.1 | Candle→ms, probed enums | done |
 | M0.2 | Re-record fixtures with comments preserved | done (`a15cc5e`) |
-| M1 | Ingest deals/orders → `_raw` tables, `journal verify` | built, uncommitted |
-| M1.1 | Archive detector, balance snapshot, offset COALESCE | **next** |
-| M2 | **`reconstruct.py`: deals → trades** | the hard one |
+| M1 | Ingest deals/orders → `_raw` tables, `journal verify` | done (`1d086c2`) |
+| M1.1 | Archive detector, bridge-free verify, offset COALESCE | done (`1d086c2`) |
+| M1.2 | Model `equity` on `Account`; live smoke passed | done (`10d9141`) |
+| M2 | **`reconstruct.py`: deals → trades** | **next — the hard one** |
 | M3 | Candle store + mplfinance renderer (`journal chart <id>`) | |
 | M4 | SL/TP poller — makes `sl_initial` knowable, and outruns the archiver | |
 | M5 | Analytics: R-multiple, MAE/MFE, sessions, behaviour | |

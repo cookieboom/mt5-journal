@@ -1,0 +1,385 @@
+"""Deals -> trades. The hard milestone (M2).
+
+A "trade" is not an MT5 object; it is the human idea *I entered here, I exited
+there*, reconstructed by grouping deals on `position_id` (docs/mt5-deal-model.md §1).
+This module is where that grouping lives, and where every trap that turns into a
+silently-wrong number is paid for:
+
+  - Trap 1  positive whitelist on BUY/SELL, explicit reject of a NULL position_id.
+  - Trap 2/3 VWAP entry/exit over partial fills and closes; close_time = last OUT.
+  - Trap 4/5 INOUT / OUT_BY raise NotImplementedError (impossible / never-seen on
+             this hedging account) — never fall through the OUT path and corrupt VWAP.
+  - Trap 6  sl_initial from the opening order; 0.0 and missing both mean NULL, not 0.
+  - Trap 8  an OUT with no IN is an orphan — skip and warn, never guess the entry.
+  - Trap 9  net_profit sums profit+commission+swap+fee over EVERY deal in the group.
+  - Trap 11 risk needs contract specs (domain/risk.py), not price distance.
+
+`reconstruct()` is pure: hand it deals + an order map + a spec map and it returns
+`Trade`s, no DB, no bridge (CLAUDE.md rule 7). `rebuild()` is the DB orchestrator:
+it reads the append-only `_raw` tables, calls `reconstruct()`, then DELETEs and
+re-INSERTs `trades` — never UPDATE (rule 2, §4 step 5). Enums come from the adapter;
+`domain/` holds no MT5 magic integer (rule 12).
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import sqlite3
+from dataclasses import dataclass, field
+
+from ..adapter.base import Deal, DealEntry, DealType, Order
+from ..store.db import now_ms, one_account_login
+from .risk import risk_amount
+from .symbols import to_base
+
+log = logging.getLogger(__name__)
+
+# Float comparison slack for the volume-balance check (CLAUDE.md rule 5 — never ==).
+_VOL_TOL = 1e-9
+
+
+@dataclass(frozen=True)
+class SymbolSpec:
+    """The subset of `symbol_specs` reconstruction needs. `tick_value` is in ACCOUNT
+    currency, not `currency_profit` (Trap 14)."""
+
+    symbol: str
+    symbol_base: str
+    tick_size: float | None = None
+    tick_value: float | None = None
+    contract_size: float | None = None
+
+
+@dataclass
+class Trade:
+    """One reconstructed trade. Mirrors the populated columns of the `trades` table.
+    Money fields are in `accounts.currency` (USC) — never formatted with '$' (Trap 13).
+    `sl_final`/`tp_final` are the M4 poller's job; `mae*`/`mfe*` are M5's — NULL here."""
+
+    account_login: int | None
+    position_id: int
+    symbol: str
+    symbol_base: str
+    direction: str            # 'buy' | 'sell'
+    status: str               # 'closed' | 'open' | 'partially_open'
+    open_time_msc: int
+    volume: float
+    open_price: float
+    net_profit: float
+    commission: float
+    swap: float
+    profit_gross: float
+    deal_count: int
+    segment: int = 0          # always 0 on hedging (Trap 4)
+    close_time_msc: int | None = None
+    duration_s: int | None = None
+    close_price: float | None = None
+    sl_initial: float | None = None
+    tp_initial: float | None = None
+    sl_final: float | None = None      # M4 poller
+    tp_final: float | None = None      # M4 poller
+    sl_source: str | None = None       # 'order' | 'poller' | 'unknown'
+    risk_amount: float | None = None
+    r_multiple: float | None = None
+    mae: float | None = None           # M5
+    mfe: float | None = None           # M5
+    mae_r: float | None = None         # M5
+    mfe_r: float | None = None         # M5
+    close_reason: int | None = None
+    magic: int | None = None
+    rebuilt_at: int | None = None
+
+
+@dataclass(frozen=True)
+class RebuildReport:
+    account_login: int | None
+    n_trades: int = 0
+    n_closed: int = 0
+    n_open: int = 0
+    n_partial: int = 0
+    n_with_sl: int = 0
+    n_with_r: int = 0
+    skipped_orphans: int = 0
+
+
+# --------------------------------------------------------------- pure core
+
+
+def _is_trade_deal(d: Deal) -> bool:
+    """Trap 1, as a POSITIVE whitelist with explicit NULL rejects. `position_id` is a
+    bare truthiness test on purpose: `!= 0` would let a malformed `None` through, and
+    every dataclass field defaults to None. `time_msc` must be present too — every
+    downstream time computation (open_time, ordering) trusts it, and a `None` would
+    otherwise silently sort as epoch-0 (1970). `deals_raw.time_msc` is NOT NULL, so
+    this only rejects hand-built deals; the store never trips it."""
+    return (
+        d.type in (DealType.BUY, DealType.SELL)
+        and bool(d.position_id)
+        and d.time_msc is not None
+    )
+
+
+def _vwap(deals: list[Deal]) -> float:
+    num = sum(d.price * d.volume for d in deals)
+    den = sum(d.volume for d in deals)
+    return num / den  # den > 0: a group only reaches here with real fills
+
+
+def _sl_from_order(order: Order | None) -> float | None:
+    """A price is a real level only when the order exists AND carries a non-zero SL.
+    0.0 means 'not set on this order' (Trap 6), which is NULL until the M4 poller
+    can say otherwise — never 0."""
+    if order is None or order.sl is None or abs(order.sl) < _VOL_TOL:
+        return None
+    return order.sl
+
+
+def _tp_from_order(order: Order | None) -> float | None:
+    if order is None or order.tp is None or abs(order.tp) < _VOL_TOL:
+        return None
+    return order.tp
+
+
+def reconstruct(
+    deals: list[Deal],
+    orders: dict[int, Order],
+    specs: dict[str, SymbolSpec],
+    account_login: int | None = None,
+) -> list[Trade]:
+    """Group trade deals by `position_id` and fold each group into a `Trade`.
+
+    `orders` maps order ticket -> Order (source of sl_initial); `specs` maps symbol ->
+    SymbolSpec (source of risk). Orphans are skipped with a warning; INOUT/OUT_BY
+    raise. Deterministic: deals within a group are ordered by (time_msc, ticket)."""
+    groups: dict[int, list[Deal]] = {}
+    for d in deals:
+        if _is_trade_deal(d):
+            groups.setdefault(d.position_id, []).append(d)
+
+    trades: list[Trade] = []
+    for pid in sorted(groups):
+        # time_msc is guaranteed present by _is_trade_deal, so no `or 0` fallback —
+        # that would have masked a bad deal as a 1970 timestamp (the silent error this
+        # whole document exists to prevent). ticket breaks ties within the same ms.
+        group = sorted(groups[pid], key=lambda d: (d.time_msc, d.ticket or 0))
+
+        # Traps 4 & 5 — caught BEFORE the IN/OUT split. An INOUT/OUT_BY deal belongs
+        # to neither `ins` nor `outs`, so letting it fall through would silently drop
+        # it from the VWAP and emit a plausible-looking, wrong trade.
+        for d in group:
+            if d.entry == DealEntry.INOUT:
+                raise NotImplementedError(
+                    f"DEAL_ENTRY_INOUT on position_id={pid}: impossible on a hedging "
+                    "account (Trap 4). If this fired, the account model is wrong."
+                )
+            if d.entry == DealEntry.OUT_BY:
+                raise NotImplementedError(
+                    f"DEAL_ENTRY_OUT_BY on position_id={pid}: never seen in this "
+                    "account's history (Trap 5). Come back and implement it here."
+                )
+
+        ins = [d for d in group if d.entry == DealEntry.IN]
+        outs = [d for d in group if d.entry == DealEntry.OUT]
+
+        if not ins:  # Trap 8: OUT with no IN — window orphan. Do not guess the entry.
+            log.warning(
+                "orphan position_id=%s: %d OUT deal(s), no IN — skipped (Trap 8)",
+                pid, len(outs),
+            )
+            continue
+
+        symbol = ins[0].symbol
+        spec = specs.get(symbol)
+
+        vol_in = sum(d.volume for d in ins)
+        vol_out = sum(d.volume for d in outs)
+        if not outs:
+            status = "open"
+        elif abs(vol_in - vol_out) < _VOL_TOL:
+            status = "closed"
+        else:
+            status = "partially_open"
+
+        open_time = min(d.time_msc for d in ins)
+        close_time = max((d.time_msc for d in outs), default=None)
+        duration_s = (close_time - open_time) // 1000 if close_time is not None else None
+
+        # sl_initial from the EARLIEST IN deal's order (group is time-ordered).
+        in_orders = {d.order for d in ins if d.order}
+        if len(in_orders) > 1:
+            log.warning(
+                "position_id=%s has IN deals across %d distinct orders %s; using the "
+                "earliest. Unexpected on hedging — investigate.",
+                pid, len(in_orders), sorted(in_orders),
+            )
+        open_order = orders.get(ins[0].order)
+        sl_initial = _sl_from_order(open_order)
+        tp_initial = _tp_from_order(open_order)
+        sl_source = "order" if sl_initial is not None else "unknown"
+
+        open_price = _vwap(ins)
+        volume = vol_in
+        risk = (
+            risk_amount(
+                open_price, sl_initial,
+                spec.tick_size if spec else None,
+                spec.tick_value if spec else None,
+                volume,
+            )
+            if spec is not None
+            else None
+        )
+
+        # Trap 9: sum every cash component over the WHOLE group, not just the OUT deal.
+        commission = sum(d.commission or 0.0 for d in group)
+        swap = sum(d.swap or 0.0 for d in group)
+        profit_gross = sum(d.profit or 0.0 for d in group)
+        net_profit = profit_gross + commission + swap + sum(d.fee or 0.0 for d in group)
+
+        # R only for a fully-closed trade: an open/partial trade's realised P&L is
+        # incomplete, so net_profit/risk would be a lie (docs §5). risk itself is a
+        # property of entry-vs-SL and stays known regardless.
+        # Gate on `risk` being TRUTHY, not `is not None` (Trap 6 table): an SL exactly
+        # at entry gives a KNOWN risk of 0.0 — risk_amount stays 0.0 (a real fact), but
+        # R is undefined, so r_multiple is NULL. `risk is not None` would pass for 0.0
+        # and raise ZeroDivisionError on the first breakeven-at-entry trade.
+        r_multiple = (
+            net_profit / risk
+            if (status == "closed" and risk)
+            else None
+        )
+
+        trades.append(Trade(
+            account_login=account_login,
+            position_id=pid,
+            symbol=symbol,
+            symbol_base=to_base(symbol),
+            direction="buy" if ins[0].type == DealType.BUY else "sell",
+            status=status,
+            open_time_msc=open_time,
+            close_time_msc=close_time,
+            duration_s=duration_s,
+            volume=volume,
+            open_price=open_price,
+            close_price=_vwap(outs) if outs else None,
+            sl_initial=sl_initial,
+            tp_initial=tp_initial,
+            sl_source=sl_source,
+            commission=commission,
+            swap=swap,
+            profit_gross=profit_gross,
+            net_profit=net_profit,
+            risk_amount=risk,
+            r_multiple=r_multiple,
+            close_reason=outs[-1].reason if outs else None,
+            magic=ins[0].magic,
+            deal_count=len(group),
+        ))
+
+    return trades
+
+
+# ------------------------------------------------------------ DB orchestrator
+
+
+# Only the typed columns are read back — NEVER raw_json (amendment 2). raw_json is a
+# one-way archive of MT5's FULL dict; `Deal(**json.loads(raw_json))` would both put
+# MT5 field names back into domain/ (rule 12) and TypeError the day MT5 adds a field
+# — the very event raw_json exists to survive. Typed columns are the stable read path.
+
+
+def _load_deals(conn: sqlite3.Connection, login: int) -> list[Deal]:
+    rows = conn.execute(
+        "SELECT ticket, order_ticket, position_id, symbol, type, entry, reason, "
+        "magic, volume, price, commission, swap, profit, fee, time_msc "
+        "FROM deals_raw WHERE account_login = ?",
+        (login,),
+    ).fetchall()
+    return [
+        Deal(
+            ticket=r["ticket"], order=r["order_ticket"], position_id=r["position_id"],
+            symbol=r["symbol"], type=r["type"], entry=r["entry"], reason=r["reason"],
+            magic=r["magic"], volume=r["volume"], price=r["price"],
+            commission=r["commission"], swap=r["swap"], profit=r["profit"],
+            fee=r["fee"], time_msc=r["time_msc"],
+        )
+        for r in rows
+    ]
+
+
+def _load_orders(conn: sqlite3.Connection, login: int) -> dict[int, Order]:
+    rows = conn.execute(
+        "SELECT ticket, position_id, symbol, type, sl, tp, price_open "
+        "FROM orders_raw WHERE account_login = ?",
+        (login,),
+    ).fetchall()
+    return {
+        r["ticket"]: Order(
+            ticket=r["ticket"], position_id=r["position_id"], symbol=r["symbol"],
+            type=r["type"], sl=r["sl"], tp=r["tp"], price_open=r["price_open"],
+        )
+        for r in rows
+    }
+
+
+def _load_specs(conn: sqlite3.Connection) -> dict[str, SymbolSpec]:
+    rows = conn.execute(
+        "SELECT symbol, symbol_base, tick_size, tick_value, contract_size "
+        "FROM symbol_specs"
+    ).fetchall()
+    return {
+        r["symbol"]: SymbolSpec(
+            symbol=r["symbol"], symbol_base=r["symbol_base"],
+            tick_size=r["tick_size"], tick_value=r["tick_value"],
+            contract_size=r["contract_size"],
+        )
+        for r in rows
+    }
+
+
+def rebuild(conn: sqlite3.Connection) -> RebuildReport:
+    """DELETE + re-INSERT `trades` for the account from the append-only `_raw` tables.
+    NEVER UPDATE (rule 2): `trades` is fully derived and must be reproducible. One
+    commit at the end. Reads typed columns only, never raw_json (amendment 2)."""
+    login = one_account_login(conn)
+    deals = _load_deals(conn, login)
+    orders = _load_orders(conn, login)
+    specs = _load_specs(conn)
+
+    trades = reconstruct(deals, orders, specs, account_login=login)
+    ts = now_ms()
+
+    conn.execute("DELETE FROM trades WHERE account_login = ?", (login,))
+    for t in trades:
+        conn.execute(
+            """
+            INSERT INTO trades
+                (account_login, position_id, segment, symbol, symbol_base, direction,
+                 status, open_time_msc, close_time_msc, duration_s, volume, open_price,
+                 close_price, sl_initial, tp_initial, sl_final, tp_final, sl_source,
+                 commission, swap, profit_gross, net_profit, risk_amount, r_multiple,
+                 mae, mfe, mae_r, mfe_r, close_reason, magic, deal_count, rebuilt_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                t.account_login, t.position_id, t.segment, t.symbol, t.symbol_base,
+                t.direction, t.status, t.open_time_msc, t.close_time_msc, t.duration_s,
+                t.volume, t.open_price, t.close_price, t.sl_initial, t.tp_initial,
+                t.sl_final, t.tp_final, t.sl_source, t.commission, t.swap,
+                t.profit_gross, t.net_profit, t.risk_amount, t.r_multiple, t.mae,
+                t.mfe, t.mae_r, t.mfe_r, t.close_reason, t.magic, t.deal_count, ts,
+            ),
+        )
+    conn.commit()
+
+    return RebuildReport(
+        account_login=login,
+        n_trades=len(trades),
+        n_closed=sum(1 for t in trades if t.status == "closed"),
+        n_open=sum(1 for t in trades if t.status == "open"),
+        n_partial=sum(1 for t in trades if t.status == "partially_open"),
+        n_with_sl=sum(1 for t in trades if t.sl_initial is not None),
+        n_with_r=sum(1 for t in trades if t.r_multiple is not None),
+    )

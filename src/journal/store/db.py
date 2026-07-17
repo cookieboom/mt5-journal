@@ -21,6 +21,22 @@ def now_ms() -> int:
     return int(time.time() * 1000)
 
 
+def one_account_login(conn: sqlite3.Connection) -> int:
+    """The single source of the 'exactly one account' guard. Returns that account's
+    login or raises RuntimeError. Three call sites (rebuild, verify, the CLI) used to
+    each carry their own copy — three chances to drift when multi-account support
+    lands. The CLI wraps the RuntimeError into a typer.Exit for a friendly message."""
+    rows = conn.execute("SELECT login FROM accounts ORDER BY login").fetchall()
+    if not rows:
+        raise RuntimeError("no account in the store — run `journal sync` first.")
+    if len(rows) > 1:
+        raise RuntimeError(
+            f"multiple accounts present {[r[0] for r in rows]}; "
+            "disambiguation not yet supported."
+        )
+    return int(rows[0][0])
+
+
 def _is_fresh(conn: sqlite3.Connection) -> bool:
     """A DB is fresh if it has no `schema_version` table yet."""
     row = conn.execute(

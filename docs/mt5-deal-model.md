@@ -173,6 +173,22 @@ position (`orders_raw` where `ticket == in_deal.order`). But:
 confirm no SL was set. Any trade with `sl_initial IS NULL` is **excluded** from
 R-multiple statistics. Never coerce NULL to 0 — that silently produces infinite
 R and poisons every downstream stat.
+
+→ **The same distinction applies to `risk_amount`, and it is easy to get
+backwards.** If `sl_initial == open_price` (an SL sitting exactly at entry), the
+risk is *known* and it is *zero*. That is not the same as unknown:
+
+| Case | `risk_amount` | `r_multiple` | Says |
+|---|---|---|---|
+| SL unknown | `NULL` | `NULL` | we know nothing |
+| SL exactly at entry | `0.0` | `NULL` | risk was zero; R is undefined |
+
+`risk_amount` must keep returning `0.0` for a zero distance — making it return
+`None` would collapse the two rows into one and lose a real fact. The guard that
+needs fixing is on `r_multiple`: division by a *known* zero is undefined, not
+unknown, so gate on `risk_amount` being truthy, not on it being non-`None`.
+A `risk is not None` check passes for `0.0` and raises `ZeroDivisionError` on the
+first breakeven-at-entry trade — killing the whole rebuild, not one row.
 → This is why M4 (the poller) exists: for trades going forward, snapshot
 `positions_get()` every few seconds into `sl_tp_snapshots` so the *actual* first
 SL is recorded regardless of how it was set.
@@ -416,7 +432,16 @@ dismiss it as a no-op — it is a headstone.
 - [ ] `symbol_base`: `XAUUSDc` → `XAUUSD`, `EURUSDc` → `EURUSD`,
       `USDCAD` → `USDCAD` (unchanged — must not strip a real trailing letter)
 - [ ] money columns carry the account currency through; nothing formats as `$`
-- [ ] `rebuild` run twice → byte-identical trades table (idempotent)
+- [ ] `rebuild` run twice → identical trades, **comparing every column except
+      `id` and `rebuilt_at`**. Those two are *expected* to differ: `id` is
+      `AUTOINCREMENT` and renumbers after a `DELETE`, and `rebuilt_at` is a
+      wall-clock stamp. An earlier draft of this section demanded a
+      "byte-identical" table, which is not achievable and would have sent you
+      hunting a phantom. Compare on `(account_login, position_id, segment)` plus
+      the value columns.
+      (This is also why `annotations` and `tags` key on
+      `(account_login, position_id, segment)` and never on `trades.id` — a
+      rebuild would orphan every note you had written.)
 - [ ] **the balance invariant below holds to within 0.01 USC**
 
 ## 6. The balance invariant — the one test that proves reconstruction is complete
@@ -436,18 +461,32 @@ That includes `DEAL_TYPE_BALANCE` / `CREDIT` deposits, whose amount lives in the
 `profit` field. If this fails, ingest dropped or duplicated a deal — fix that
 before anything else.
 
-Then the reconstruction check:
+Then the reconstruction check — a **partition** check. Every trade deal belongs to
+exactly one `position_id`, therefore to exactly one `trades` row; every other deal
+is counted separately. So the grouping must preserve total cash exactly:
 
 ```
-sum(trades.net_profit WHERE status='closed')
-  + sum(profit+commission+swap+fee of all NON-trade deals)     -- deposits etc.
-    == account_info().balance                                  (to within 0.01)
+sum(trades.net_profit)                       -- ALL statuses, not just closed
+  + sum(profit+commission+swap+fee of all NON-trade deals)  -- deposits, corrections
+  - sum(reconciliations.amount)
+    == accounts.balance                                     (to within 0.01)
 ```
 
-Open positions are excluded because their floating P&L sits in *equity*, not
-*balance*. If the second identity fails while the first holds, the bug is in
-`reconstruct.py`: a position_id was skipped, a partial close was miscounted, or
-a cost component was dropped (trap 9).
+**Include open and partially-open trades.** An earlier draft of this section said
+`WHERE status='closed'`, reasoning that floating P&L lives in equity rather than
+balance. The reasoning is right; the conclusion is wrong. Floating P&L is not in
+`deals_raw` either, so it never enters this sum. What *is* in both is an open
+position's **realised** cash — its entry commission — which is in the balance
+today. Excluding open trades would drop it and break the identity. It happens to
+be invisible on this swap-free, zero-commission account, which is exactly why it
+would have gone unnoticed until the account changed.
+
+`trades.net_profit` = the cash of every deal sharing that `position_id`, whatever
+the status. For an open trade that is just the entry costs. The identity then says
+precisely what you want it to say: **reconstruction is a partition of the deals,
+not a filter.** If it fails while identity 1 holds, the bug is in
+`reconstruct.py` — a position_id skipped, a partial close miscounted, or a cost
+component dropped (trap 9).
 
 → Ship this as `journal verify`, run it after every `rebuild`, and make it fail
 loudly. It costs one SQL query and catches an entire class of silent corruption.
@@ -590,12 +629,31 @@ Confirmed by running the doctor script against the live bridge.
 
 Still open:
 
-- [ ] Standalone commission deals, or folded into the trade deal?
-- [ ] `BTCUSDc` and `EURUSDc` specs — different tick_size/tick_value/contract_size
-      from gold. Must be fetched per symbol, never reused.
 - [ ] `BTCUSDc` trades weekends; forex does not. Session/day analytics must not
       assume a 5-day week across all symbols.
-- [ ] `MaxBars` actually in effect in the container.
+- [ ] `MaxBars` actually in effect in the container (matters at M3).
+
+Closed: standalone commission deals (none — MT5's own report confirms
+`commission = 0.00`) · `BTCUSDc`/`EURUSDc` specs (M1 `symbol_specs`: tick_value
+0.1 / 0.01 / 1.0 — genuinely distinct; gold's transfer nowhere).
+
+### SL provenance is EA-only — measured 2026-07-17
+
+Over the 68 opening orders (the order each IN deal points to), three sets:
+
+| set | size |
+|---|---:|
+| opening order `sl != 0`            | 6 |
+| IN deal `magic != 0`               | 6 |
+| IN deal `reason == EXPERT (3)`     | 6 |
+
+The three are the **same six trades**: `S == M == E`, `|S ∩ M ∩ E| = 6`.
+
+- discretionary trades (`magic == 0`): **62**; of these, with `sl != 0`: **0**.
+- cross-tab `(magic!=0, sl!=0)`: `(False, False) → 62` · `(True, True) → 6`.
+
+So `sl_initial` (hence `risk_amount`, hence `r_multiple`) is recoverable from
+`orders_raw` for the **6 EA trades only**; discretionary R-coverage is **0 of 62**.
 
 ## 8. Risk calculation — the reference figure
 

@@ -22,9 +22,9 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from ..adapter.base import Account, MT5Client
+from ..adapter.base import Account, DealType, MT5Client
 from ..domain.symbols import to_base
-from ..store.db import now_ms
+from ..store.db import now_ms, one_account_login
 
 # First backfill takes everything (Trap 8: use datetime(2000,1,1) as `from`). This
 # broker has ~140 deals total, so a full pull every sync is cheap and self-heals
@@ -65,11 +65,26 @@ class SyncReport:
 @dataclass(frozen=True)
 class VerifyResult:
     account_login: int | None
+    # Identity 1 (§6): sum(deal cash) - sum(recon) == balance. Proves ingest dropped
+    # or duplicated nothing.
     deals_cash: float
     reconciled: float
     balance: float
-    residual: float
-    passed: bool
+    residual: float          # identity-1 residual
+    passed1: bool
+    # Identity 2 (§6): the PARTITION check. Proves reconstruct() lost or double-counted
+    # nothing — sum(trades.net_profit, ALL statuses) + sum(non-trade deal cash) - recon.
+    trades_net: float
+    nontrade_cash: float
+    trade_deals_count: int   # BUY/SELL deals with a position_id in deals_raw
+    trades_count: int
+    residual2: float | None  # identity-2 residual; None when it cannot be evaluated
+    # 'ok'      identity 2 balances
+    # 'fail'    it does not — OR trades is empty while trade deals exist (amendment 1:
+    #           the catastrophic reconstruct()->[] case, failed as loudly as possible)
+    # 'not_run' nothing to reconstruct yet (no trades AND no trade deals) — not a failure
+    id2_state: str
+    passed: bool             # OVERALL: identity 1 holds AND identity 2 did not fail
 
 
 # --------------------------------------------------------------------- sync
@@ -300,29 +315,28 @@ def _measure_offset(client: MT5Client, symbol: str = _OFFSET_SYMBOL) -> int | No
 
 
 def verify(conn: sqlite3.Connection) -> VerifyResult:
-    """The §6 balance invariant. Pure SQL against the store — takes NO client, needs
-    no bridge (Trap 16: this journal, not MT5, is the durable record; verify must run
-    against a backup, in CI, or with the broker down). READ-ONLY: SELECTs only, writes
-    nothing, and NEVER auto-inserts a reconciliation.
+    """The §6 balance invariant — BOTH identities. Pure SQL against the store — takes
+    NO client, needs no bridge (Trap 16: this journal, not MT5, is the durable record;
+    verify must run against a backup, in CI, or with the broker down). READ-ONLY:
+    SELECTs only, writes nothing, and NEVER auto-inserts a reconciliation.
 
-        residual = sum(deal cash) - sum(reconciliations.amount) - balance
+        identity 1: sum(deal cash) - sum(recon) == balance          (ingest integrity)
+        identity 2: sum(trades.net_profit, ALL statuses)
+                    + sum(non-trade deal cash) - sum(recon) == balance   (reconstruction)
+
+    Identity 1 passing while identity 2 fails localises the bug to `reconstruct.py`,
+    not ingest — which is exactly why both are computed and reported separately.
 
     `balance` is the SNAPSHOT `sync` captured alongside the deals (accounts.balance),
-    NOT a live read: both halves of the invariant must come from the same instant, or
+    NOT a live read: both halves of each invariant must come from the same instant, or
     a position closing between sync and verify makes the residual garbage.
 
     Archiving is invisible here (it moves no money, so the residual never budges) — the
     archive detector lives in `sync`, not this function. Do not claim otherwise."""
-    row = conn.execute("SELECT login, balance FROM accounts").fetchall()
-    if not row:
-        raise RuntimeError("no account in the store — run `journal sync` first.")
-    if len(row) > 1:
-        raise RuntimeError(
-            f"multiple accounts present {[r['login'] for r in row]}; "
-            "disambiguation not yet supported."
-        )
-    login = row[0]["login"]
-    balance = row[0]["balance"]
+    login = one_account_login(conn)  # single-source guard (store/db.py)
+    (balance,) = conn.execute(
+        "SELECT balance FROM accounts WHERE login = ?", (login,)
+    ).fetchone()
 
     (deals_cash,) = conn.execute(
         "SELECT COALESCE(SUM(profit + commission + swap + fee), 0.0) "
@@ -335,13 +349,56 @@ def verify(conn: sqlite3.Connection) -> VerifyResult:
     ).fetchone()
 
     residual = deals_cash - reconciled - balance
+
+    # Identity 2. A "trade deal" is exactly reconstruct()'s Trap-1 whitelist: a BUY/SELL
+    # deal with a non-zero position_id. The BUY/SELL values come from OUR enum, so no
+    # MT5 magic integer lands in ingest (rule 12). The non-trade complement must match
+    # that filter precisely, or the partition would leak.
+    buy, sell = int(DealType.BUY), int(DealType.SELL)
+    (trade_deals_count,) = conn.execute(
+        "SELECT COUNT(*) FROM deals_raw "
+        "WHERE account_login = ? AND type IN (?, ?) AND position_id != 0",
+        (login, buy, sell),
+    ).fetchone()
+    (nontrade_cash,) = conn.execute(
+        "SELECT COALESCE(SUM(profit + commission + swap + fee), 0.0) FROM deals_raw "
+        "WHERE account_login = ? AND NOT (type IN (?, ?) AND position_id != 0)",
+        (login, buy, sell),
+    ).fetchone()
+    (trades_count,) = conn.execute(
+        "SELECT COUNT(*) FROM trades WHERE account_login = ?", (login,),
+    ).fetchone()
+    (trades_net,) = conn.execute(
+        "SELECT COALESCE(SUM(net_profit), 0.0) FROM trades WHERE account_login = ?",
+        (login,),
+    ).fetchone()
+
+    # Amendment 1: distinguish "nothing to reconstruct" from "reconstruction produced
+    # nothing while deals exist" — the latter is the worst failure and must never hide
+    # behind a bland "not run".
+    if trades_count == 0 and trade_deals_count == 0:
+        id2_state, residual2 = "not_run", None
+    elif trades_count == 0 and trade_deals_count > 0:
+        id2_state, residual2 = "fail", None
+    else:
+        residual2 = trades_net + nontrade_cash - reconciled - balance
+        id2_state = "ok" if abs(residual2) < _TOLERANCE else "fail"
+
+    passed1 = abs(residual) < _TOLERANCE
     return VerifyResult(
         account_login=login,
         deals_cash=deals_cash,
         reconciled=reconciled,
         balance=balance,
         residual=residual,
-        passed=abs(residual) < _TOLERANCE,
+        passed1=passed1,
+        trades_net=trades_net,
+        nontrade_cash=nontrade_cash,
+        trade_deals_count=trade_deals_count,
+        trades_count=trades_count,
+        residual2=residual2,
+        id2_state=id2_state,
+        passed=passed1 and id2_state != "fail",
     )
 
 

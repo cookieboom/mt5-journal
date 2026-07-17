@@ -15,6 +15,7 @@ import pytest
 
 from journal.adapter.base import Tick
 from journal.adapter.fake import FakeMT5Client
+from journal.domain.reconstruct import rebuild
 from journal.ingest.deals import add_reconciliation, sync, verify
 from journal.store.db import connect
 
@@ -146,6 +147,9 @@ def test_verify_fails_with_the_1450_residual(conn, client):
 
 def test_verify_passes_once_the_gap_is_reconciled(conn, client):
     sync(client, conn)
+    # `verify` now checks BOTH §6 identities (M2), so the trades must exist for identity
+    # 2 to hold — rebuild before naming the gap, the real sync→rebuild→verify workflow.
+    rebuild(conn)
     # Name the gap, exactly as the human will after seeing verify FAIL.
     add_reconciliation(
         conn,
