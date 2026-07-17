@@ -36,9 +36,86 @@ home each, and a second copy is a future lie. Point, never duplicate.
 **Done:** M0 (adapter + store + doctor) · M0.1 (Candle→ms, enums probed from the
 bridge) · M0.2 (fixtures re-recorded with `comment` preserved, `a15cc5e`) ·
 M1 + M1.1 + M1.2 (ingest, archive detector, bridge-free `verify`, reconcile,
-`equity` modelled — `1d086c2` / `10d9141`) · **M2 + M2.1** (`reconstruct.py`:
+`equity` modelled — `1d086c2` / `10d9141`) · M2 + M2.1 (`reconstruct.py`:
 deals → trades, `journal rebuild`, `journal verify` §6 identity 2 — 55 tests
-green, `48a4cc7`).
+green, `48a4cc7`) · **M3** (candle store + mplfinance renderer, `journal chart
+<position_id>` — 83 tests green, `797849b`).
+
+**M3 in one line:** trades are now visible. `journal candles` fetches each
+closed trade's render window into the central `candles` table; `journal chart
+<position_id>` reads it back and writes a PNG to `cache/`.
+
+Decisions worth knowing before touching this code again:
+
+- **TF picked by a duration ladder, not a fixed default.** Finest TF where the
+  trade spans ≤60 bars, floor M1, padded 15 bars each side (window lands in
+  31–90 bars). M15 was rejected as a default because it draws the *median*
+  trade as a single candle (doc §7) — M1 is the only TF with real structure at
+  the median (6m13s → 7 bars). In practice only M1/M5/M15 ever get picked on
+  this account's duration profile; the ladder still covers H1/H4/D1 for future
+  outliers.
+- **11/68 trades are sub-M1 (min 1s)** — no TF can separate entry from exit.
+  Rendered honestly: both markers land on the one bar, title says so
+  (`"1s — entry & exit within one M1 bar"`). Never a fabricated intrabar line.
+- **Cache keys on `position_id`, never `trades.id`.** `trades.id` renumbers
+  every rebuild (doc §5); a saved `journal chart <id>` built on it would
+  silently chart the *wrong* trade after a rebuild, no error. CLI takes
+  `position_id` only — no `--trade-id` alias, on purpose.
+- **Two guards reuse the exact M2.1 shape (Trap 6), because a fresh instance of
+  the same bug appeared in the plan review before any code was written:**
+  SL/TP hlines gate on `sl_initial is not None and abs(sl_initial) > tol`, not
+  `is not None` alone — `0.0 is not None` is `True`, and a naive gate draws an
+  hline at price 0, collapsing a ~4035 XAUUSDc chart's y-axis to a sliver with
+  no error. Same family: R displays `'n/a' if r is None else f'{r:.2f}'`, not
+  `r or 'n/a'`, so a known `R=0.0` reads `0.00` instead of falsely claiming
+  unknown. No trade has `sl_initial=0.0` today (62 NULL + 6 non-zero) — M4's
+  poller is what starts writing confirmed-zero, so this had to be right before
+  M4 landed, not after.
+- **Axis reads `sync_state.server_utc_offset_s`, never hardcodes 0** (Trap 7),
+  and displays **WIB** — a conscious choice (CLAUDE.md rule 3: convert only at
+  display time; the chart is the project's primary display surface), zone
+  named in the title so a reader always knows which clock they see.
+- **`item 0`**: `live.py.copy_rates_range` now calls `symbol_select` first,
+  matching its two neighbours. Insurance against Trap 12, not a proven bug —
+  see Open questions below.
+
+**Live smoke:** `journal rebuild` against the real (non-fixture) local DB —
+72 trades, all closed, 6 SL known / 6 R computable. Matches the EA-only SL
+pattern exactly (doc §7's `{sl≠0}=={magic≠0}=={reason==EXPERT}`), on data that
+has moved past the 68-trade frozen fixture.
+
+**A self-inflicted bug during M3, logged in the Error log below:**
+`record_fixtures.py`'s rates-recording addition initially sourced trade
+selection from the *live* pull it was already doing — which silently drifted
+`deals.json`/`orders.json`/etc. away from the frozen 2026-07-16 snapshot 8 M1/M2
+tests hardcode, and broke them. Caught by `pytest`, fixed by anchoring rates
+selection to the already-committed fixtures on disk instead.
+
+**Not blocked.**
+
+**Next: M4 — SL/TP poller.** This is not a nicety; it is what makes
+`sl_initial` knowable for the 62/68 discretionary trades that currently carry
+`sl_initial IS NULL` (doc §7's SL-provenance measurement — recoverable from
+`orders_raw` for the 6 EA trades only), and it is the mechanism that outruns
+the broker's own archiving (Trap 16). Concretely: snapshot `positions_get()`
+every few seconds into `sl_tp_snapshots` (already in `schema.sql`, unused until
+now) so the *actual* first SL/TP is captured regardless of how it was set
+(mobile one-click, added after entry, moved to breakeven — all currently
+invisible to `orders_raw`).
+
+**M4 will be the first milestone to write a genuine `0.0`** into
+`sl_initial`/`sl_tp_snapshots` — a poller confirming "no SL was ever set" is a
+*known* zero, not an unknown NULL (Trap 6). M3's two hline/R-display guards
+(above) were written and tested *before* this could happen for exactly that
+reason — re-verify they still hold once real poller data exists, don't assume
+the tests against synthetic `0.0` were sufficient forever.
+
+The `schema.sql` `sl_tp_snapshots` table already exists — M4 needs no
+migration, same as M3 needed none for `candles`.
+
+---
+
+**Evidence from earlier milestones, kept for reference:**
 
 **M2 closed the milestone everything since M0 was built to make verifiable.**
 Reconstruction is a *partition* of the deals, and the §6 identity-2 invariant
@@ -75,24 +152,6 @@ The broker returned 148 deals, not the 140 in the fixtures. Both sides of the
 identity moved by exactly the same amount and the gap did not budge — the
 prediction held against real money. `archived: none` (the Trap 16 tripwire is
 armed and quiet). Offset measured 0 that sync, not inherited.
-
-**Not blocked.**
-
-**Next: M3 — candle store + mplfinance renderer (`journal chart <id>`).** Both
-things that were said to wait there are now measured and neither blocks:
-
-- **Trap 15 is already done and tested.** `live.py`/`fake.py` both do
-  `int(r["time"]) * 1000`; `test_adapter.py::test_candle_time_is_milliseconds`
-  asserts `1752624000 → 1752624000000` plus a `>= 10**12` guard. The live M3 risk
-  is the opposite one: **a second ×1000** added in `ingest/candles.py`.
-- **`MaxBars` = 1,000,000 — closed.** All 68 trades are chartable at every TF; no
-  fallback ladder, no urgent backfill. Doc §7 "Candle availability".
-
-What M3 actually turns on is a fact no document held until now: **the median trade
-is 6m13s and 47/68 close inside 15 minutes**, so M15 draws the median trade as one
-candle and the renderer must pick its TF from trade duration. Doc §7 "Trade
-duration profile". The `schema.sql` `candles` table already exists — M3 needs no
-migration.
 
 ### The 14.50 USC gap — RESOLVED, do not reopen
 
@@ -174,6 +233,7 @@ Every one of these was caught by machinery deliberately built for it, not by luc
 | This file claiming the 14.50 was "BLOCKED ON A HUMAN" after it was resolved | **This file.** A stale handoff is worse than none: it sends a fresh reader to redo finished work, then hands them a decision rule that is now wrong. | Auditing the repo against what was actually asked for |
 | A second `schema.sql` at repo root, frozen since M0.1 (`e653905`), diverged from `src/journal/store/schema.sql` — missing `accounts.balance`/`equity`, and a `reconciliations` table pre-dating the M2 review fix (3 statuses instead of 2, different column order) | **Nobody's edit — an old tracked file nobody deleted.** `db.py` only ever reads `src/journal/store/schema.sql`; the root copy was dead but readable, and reading it first gives you wrong facts about the schema with no error to warn you. | A fresh reviewer session diffing both files byte-for-byte before trusting either |
 | `probe_rates.py` printing "VERDICT: no dependency. live.py is correct as written" | **The reviewer's own probe.** It tested `symbol_select` on `BTCUSDc` — a traded symbol already in the container's persistent Market Watch — so both arms of the experiment were the same arm. The script asserted a conclusion its design could not reach, in the confident voice reserved for measurements. A probe that overclaims is worse than no probe: it closes a question that is still open. | Re-reading the probe's own method after seeing the result it wanted |
+| `record_fixtures.py`'s M3 rates-recording addition sourced trade selection from the *live* pull the script was already doing, to pick which trade's candle window to fetch | **Claude Code's M3 implementation, first pass.** The script has always refreshed *every* fixture on each run (its original, correct job); adding rates on top of that fresh pull meant a routine re-run silently drifted `deals.json`/`orders.json`/`account.json`/`symbols.json` away from the frozen 2026-07-16 snapshot 8 M1/M2 tests hardcode (140 deals, 68 trades, balance 6047.22, …) — the account had genuinely traded more since. | `pytest` — 8 tests went red immediately after a live re-run, before any commit |
 
 The pattern: **the design documents are the least reliable source in this
 project.** The bridge, the fixtures, the account, and the broker's own report are
@@ -194,12 +254,14 @@ note what was measured.
 | M1.2 | Model `equity` on `Account`; live smoke passed | done (`10d9141`) |
 | M2 | `reconstruct.py`: deals → trades, `rebuild`, §6 identity 2 | done (`48a4cc7`) |
 | M2.1 | Review fixes: zero-risk R guard, NULL time_msc reject, guard dedup | done (`48a4cc7`) |
-| M3 | Candle store + mplfinance renderer (`journal chart <id>`) | **next** |
-| M4 | SL/TP poller — makes `sl_initial` knowable, and outruns the archiver | |
+| M3 | Candle store + mplfinance renderer (`journal chart <position_id>`) | done (`797849b`) |
+| M4 | SL/TP poller — makes `sl_initial` knowable, and outruns the archiver | **next** |
 | M5 | Analytics: R-multiple, MAE/MFE, sessions, behaviour | |
 | M6 | Annotations + weekly report | |
 
-M0–M3 delivers the original ask: an automatic journal with charts.
+M0–M3 delivers the original ask: an automatic journal with charts. **Done.**
+M4 onward — poller, analytics, annotations — is what makes the journal worth
+returning to daily rather than a one-shot report.
 
 ---
 
@@ -223,9 +285,13 @@ The three worth a pointer, because they change how you work:
 
 ## Open questions
 
-- [ ] Does `copy_rates_range` need `symbol_select`? Probe inconclusive (it tested
-      an already-selected symbol). Low stakes; doc §7 recommends the defensive
-      call as insurance, not as a bug fix.
+- [ ] Was `symbol_select` ever actually *needed* in `copy_rates_range`? Still
+      unproven either way — the underlying probe was and remains inconclusive
+      (it tested an already-selected symbol). M3 added the call as insurance
+      regardless (`live.py`, item 0): idempotent, one call per windowed fetch,
+      matches its two neighbours. The code question is closed; the empirical
+      one — does this bridge actually need it — is not, and may never be worth
+      resolving now that the insurance is cheap and in place.
 - [ ] Funding-deal comments (`D-IDQRISGT-…`, `W-ALLINT-…`) are payment
       references, now committed to git. Zero analytical value. If this repo is
       ever pushed anywhere public, redact `comment` on funding deals only
@@ -236,4 +302,7 @@ The three worth a pointer, because they change how you work:
 commission deals (none; MT5's report confirms `commission = 0.00`) ·
 `BTCUSDc`/`EURUSDc` specs (M1 `symbol_specs`: tick_value 0.1 / 0.01 / 1.0 —
 genuinely distinct, gold's transfer nowhere) · `MaxBars` (1,000,000 — doc §7) ·
-per-symbol session hours (BTC 24/7, EUR ≈24h×5d, XAU ≈23h×5d — doc §7).
+per-symbol session hours (BTC 24/7, EUR ≈24h×5d, XAU ≈23h×5d — doc §7) ·
+chart timeframe selection (duration ladder, ≤60 trade-bars, floor M1 — M3,
+CURRENT STATE above) · chart cache identity (`position_id`, never `trades.id`
+— M3, CURRENT STATE above).
