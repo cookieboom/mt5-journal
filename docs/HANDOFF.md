@@ -44,8 +44,22 @@ green, `48a4cc7`) · M3 (candle store + mplfinance renderer, `journal chart
 green, `11cac94`) · M5.1 (session + EA/discretionary breakdowns in
 `journal report` — 150 tests green, `3a5d198`) · M6 (annotations +
 manual/auto tags, `journal annotate`/`tag` — 179 tests green, `24ce64b`) ·
-**M6.1** (weekly Markdown report, `journal weekly` — 188 tests green,
-`a989eac`).
+M6.1 (weekly Markdown report, `journal weekly` — 188 tests green,
+`a989eac`) · **M7** (web dashboard, `journal serve` — 202 tests green).
+
+**M7 in one line:** a read-mostly FastAPI/Jinja2 dashboard on `localhost`
+(`journal serve`, default `127.0.0.1:8000`) sitting entirely on top of the
+existing pure functions — Dashboard (`build_report`), Trades list + detail with
+on-demand chart PNG (`render_trade`), and Weekly (`build_weekly`), plus the only
+web writes: annotation + manual-tag forms (`set_annotation`/`add_tag`/
+`remove_tag`). New package `src/journal/web/` (`app.py` factory, `views.py`
+context builders, `format.py` Jinja filters, `templates/`, `static/app.css`).
+It never imports the MT5 adapter (rules 1 & 12) — `sync`/`candles`/`poll`/
+`rebuild` stay CLI-only. Same display discipline as the CLI: money always
+carries `USC`, unknown reads "n/a"/"unknown" (never 0), n<20 buckets greyed
+(§9), URLs key on `position_id`. New deps (rule 8, approved): `fastapi`,
+`jinja2`, `uvicorn`, `python-multipart`. Verified live: dashboard figures match
+`journal report`; annotation/tag written from the UI survive `journal rebuild`.
 
 **M5 in one line:** `trades.mae`/`mfe`/`mae_r`/`mfe_r` (NULL since M2) are now
 filled by `rebuild()`, and `journal report` gives a first honest read of the
@@ -401,6 +415,7 @@ note what was measured.
 | M5.1 | Session bucketing + EA/discretionary behaviour breakdowns | done (`3a5d198`) |
 | M6 | Annotations + manual/auto tags (`journal annotate`/`tag`) | done (`24ce64b`) |
 | M6.1 | Weekly Markdown report (`journal weekly`) | done (`a989eac`) |
+| M7 | Web dashboard on localhost (`journal serve`) — read-mostly + annotation/tag writes | done |
 
 M0–M3 delivers the original ask: an automatic journal with charts. **Done.**
 M4 onward — poller, analytics, annotations — is what makes the journal worth

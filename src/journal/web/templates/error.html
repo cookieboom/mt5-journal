@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Error — mt5-journal{% endblock %}
+{% block content %}
+  <h1>Ada yang perlu dibereskan</h1>
+  <div class="panel">
+    <p>{{ message }}</p>
+    <p class="note">Operasi bridge (sync, candles, poll, rebuild) dijalankan lewat CLI:
+      <code>uv run journal sync</code> lalu <code>uv run journal rebuild</code>.</p>
+  </div>
+{% endblock %}

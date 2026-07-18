@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}Trade {{ trade.position_id }} — mt5-journal{% endblock %}
+{% block content %}
+{% set a = annotation %}
+<h1>{{ trade.symbol_base }} {{ trade.direction | upper }}
+  <span class="muted mono">#{{ trade.position_id }}</span></h1>
+
+<div class="grid2">
+  <div>
+    <h2>Trade</h2>
+    <div class="panel">
+      <dl class="kv">
+        <dt>Status</dt><dd>{{ trade.status }}</dd>
+        <dt>Source</dt><dd>{{ 'EA (magic ' ~ trade.magic ~ ')' if is_ea else 'Discretionary' }}</dd>
+        <dt>Session</dt><dd>{{ session }}</dd>
+        <dt>Dibuka</dt><dd>{{ trade.open_time_msc | wib(header.offset_s) }}</dd>
+        <dt>Ditutup</dt><dd>{{ trade.close_time_msc | wib(header.offset_s) }}</dd>
+        <dt>Durasi</dt><dd>{{ trade.duration_s | dur }}</dd>
+        <dt>Volume</dt><dd>{{ trade.volume }}</dd>
+        <dt>Entry</dt><dd>{{ trade.open_price | price }}</dd>
+        <dt>Exit</dt><dd>{{ trade.close_price | price }}</dd>
+        <dt>SL awal</dt><dd>{{ trade.sl_initial | price }}</dd>
+        <dt>TP awal</dt><dd>{{ trade.tp_initial | price }}</dd>
+        <dt>Net</dt>
+        <dd class="{{ 'pos' if trade.net_profit and trade.net_profit > 0 else ('neg' if trade.net_profit and trade.net_profit < 0 else '') }}">
+          {{ trade.net_profit | money(header.currency, sign=True) }}</dd>
+        <dt>R-multiple</dt><dd>{{ trade.r_multiple | rmult }}</dd>
+        <dt>MAE (R)</dt><dd>{{ trade.mae_r | rmult }}</dd>
+        <dt>MFE (R)</dt><dd>{{ trade.mfe_r | rmult }}</dd>
+      </dl>
+    </div>
+
+    <h2>Chart</h2>
+    {% if chartable %}
+    <img class="chart" src="/trades/{{ trade.position_id }}/chart.png"
+         alt="chart trade {{ trade.position_id }}"
+         onerror="this.insertAdjacentHTML('afterend','<p class=note>Chart belum tersedia — jalankan <code>uv run journal candles</code> lalu buka lagi.</p>'); this.remove();">
+    {% else %}
+    <p class="note">Hanya trade closed yang bisa di-chart (M3).</p>
+    {% endif %}
+  </div>
+
+  <div>
+    <h2>Anotasi</h2>
+    <form class="stack panel" method="post" action="/trades/{{ trade.position_id }}/annotate">
+      <label>Setup
+        <input type="text" name="setup" value="{{ a.setup if a and a.setup is not none else '' }}" placeholder="mis. breakout">
+      </label>
+      <label>Confidence (1–5)
+        <input type="number" name="confidence" min="1" max="5"
+               value="{{ a.confidence if a and a.confidence is not none else '' }}">
+      </label>
+      <label>Emosi
+        <input type="text" name="emotion" value="{{ a.emotion if a and a.emotion is not none else '' }}" placeholder="mis. tenang / fomo">
+      </label>
+      <label>Ikut plan?
+        <span class="radio-row">
+          {% set fp = a.followed_plan if a else none %}
+          <label><input type="radio" name="followed_plan" value="yes" {{ 'checked' if fp == 1 }}> ya</label>
+          <label><input type="radio" name="followed_plan" value="no" {{ 'checked' if fp == 0 }}> tidak</label>
+          <label><input type="radio" name="followed_plan" value="" {{ 'checked' if fp is none }}> —</label>
+        </span>
+      </label>
+      <label>Catatan
+        <textarea name="notes" placeholder="apa yang terjadi, pelajaran…">{{ a.notes if a and a.notes is not none else '' }}</textarea>
+      </label>
+      <button class="primary" type="submit">Simpan anotasi</button>
+    </form>
+
+    <h2>Tags</h2>
+    <div class="panel">
+      <p>
+        {% for tag, source in tags %}
+        <span class="chip {{ source }}">{{ tag }}
+          {% if source == 'manual' %}
+          <form method="post" action="/trades/{{ trade.position_id }}/tags/delete">
+            <input type="hidden" name="tag" value="{{ tag }}">
+            <button type="submit" title="hapus tag manual">×</button>
+          </form>
+          {% endif %}
+        </span>
+        {% else %}
+        <span class="muted">(belum ada tag)</span>
+        {% endfor %}
+      </p>
+      <form class="weeks" method="post" action="/trades/{{ trade.position_id }}/tags">
+        <input type="text" name="tag" placeholder="tag manual, mis. revenge-trade" required>
+        <button class="primary" type="submit">Tambah</button>
+      </form>
+      <p class="note">Tag <span class="chip auto">auto</span> di-set oleh <code>rebuild</code> dan tak bisa dihapus di sini.</p>
+    </div>
+  </div>
+</div>
+<p><a href="/trades">← kembali ke daftar</a></p>
+{% endblock %}

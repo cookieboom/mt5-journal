@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — mt5-journal{% endblock %}
+
+{% macro bucket_rows(buckets, ccy) %}
+  {% for b in buckets %}
+  <tr class="{{ 'gated' if is_gated(b.n, b.expectancy) else '' }}">
+    <td>{{ b.label }}</td>
+    <td class="num">{{ b.n }}</td>
+    <td class="num">{{ b.win_rate | pct }}</td>
+    <td class="num">{{ b.expectancy | money(ccy, sign=True) }}</td>
+    <td class="num">{{ gated(b.n_with_r, b.avg_r, unit="R") }}</td>
+  </tr>
+  {% endfor %}
+{% endmacro %}
+
+{% block content %}
+{% set r = report %}
+<h1>Ringkasan akun</h1>
+
+<div class="cards">
+  <div class="card">
+    <div class="label">Win rate</div>
+    <div class="value">{{ r.win_rate | pct }}</div>
+    <div class="sub">n = {{ r.n_closed }} closed</div>
+  </div>
+  <div class="card">
+    <div class="label">Expectancy</div>
+    <div class="value">{{ r.expectancy | money(r.currency, sign=True) }}</div>
+    <div class="sub">rata-rata net / trade</div>
+  </div>
+  <div class="card">
+    <div class="label">Profit factor</div>
+    <div class="value">{{ r.profit_factor | num }}</div>
+    <div class="sub">Σwin / |Σloss|</div>
+  </div>
+  <div class="card">
+    <div class="label">Avg R</div>
+    <div class="value">{{ r.avg_r | rmult }}</div>
+    <div class="sub">n = {{ r.n_with_r }}{% if r.n_with_r < 20 %}, perlu ≥20{% endif %}</div>
+  </div>
+</div>
+
+<h2>Outcomes</h2>
+<div class="cards">
+  <div class="card"><div class="label">Total</div><div class="value">{{ r.n_total }}</div></div>
+  <div class="card"><div class="label">Closed</div><div class="value">{{ r.n_closed }}</div></div>
+  <div class="card"><div class="label">Win</div><div class="value pos">{{ r.n_wins }}</div></div>
+  <div class="card"><div class="label">Loss</div><div class="value neg">{{ r.n_losses }}</div></div>
+  <div class="card"><div class="label">Breakeven</div><div class="value">{{ r.n_breakeven }}</div></div>
+</div>
+
+<h2>Money (coverage penuh, n = {{ r.n_closed }})</h2>
+<div class="panel">
+  <dl class="kv">
+    <dt>Avg win</dt><dd class="pos">{{ r.avg_win | money(r.currency) }}</dd>
+    <dt>Avg loss</dt><dd class="neg">{{ r.avg_loss | money(r.currency, sign=True) }}</dd>
+  </dl>
+</div>
+
+<h2>MAE / MFE (§9: perlu n≥20, butuh candle + SL diketahui)</h2>
+<div class="panel">
+  <dl class="kv">
+    <dt>Candle coverage</dt><dd>{{ r.n_with_mae }} / {{ r.n_closed }} closed</dd>
+    <dt>Avg MAE (R)</dt><dd>{{ gated(r.n_with_mae_r, r.avg_mae_r, unit="R") }}</dd>
+    <dt>Avg MFE (R)</dt><dd>{{ gated(r.n_with_mfe_r, r.avg_mfe_r, unit="R") }}</dd>
+  </dl>
+</div>
+
+<h2>Per session (UTC)</h2>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Session</th><th class="num">n</th><th class="num">Win</th><th class="num">Expectancy</th><th class="num">Avg R</th></tr></thead>
+  <tbody>{{ bucket_rows(r.by_session, r.currency) }}</tbody>
+</table>
+</div>
+
+<h2>Per source (EA = magic≠0)</h2>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Source</th><th class="num">n</th><th class="num">Win</th><th class="num">Expectancy</th><th class="num">Avg R</th></tr></thead>
+  <tbody>{{ bucket_rows(r.by_source, r.currency) }}</tbody>
+</table>
+</div>
+
+<p class="note">Baris grey = bucket di bawah n≥20 (docs §9): count &amp; net tetap ditampilkan,
+tapi rate/rata-rata ditahan agar tidak menyesatkan. R-family tipis karena SL hanya
+diketahui untuk sebagian trade — tumbuh seiring poller (M4) menutupi trade baru.</p>
+{% endblock %}

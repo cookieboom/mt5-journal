@@ -5,6 +5,7 @@ residual — never swallow it in a tolerance).
 
 from __future__ import annotations
 
+import os
 import sqlite3
 import time
 from datetime import datetime, timezone
@@ -590,6 +591,33 @@ def weekly(
     typer.echo(f"trades closed:  {result.n_closed}")
     typer.echo(f"realized:       {_fmt(result.net_total, result.currency, sign=True)}")
     typer.echo(f"annotated:      {len(result.notes)}")
+
+
+# --------------------------------------------------------------------- serve
+
+
+@app.command()
+def serve(
+    host: str = typer.Option("127.0.0.1", help="Bind address (localhost only by default)."),
+    port: int = typer.Option(8000, help="Port to listen on."),
+    db: str = typer.Option(_DEFAULT_DB, help="SQLite DB path."),
+) -> None:
+    """Serve the web dashboard on localhost (M7). Pure DB, no bridge — a
+    read-mostly HTML view over `journal report`/`weekly`/`chart` plus annotation
+    and manual-tag writes. Bridge operations (`sync`, `candles`, `poll`,
+    `rebuild`) stay in the CLI.
+
+    Uvicorn imports the app factory by string, so the DB path is passed through
+    the `JOURNAL_DB` env var (mirrors how `create_app` resolves it).
+    """
+    # Lazy import (like LiveMT5Client): keeps the CLI importable without the web
+    # stack installed, and off the hot path of every other command.
+    import uvicorn
+
+    os.environ["JOURNAL_DB"] = db
+    typer.echo(f"mt5-journal web dashboard → http://{host}:{port}  (db={db})")
+    typer.echo("Ctrl+C to stop.")
+    uvicorn.run("journal.web.app:create_app", factory=True, host=host, port=port)
 
 
 # -------------------------------------------------------------- reconcile
