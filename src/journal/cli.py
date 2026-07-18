@@ -616,5 +616,135 @@ def reconcile_list(db: str = typer.Option(_DEFAULT_DB, help="SQLite DB path.")) 
         )
 
 
+# ------------------------------------------------------------- annotate / tags
+
+
+def _echo_tags(pairs) -> None:
+    """Print a trade's tags, grouped source-first (`list_tags` already orders
+    them). Auto and manual are labelled so it's clear which the auto pass owns."""
+    if not pairs:
+        typer.echo("tags:         (none)")
+        return
+    typer.echo("tags:")
+    for tag, source in pairs:
+        typer.echo(f"  {tag}  ({source})")
+
+
+@app.command()
+def annotate(
+    position_id: int = typer.Argument(
+        ..., help="trades.position_id — the STABLE key (survives rebuild)."
+    ),
+    setup: str = typer.Option(None, help="Setup name, e.g. 'breakout'."),
+    confidence: int = typer.Option(None, help="Conviction, an integer 1-5."),
+    emotion: str = typer.Option(None, help="How you felt taking the trade."),
+    followed_plan: bool = typer.Option(
+        None, "--followed-plan/--no-followed-plan",
+        help="Whether you followed your plan (omit to leave unrecorded).",
+    ),
+    notes: str = typer.Option(None, help="Free-form notes."),
+    db: str = typer.Option(_DEFAULT_DB, help="SQLite DB path."),
+) -> None:
+    """Record the human layer for one trade — setup / confidence / emotion /
+    plan / notes (M6). Keyed on `position_id` (never `trades.id`), so it survives
+    every `rebuild`. Re-running updates in place. Pure DB, no bridge.
+    """
+    from .annotate import AnnotateError, set_annotation
+
+    conn = connect(db)
+    try:
+        _one_account_login(conn)  # friendly exit if `sync` never ran
+        try:
+            row = set_annotation(
+                conn, position_id, setup=setup, confidence=confidence,
+                emotion=emotion, followed_plan=followed_plan, notes=notes,
+            )
+        except AnnotateError as e:
+            typer.echo(str(e))
+            raise typer.Exit(code=1)
+    finally:
+        conn.close()
+
+    fp = row["followed_plan"]
+    fp_text = "(not recorded)" if fp is None else ("yes" if fp else "no")
+    typer.echo("== annotate ==")
+    typer.echo(f"position_id:  {position_id}")
+    typer.echo(f"setup:        {row['setup'] if row['setup'] is not None else '(none)'}")
+    typer.echo(
+        f"confidence:   {row['confidence'] if row['confidence'] is not None else '(none)'}"
+    )
+    typer.echo(f"emotion:      {row['emotion'] if row['emotion'] is not None else '(none)'}")
+    typer.echo(f"followed plan: {fp_text}")
+    typer.echo(f"notes:        {row['notes'] if row['notes'] is not None else '(none)'}")
+
+
+tag_app = typer.Typer(help="Manual tags on a trade (source='manual'; auto tags are set by rebuild).")
+app.add_typer(tag_app, name="tag")
+
+
+@tag_app.command("add")
+def tag_add(
+    position_id: int = typer.Argument(..., help="trades.position_id — the STABLE key."),
+    tag: str = typer.Argument(..., help="Tag to attach, e.g. 'revenge-trade'."),
+    db: str = typer.Option(_DEFAULT_DB, help="SQLite DB path."),
+) -> None:
+    """Attach a manual tag to a trade (idempotent). Manual tags survive `rebuild`."""
+    from .annotate import AnnotateError, add_tag
+
+    conn = connect(db)
+    try:
+        _one_account_login(conn)
+        try:
+            pairs = add_tag(conn, position_id, tag)
+        except AnnotateError as e:
+            typer.echo(str(e))
+            raise typer.Exit(code=1)
+    finally:
+        conn.close()
+    typer.echo(f"== tag add: {position_id} ==")
+    _echo_tags(pairs)
+
+
+@tag_app.command("rm")
+def tag_rm(
+    position_id: int = typer.Argument(..., help="trades.position_id — the STABLE key."),
+    tag: str = typer.Argument(..., help="Manual tag to remove."),
+    db: str = typer.Option(_DEFAULT_DB, help="SQLite DB path."),
+) -> None:
+    """Remove a manual tag. Auto tags cannot be removed here — they are owned by
+    the `rebuild` auto pass and regenerated on every rebuild."""
+    from .annotate import list_tags, remove_tag
+
+    conn = connect(db)
+    try:
+        _one_account_login(conn)
+        n = remove_tag(conn, position_id, tag)
+        pairs = list_tags(conn, position_id)
+    finally:
+        conn.close()
+    if n == 0:
+        typer.echo(f"no manual tag '{tag}' on position_id {position_id} (nothing removed).")
+    typer.echo(f"== tag rm: {position_id} ==")
+    _echo_tags(pairs)
+
+
+@tag_app.command("ls")
+def tag_ls(
+    position_id: int = typer.Argument(..., help="trades.position_id — the STABLE key."),
+    db: str = typer.Option(_DEFAULT_DB, help="SQLite DB path."),
+) -> None:
+    """List every tag on a trade (auto + manual)."""
+    from .annotate import list_tags
+
+    conn = connect(db)
+    try:
+        _one_account_login(conn)
+        pairs = list_tags(conn, position_id)
+    finally:
+        conn.close()
+    typer.echo(f"== tags: {position_id} ==")
+    _echo_tags(pairs)
+
+
 if __name__ == "__main__":  # pragma: no cover
     app()

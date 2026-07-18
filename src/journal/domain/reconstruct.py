@@ -52,6 +52,7 @@ from ..store.db import now_ms, one_account_login
 from .excursion import compute_excursion
 from .risk import risk_amount
 from .symbols import to_base
+from .tags import compute_auto_tags
 
 log = logging.getLogger(__name__)
 
@@ -516,6 +517,57 @@ def _fill_excursions(conn: sqlite3.Connection, trades: list[Trade]) -> int:
     return n_with_mae
 
 
+def _outlier_thresholds(net_profits: list[float]) -> tuple[float, float]:
+    """(big_win_threshold, big_loss_threshold) = the top-/bottom-decile net_profit
+    of the closed trades. Nearest-rank on the sorted values: the 90th-percentile
+    value is the big-win floor, the 10th-percentile value the big-loss ceiling.
+    Only ever called with >= _MIN_N values (see `_fill_auto_tags`), so the indices
+    are always in range and a decile is a meaningful cut, not noise."""
+    vals = sorted(net_profits)
+    n = len(vals)
+    lo = vals[int(round(0.1 * (n - 1)))]
+    hi = vals[int(round(0.9 * (n - 1)))]
+    return hi, lo
+
+
+def _fill_auto_tags(conn: sqlite3.Connection, trades: list[Trade]) -> None:
+    """Regenerate the `source='auto'` tag rows for every CLOSED trade (M6), a
+    POST-`reconstruct()` step mirroring `_fill_excursions`: it runs inside the
+    same `rebuild()` transaction, before the final commit.
+
+    MANUAL-SAFE: the DELETE carries `source = 'auto'` so a user's `source='manual'`
+    tags are never touched — dropping that filter would wipe the human layer on
+    every rebuild (the very thing the position_id key exists to protect). Tags key
+    on (account_login, position_id, segment), NEVER trades.id.
+
+    §9-GATED: outlier thresholds are the account's decile net_profit, computed
+    only when there are >= _MIN_N closed trades; below that, `None`/`None` are
+    passed so no `big-win`/`big-loss` is applied against a sample too small to
+    define an outlier. `compute_auto_tags` stays pure — thresholds flow IN."""
+    from ..analytics.report import _MIN_N
+
+    login = one_account_login(conn)
+    closed = [t for t in trades if t.status == "closed"]
+    if len(closed) >= _MIN_N:
+        big_win, big_loss = _outlier_thresholds([t.net_profit for t in closed])
+    else:
+        big_win = big_loss = None
+
+    conn.execute(
+        "DELETE FROM tags WHERE account_login = ? AND source = 'auto'", (login,)
+    )
+    for t in closed:
+        for tag in compute_auto_tags(
+            t, big_win_threshold=big_win, big_loss_threshold=big_loss
+        ):
+            conn.execute(
+                "INSERT OR IGNORE INTO tags "
+                "(account_login, position_id, segment, tag, source) "
+                "VALUES (?, ?, ?, ?, 'auto')",
+                (t.account_login, t.position_id, t.segment, tag),
+            )
+
+
 def rebuild(conn: sqlite3.Connection) -> RebuildReport:
     """DELETE + re-INSERT `trades` for the account from the append-only `_raw` tables.
     NEVER UPDATE (rule 2): `trades` is fully derived and must be reproducible. One
@@ -561,6 +613,8 @@ def rebuild(conn: sqlite3.Connection) -> RebuildReport:
                 t.mfe, t.mae_r, t.mfe_r, t.close_reason, t.magic, t.deal_count, ts,
             ),
         )
+    # M6: regenerate auto tags in the SAME transaction (manual tags untouched).
+    _fill_auto_tags(conn, trades)
     conn.commit()
 
     return RebuildReport(

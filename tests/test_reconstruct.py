@@ -872,3 +872,123 @@ def test_verify_identity2_fails_loud_when_trades_empty_but_deals_present(conn, c
     assert v.id2_state == "fail"
     assert not v.passed
     assert v.trade_deals_count == 136 and v.trades_count == 0
+
+
+# --- M6: auto-tag pass wired into rebuild() (manual-safe, §9-gated) ----------
+
+
+def _seed_account_only(conn, login=_LOGIN):
+    conn.execute(
+        "INSERT INTO accounts (login, currency, balance, first_seen_at) "
+        "VALUES (?, 'USC', 0.0, 0)", (login,),
+    )
+    conn.commit()
+
+
+def _raw_in(conn, pid, ticket, time_msc, *, symbol="BTCUSDc", price=100.0,
+            volume=0.1, login=_LOGIN):
+    conn.execute(
+        "INSERT INTO deals_raw (account_login,ticket,order_ticket,position_id,"
+        "symbol,type,entry,reason,magic,volume,price,commission,swap,profit,fee,"
+        "time_msc,raw_json,ingested_at) VALUES "
+        "(?,?,0,?,?,0,0,0,0,?,?,0,0,0,0,?,'{}',?)",
+        (login, ticket, pid, symbol, volume, price, time_msc, time_msc),
+    )
+
+
+def _raw_out(conn, pid, ticket, time_msc, *, symbol="BTCUSDc", price=101.0,
+             volume=0.1, profit=1.0, login=_LOGIN):
+    conn.execute(
+        "INSERT INTO deals_raw (account_login,ticket,order_ticket,position_id,"
+        "symbol,type,entry,reason,magic,volume,price,commission,swap,profit,fee,"
+        "time_msc,raw_json,ingested_at) VALUES "
+        "(?,?,0,?,?,1,1,0,0,?,?,0,0,?,0,?,'{}',?)",
+        (login, ticket, pid, symbol, volume, price, profit, time_msc, time_msc),
+    )
+
+
+def _tags(conn, pid, login=_LOGIN):
+    return {
+        (r["tag"], r["source"])
+        for r in conn.execute(
+            "SELECT tag, source FROM tags WHERE account_login = ? AND position_id = ?",
+            (login, pid),
+        )
+    }
+
+
+def _dt_ms(y, mo, d, h=0, mi=0) -> int:
+    from datetime import datetime, timezone
+    return int(datetime(y, mo, d, h, mi, tzinfo=timezone.utc).timestamp() * 1000)
+
+
+def test_rebuild_writes_auto_tags_for_structural_facts(conn):
+    _seed_account_only(conn)
+    # pid 1: opened Saturday 2026-01-17 10:00 UTC, held 30s -> weekend + sub-1min.
+    sat = _dt_ms(2026, 1, 17, 10, 0)
+    _raw_in(conn, 1, 101, sat)
+    _raw_out(conn, 1, 102, sat + 30_000)
+    # pid 2: opened Wed 23:30, closed Thu 00:10 next day -> held-overnight only.
+    o = _dt_ms(2026, 1, 14, 23, 30)
+    _raw_in(conn, 2, 201, o)
+    _raw_out(conn, 2, 202, _dt_ms(2026, 1, 15, 0, 10))
+    conn.commit()
+
+    rebuild(conn)
+    assert _tags(conn, 1) == {("weekend", "auto"), ("sub-1min", "auto")}
+    assert _tags(conn, 2) == {("held-overnight", "auto")}
+
+
+def test_manual_tag_survives_rebuild(conn, client):
+    # The headline safety test: a source='manual' tag must NOT be deleted by the
+    # auto pass, and auto tags must be regenerated around it.
+    sync(client, conn)
+    rebuild(conn)
+    pid = conn.execute("SELECT position_id FROM trades LIMIT 1").fetchone()[0]
+    conn.execute(
+        "INSERT INTO tags (account_login, position_id, segment, tag, source) "
+        "VALUES (?, ?, 0, 'my-note', 'manual')", (_LOGIN, pid),
+    )
+    conn.commit()
+
+    rebuild(conn)
+    assert ("my-note", "manual") in _tags(conn, pid)
+    # auto tags were regenerated for the account (fixture has 68 closed trades).
+    n_auto = conn.execute(
+        "SELECT COUNT(*) FROM tags WHERE source = 'auto'"
+    ).fetchone()[0]
+    assert n_auto > 0
+
+
+def test_auto_tags_are_idempotent_across_rebuilds(conn, client):
+    sync(client, conn)
+    rebuild(conn)
+    first = sorted(
+        tuple(r) for r in conn.execute(
+            "SELECT account_login, position_id, segment, tag, source FROM tags"
+        )
+    )
+    rebuild(conn)
+    second = sorted(
+        tuple(r) for r in conn.execute(
+            "SELECT account_login, position_id, segment, tag, source FROM tags"
+        )
+    )
+    assert first == second
+
+
+def test_no_outlier_tags_below_min_n(conn):
+    # §9 gate: on a sub-20-trade account, big-win/big-loss must never appear even
+    # though one trade is a huge outlier.
+    _seed_account_only(conn)
+    for i in range(1, 6):  # 5 closed trades -> below _MIN_N
+        t = _dt_ms(2026, 1, 14, 10 + i)  # Wednesday, intraday
+        _raw_in(conn, i, 100 + i * 2, t)
+        _raw_out(conn, i, 101 + i * 2, t + 3600_000, profit=1_000_000.0 if i == 1 else 1.0)
+    conn.commit()
+
+    rebuild(conn)
+    outliers = conn.execute(
+        "SELECT COUNT(*) FROM tags WHERE tag IN ('big-win', 'big-loss')"
+    ).fetchone()[0]
+    assert outliers == 0
