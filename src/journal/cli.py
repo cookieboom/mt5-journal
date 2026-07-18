@@ -533,6 +533,65 @@ def report(db: str = typer.Option(_DEFAULT_DB, help="SQLite DB path.")) -> None:
         )
 
 
+# -------------------------------------------------------------------- weekly
+
+
+def _parse_iso_week(s: str) -> tuple[int, int]:
+    """`YYYY-Www` (e.g. `2026-W28`) → (iso_year, iso_week). Validated via
+    strptime's ISO directives so a bad week/year is rejected cleanly, the way
+    `_parse_effective` guards `reconcile add`'s timestamp."""
+    try:
+        dt = datetime.strptime(f"{s}-1", "%G-W%V-%u")  # -1 = Monday of that ISO week
+    except ValueError as e:
+        typer.echo(f"--week must be ISO 'YYYY-Www' (e.g. 2026-W28): {e}")
+        raise typer.Exit(code=1)
+    y, w, _ = dt.isocalendar()
+    return y, w
+
+
+@app.command()
+def weekly(
+    week: str = typer.Option(
+        None, help="ISO week 'YYYY-Www' (default: the last COMPLETE week)."
+    ),
+    cache_dir: str = typer.Option("cache", help="Directory the .md is written to."),
+    db: str = typer.Option(_DEFAULT_DB, help="SQLite DB path."),
+) -> None:
+    """Render one ISO week to a Markdown file in `cache/` (M6.1). Pure DB, no
+    bridge — reads `trades` + annotations/tags (run `journal rebuild` first).
+
+    A trade is attributed to the week it CLOSED in (realized P&L), over
+    Mon–Sun UTC. Weekly rates/averages are §9-gated (a week rarely clears n≥20),
+    but the raw counts, the realized net total, and the trades you annotated or
+    tagged are always shown — that is what a weekly review is for. The file is
+    reproducible from the DB (rule 6)."""
+    from pathlib import Path
+
+    from .analytics.weekly import build_weekly, last_complete_iso_week
+    from .render.weekly import render_weekly_md
+
+    iso_year, iso_week = _parse_iso_week(week) if week else last_complete_iso_week()
+
+    conn = connect(db)
+    try:
+        result = build_weekly(conn, iso_year, iso_week)
+    finally:
+        conn.close()
+
+    md = render_weekly_md(result)
+    out_dir = Path(cache_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / f"weekly-{iso_year}-W{iso_week:02d}.md"
+    path.write_text(md)
+
+    typer.echo("== weekly ==")
+    typer.echo(f"week:           {iso_year}-W{iso_week:02d}")
+    typer.echo(f"path:           {path}")
+    typer.echo(f"trades closed:  {result.n_closed}")
+    typer.echo(f"realized:       {_fmt(result.net_total, result.currency, sign=True)}")
+    typer.echo(f"annotated:      {len(result.notes)}")
+
+
 # -------------------------------------------------------------- reconcile
 
 reconcile_app = typer.Typer(help="Name balance-invariant residuals (never swallow them).")

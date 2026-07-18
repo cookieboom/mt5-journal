@@ -82,7 +82,7 @@ class ReportResult:
     by_source: tuple[BucketStat, ...]
 
 
-def _bucket_stat(label: str, rows: list[sqlite3.Row]) -> BucketStat:
+def bucket_stat(label: str, rows: list[sqlite3.Row]) -> BucketStat:
     """Aggregate one bucket's closed-trade rows into a `BucketStat`, reusing the
     exact win/loss classification (`_TOL`, rule 5) and §9 gating the top-level
     report uses — so a bucket and the whole-account figure can never disagree on
@@ -176,7 +176,7 @@ def build_report(conn: sqlite3.Connection) -> ReportResult:
     for r in rows:
         session_groups[session_of(r["open_time_msc"])].append(r)
     by_session = tuple(
-        _bucket_stat(label, session_groups[label]) for label in SESSION_ORDER
+        bucket_stat(label, session_groups[label]) for label in SESSION_ORDER
     )
 
     # Source breakdown — EA vs discretionary. docs §7: magic != 0 ⟺ EA. Rule 4:
@@ -185,8 +185,8 @@ def build_report(conn: sqlite3.Connection) -> ReportResult:
     ea_rows = [r for r in rows if r["magic"]]
     disc_rows = [r for r in rows if not r["magic"]]
     by_source = (
-        _bucket_stat("EA", ea_rows),
-        _bucket_stat("Discretionary", disc_rows),
+        bucket_stat("EA", ea_rows),
+        bucket_stat("Discretionary", disc_rows),
     )
 
     return ReportResult(
