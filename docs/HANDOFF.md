@@ -39,93 +39,126 @@ M1 + M1.1 + M1.2 (ingest, archive detector, bridge-free `verify`, reconcile,
 `equity` modelled — `1d086c2` / `10d9141`) · M2 + M2.1 (`reconstruct.py`:
 deals → trades, `journal rebuild`, `journal verify` §6 identity 2 — 55 tests
 green, `48a4cc7`) · M3 (candle store + mplfinance renderer, `journal chart
-<position_id>` — 83 tests green, `797849b`) · **M4** (SL/TP poller,
-`journal poll` — 110 tests green, `0f1b088`).
+<position_id>` — 83 tests green, `797849b`) · M4 (SL/TP poller, `journal poll`
+— 110 tests green, `0f1b088`) · **M5** (MAE/MFE + `journal report` — 138 tests
+green, `11cac94`).
 
-**M4 in one line:** `journal poll` snapshots live open positions'
-`positions_get()` SL/TP into `sl_tp_snapshots` on change; `journal rebuild`
-now consults that data whenever `orders_raw` gives nothing, closing (going
-forward only) the gap M2 measured — only 6/68 trades had a recoverable
-`sl_initial` from the order alone.
+**M5 in one line:** `trades.mae`/`mfe`/`mae_r`/`mfe_r` (NULL since M2) are now
+filled by `rebuild()`, and `journal report` gives a first honest read of the
+account — money stats at full coverage, R-stats correctly gated as
+"insufficient" at today's `n=6`. Session bucketing and EA/discretionary
+breakdowns were scoped **out** to M5.1 (the roadmap's one-line M5 description
+bundled 4 features, ~4x M3/M4's size — split mirrors how M1→M1.1/M1.2 and
+M2→M2.1 actually happened).
 
-Decisions worth knowing before touching this code again:
+**The plan went through a validation pass before any code was written, and it
+caught three real bugs, plus a fourth surfaced while fixing the third — all
+four are now regression-tested, not just fixed:**
 
-- **Forward-only, by the nature of the MT5 API.** `positions_get()` returns
-  only currently-open positions; a closed position's SL history cannot be
-  retroactively polled. The 62 historical discretionary trades stay
-  `sl_initial IS NULL` **forever** — M4 only helps trades open *while the
-  poller runs*. Not a limitation to fix; it's the shape of the data.
-- **The one genuinely subtle design decision, confirmed via AskUserQuestion
-  before implementation:** the poller can now positively confirm "no SL was
-  ever set" as a real `sl_initial = 0.0` (rule 4: "0 means none set") — the
-  first path in the codebase to legitimately write that value (`orders_raw`
-  alone was always ambiguous: the order only shows the SL at entry-instant, so
-  its `0.0` is coerced to `NULL`, never stored). Feeding a confirmed-`0.0`
-  straight into `risk_amount()` would treat `0` as a literal price near zero
-  and return a huge, wrong number. `_real_sl_price()` at the `reconstruct()`
-  call site keeps `trades.sl_initial` auditable (`0.0`) while risk math sees
-  `None` (undefined exposure — same as fully unknown, *not* zero risk: no stop
-  means unbounded downside, which is a different fact from a stop sitting
-  exactly at entry).
-- **The "all-zero → confirmed 0.0" coverage caveat is accepted, not solved,**
-  and for a sharper reason than "keep it simple": the obvious safeguard
-  (require the first observation to be near `open_time_msc`) would itself be a
-  latent Trap-7 bug — `observed_msc` is the poller's **true UTC** wall clock,
-  while `open_time_msc` is **broker server time**. They're comparable today
-  only because this account's offset is 0; a naive proximity check would
-  silently break the day the broker introduces DST. Blast radius is contained
-  regardless: a wrongly-inferred `0.0` still yields `risk=None`, never a
-  poisoned statistic — only `sl_source` reads `'poller'` instead of
-  `'unknown'`. Tripwire: if a trade you **know** had an SL ever shows
-  `sl_source='poller', sl_initial=0.0`, that's the signal to build the
-  offset-corrected guard.
-- **Change-only logging, not per-tick.** At a 5s interval the longest measured
-  trade (11h25m) would produce ~8200 near-identical rows if logged
-  unconditionally; a row is written only when `(sl, tp, volume)` actually
-  changes for that `position_id`.
-- **A real bug found via manual smoke-testing before the formal suite
-  existed, now a permanent regression test:** two *different* SL states
-  landing in the same millisecond (low clock resolution, or two `poll_once`
-  calls back to back) collided on the `(account_login, position_id,
-  observed_msc)` primary key, and `INSERT OR IGNORE` silently dropped the
-  second, real observation — the same class of data loss Trap 16 forbids for
-  `deals_raw`. Fixed by forcing strictly-increasing `observed_msc` per
-  position on collision.
-- **A UX gap found in review, fixed before commit:** `journal poll` with no
-  `--once` only reported via `logging.info`, invisible with no handler
-  configured — a long-running foreground command a human watches would have
-  looked hung the whole time even while working. Added an `on_cycle` callback
-  so the CLI prints live per-cycle feedback (silent on idle cycles, matching
-  the change-only philosophy).
-- **`RebuildReport.n_with_sl` now counts a confirmed-`0.0` as "known"**
-  alongside real price levels (defensible — we *do* know there was no SL —
-  but it's not the same as "has R"). Flagging so it's a conscious fact for
-  whoever builds M5's stats, not a surprise.
+- **No money conversion needed at all.** `mae_r = mae / |open_price -
+  real_sl|` — `risk_amount`'s `tick_size`/`tick_value`/`volume` cancel
+  algebraically against the same terms in `mae_money`. First draft added a
+  `distance_to_money()` helper to `domain/risk.py`; that file stays completely
+  untouched instead — a stricter version of M4's own "don't modify
+  `domain/risk.py`" precedent (M4 solved a *different* problem there; here
+  there was no risk.py-shaped problem to solve).
+- **A bar-open-time filter would have silently dropped most short trades.**
+  `candles.time_msc` is a bar's *open* time; requiring it to fall inside
+  `[open,close]` returns nothing for a trade that doesn't contain a bar-open
+  boundary — true of most of the 11 sub-M1 trades (min 1s). Fixed with
+  covering-bar semantics, mirroring `render/chart.py::_nearest_bar_index`
+  (the same problem, already solved once for chart markers): the bar
+  *containing* open through the bar *containing* close.
+- **Scanning every timeframe for a symbol is unsafe on this hedging account.**
+  Two overlapping trades of different durations can pick different TFs
+  (`choose_timeframe`); a coarser trade's wider bar would leak into a shorter
+  trade's excursion if the TF column were ignored. Excursion is scoped to
+  **the trade's own TF**, not the symbol alone.
+- **The fix for that surfaced a fourth issue:** a bulk in-memory preload
+  (mirroring M4's `sl_tp_snapshots` pattern) risks a short trade silently
+  matching a *different, disjoint* trade's stale cluster on the same
+  symbol+TF, since `candles` pools every trade's window (schema.sql: "Dedupes
+  across trades on the same symbol/day"). Fixed with a **scoped SQL query per
+  trade** (symbol + that trade's own TF + its own `window_for` window) instead
+  of a bulk scan — which also meant excursion couldn't thread through
+  `reconstruct()` the way M4's `snapshots` did (a trade's open/close only
+  exist *after* `reconstruct()`'s loop runs). It's a post-processing step in
+  `rebuild()` instead: `Trade` is a mutable dataclass, so `_fill_excursions`
+  sets `mae`/`mfe`/`mae_r`/`mfe_r` in place before the INSERT loop.
+  `reconstruct()`'s signature and pure logic are untouched by M5.
+- **The SL-exactly-at-entry ZeroDivisionError guard (Trap 6/M2.1) recurred a
+  third time**, now in `mae_r`/`mfe_r`: `real_sl == open_price` gives a
+  *known* zero `risk_distance`, not an unknown one — gate on it being truthy.
+  Three occurrences of one bug shape in this codebase now (`r_multiple`,
+  `mae_r`/`mfe_r`, and `profit_factor` in the report below) — worth watching
+  for as a pattern, not three unrelated bugs.
+- **A real workflow wrinkle, documented rather than hidden:** MAE/MFE needs
+  `candles`, which `journal candles` only fetches for trades already in
+  `trades` — so the order is `sync → rebuild → candles → rebuild` (rebuild
+  **twice**) on a fresh account. Safe (`rebuild` is idempotent) and
+  unavoidable even in steady state.
+- **`journal report`'s win/loss/breakeven classification uses tolerance**
+  (`abs(net_profit) <= 1e-9`), never `==`/`>`/`<` on a raw float (rule 5) —
+  every downstream count depends on getting this comparison right.
+- **`n_with_mae` is a plain diagnostic, never gated** — "how much of the
+  account has candle coverage yet" isn't itself an average, so it's shown
+  regardless of `n`, unlike `avg_r`/`avg_mae_r`/`avg_mfe_r`.
 
-**Live smoke:** `journal poll --once` against the live bridge — `0 positions,
-0 snapshots`. Decisive, not just "didn't crash": this was the account's
-first-ever poll, so any open position would have written at least one row
-(nothing to dedupe against yet). Zero snapshots on a fresh table means zero
-open positions at that moment — confirmed by reading `sl_tp_snapshots`
-directly. SL/TP **value fidelity** against the terminal is still unverified —
-that check needs an actual open position, which didn't exist at review time.
-Do it the next time you catch a position open.
+**Live smoke:** `journal candles → rebuild → report` against the live
+account. `candles`: 2494 new bars, 72/72 trades windowed. `rebuild`: `mae/mfe`
+went from 0 to **72 computable**. `report`:
+```
+win rate: 34.7%   avg win: 9.92 USC   avg loss: -3.75 USC
+profit factor: 1.41   expectancy: +1.00 USC
+R-multiple: n/a (n=6, need ≥20)      -- correctly withheld, not a bug
+MAE/MFE:    candle coverage 72/72; n/a (n=6, need ≥20) -- same reason
+```
+Net profitable despite a sub-40% win rate (cuts losses short: avg loss
+magnitude less than half avg win) — and the report correctly refuses to
+average 6 R-multiple data points as if they were reliable.
 
 **Not blocked.**
 
-**Next: M5 — analytics (R-multiple, MAE/MFE, sessions, behaviour).** Not yet
-scoped in any detail — unlike M3→M4, no docs §7-style measurement exists for
-M5 yet. Known constraints going in: `n=68` (or `72` live) is small — every
-stat needs `n` shown and buckets under 20 suppressed (§9); R-coverage is only
-6/68 today and will grow slowly, one poller-covered trade at a time, so R
-statistics need to handle a growing-but-still-small sample honestly, not
-pretend the coverage gap is already closed; EA vs discretionary trades
-(`magic` / `reason==EXPERT`) must be kept separate or both populations become
-meaningless (Account facts, below).
+**Next: M5.1 — sessions + EA/discretionary behaviour breakdowns.** The two
+features scoped out of M5. Known going in: session bucketing must respect
+the measured per-symbol hours (doc §7: BTC 24/7, EUR ≈24h×5d, XAU ≈23h×5d,
+gold has a ~1h daily break) — do not assume a uniform trading week. EA vs
+discretionary is a clean split already (`magic != 0` ⟺ `reason == EXPERT` ⟺
+`sl != 0` on the opening order, docs §7) but the EA population is only 6
+trades — any EA-specific stat will be suppressed by §9's n<20 rule for a
+long time; build the split anyway, the pipeline is the point (§9's own
+instruction, already proven true once by M5's R-multiple sections).
 
 ---
 
 **Evidence from earlier milestones, kept for reference:**
+
+**M4 in one line:** `journal poll` snapshots live open positions'
+`positions_get()` SL/TP into `sl_tp_snapshots` on change; `journal rebuild`
+consults that data whenever `orders_raw` gives nothing, closing (going
+forward only) the gap M2 measured — only 6/68 trades had a recoverable
+`sl_initial` from the order alone.
+
+M4 decisions still worth knowing:
+
+- Forward-only by the nature of the MT5 API — `positions_get()` only returns
+  open positions, so the 62 historical discretionary trades stay
+  `sl_initial IS NULL` forever; M4 only helps trades open *while polling*.
+- A confirmed-`0.0` (poller-observed "no SL ever") is a real, auditable fact
+  (rule 4) but must never reach `risk_amount()` as a price — `_real_sl_price()`
+  is the guard M5 reused three paragraphs above.
+- The "all-zero → confirmed" coverage caveat is accepted, not solved: a
+  proximity safeguard would itself be a latent Trap-7 bug (`observed_msc` is
+  poller wall-clock UTC; `open_time_msc` is broker server time).
+  Blast radius is contained regardless — a wrong `0.0` still yields
+  `risk=None`, never a poisoned statistic.
+- Change-only logging, not per-tick (11h25m at 5s intervals would be ~8200
+  rows/trade otherwise).
+- Two bugs caught before commit, both now regression-tested: a same-millisecond
+  PK collision that silently dropped a real SL observation (fixed by forcing
+  strictly-increasing `observed_msc`), and `journal poll`'s activity being
+  invisible in a terminal with no logging handler configured (fixed with an
+  `on_cycle` CLI callback).
 
 **M3 in one line:** trades became visible. `journal candles` fetches each
 closed trade's render window into the central `candles` table; `journal chart
@@ -271,6 +304,10 @@ Every one of these was caught by machinery deliberately built for it, not by luc
 | `record_fixtures.py`'s M3 rates-recording addition sourced trade selection from the *live* pull the script was already doing, to pick which trade's candle window to fetch | **Claude Code's M3 implementation, first pass.** The script has always refreshed *every* fixture on each run (its original, correct job); adding rates on top of that fresh pull meant a routine re-run silently drifted `deals.json`/`orders.json`/`account.json`/`symbols.json` away from the frozen 2026-07-16 snapshot 8 M1/M2 tests hardcode (140 deals, 68 trades, balance 6047.22, …) — the account had genuinely traded more since. | `pytest` — 8 tests went red immediately after a live re-run, before any commit |
 | M4's `poll_once` silently dropped a real SL observation: two DIFFERENT states for the same position landing in the same millisecond collided on the `sl_tp_snapshots` primary key, and `INSERT OR IGNORE` kept only the first | **Claude Code's M4 implementation, first pass.** The bug wouldn't fire at a real 5s poll interval, but did fire immediately under a fast test loop — exactly the gap between "works in the demo" and "works under load" this project's testing culture exists to close. | An ad-hoc verification script run before the formal test suite existed, asserting on the actual row count in `sl_tp_snapshots` rather than trusting the reported `snapshots_written` count |
 | M4's `journal poll` (no `--once`) reported cycle activity only via `logging.info`, invisible in a terminal with no handler configured | **Claude Code's M4 implementation, first pass.** A long-running foreground command a human is meant to watch would have looked hung the entire time even while working correctly — the CLI's only feedback was a single summary line printed after Ctrl+C. | Self-review of the diff before commit, not a test — logging visibility isn't something `pytest` checks by default; worth remembering next time a command runs in the foreground indefinitely |
+| M5's first MAE/MFE draft added a `distance_to_money()` helper and refactored `domain/risk.py` to use it | **Claude Code's M5 plan, first draft.** Unnecessary: `risk_amount`'s `tick_size`/`tick_value`/`volume` cancel algebraically in `mae_money/risk_amount`, leaving `mae_r = mae / abs(open_price - real_sl)` — no money conversion, no risk.py change, ever needed. | A design-review pass (Plan agent) done deliberately *before* writing code, working the algebra through by hand |
+| M5's first MAE/MFE draft filtered candles by "bar open time falls inside `[open,close]`" | **Claude Code's M5 plan, first draft.** `candles.time_msc` is a bar's OPEN time; the filter would have returned `(None,None)` for most of the 11 sub-M1 trades (min 1s), since a fast trade rarely contains a bar-open boundary at all — a coverage gap silently misreported as "no data". | The same design-review pass, cross-checked against the measured duration profile (docs §7) instead of assuming candles align to trade windows |
+| M5's first MAE/MFE draft scanned every timeframe stored for a symbol, reasoning "OHLC bars preserve true extremes at any granularity" | **Claude Code's M5 plan, first draft.** True for one timeframe alone, but this account is hedging (CLAUDE.md line 26): two overlapping trades of different durations can sit at different TFs, and a coarser trade's much wider bar would leak into a shorter trade's excursion if the TF column were ignored. | The same design-review pass, reasoning through what "hedging + per-trade TF choice" implies for a symbol-wide scan |
+| M5's *corrected* design still risked a bulk in-memory candle preload (mirroring M4's `sl_tp_snapshots` pattern) picking up a different, disjoint trade's stale cluster on the same symbol+TF | **Claude Code's M5 implementation, working through the TF fix.** The central `candles` table pools every trade's window (schema.sql: "Dedupes across trades on the same symbol/day") — a "nearest preceding row anywhere" scan isn't scoped to one trade the way a bounded SQL query is. | Reasoning through the bulk-preload approach's failure mode before implementing it, not after a test caught it — the regression test (`test_excursion_scoped_per_trade_not_contaminated_across_timeframes`) was written to prove the FIX, not to find the bug |
 
 The pattern: **the design documents are the least reliable source in this
 project.** The bridge, the fixtures, the account, and the broker's own report are
@@ -293,7 +330,8 @@ note what was measured.
 | M2.1 | Review fixes: zero-risk R guard, NULL time_msc reject, guard dedup | done (`48a4cc7`) |
 | M3 | Candle store + mplfinance renderer (`journal chart <position_id>`) | done (`797849b`) |
 | M4 | SL/TP poller — makes `sl_initial` knowable, and outruns the archiver | done (`0f1b088`) |
-| M5 | Analytics: R-multiple, MAE/MFE, sessions, behaviour | **next** |
+| M5 | MAE/MFE + core `journal report` (money stats + gated R-stats) | done (`11cac94`) |
+| M5.1 | Session bucketing + EA/discretionary behaviour breakdowns | **next** |
 | M6 | Annotations + weekly report | |
 
 M0–M3 delivers the original ask: an automatic journal with charts. **Done.**
@@ -315,8 +353,8 @@ The three worth a pointer, because they change how you work:
 - **§9** — n=68. Every report must show `n` and suppress buckets under 20. A rule,
   not a caveat.
 - **An EA touched part of this history** (12 deals with `magic != 0`, 6 closes
-  with reason EXPERT). At M5, EA and discretionary trades must be separated or
-  both populations are meaningless.
+  with reason EXPERT). At M5.1, EA and discretionary trades must be separated
+  or both populations are meaningless.
 
 ---
 
