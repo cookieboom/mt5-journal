@@ -7,7 +7,8 @@ from __future__ import annotations
 import pytest
 
 from journal.adapter.fake import FakeMT5Client
-from journal.analytics.report import ReportResult, build_report
+from journal.analytics.report import BucketStat, ReportResult, build_report
+from journal.analytics.sessions import SESSION_ORDER
 from journal.domain.reconstruct import rebuild
 from journal.ingest.deals import sync
 from journal.store.db import connect
@@ -34,16 +35,25 @@ def _seed_account(conn, currency="USC"):
 def _seed_trade(
     conn, position_id, *, status="closed", net_profit=0.0, r_multiple=None,
     mae=None, mae_r=None, mfe_r=None, symbol="XAUUSDc",
+    open_time_msc=1, magic=None,
 ):
     conn.execute(
         "INSERT INTO trades (account_login, position_id, symbol, symbol_base, "
         "direction, status, open_time_msc, volume, open_price, net_profit, "
-        "r_multiple, mae, mae_r, mfe_r, deal_count, rebuilt_at) "
-        "VALUES (?, ?, ?, ?, 'buy', ?, 1, 0.1, 4000.0, ?, ?, ?, ?, ?, 2, 1)",
-        (_LOGIN, position_id, symbol, symbol[:-1], status, net_profit,
-         r_multiple, mae, mae_r, mfe_r),
+        "r_multiple, mae, mae_r, mfe_r, magic, deal_count, rebuilt_at) "
+        "VALUES (?, ?, ?, ?, 'buy', ?, ?, 0.1, 4000.0, ?, ?, ?, ?, ?, ?, 2, 1)",
+        (_LOGIN, position_id, symbol, symbol[:-1], status, open_time_msc,
+         net_profit, r_multiple, mae, mae_r, mfe_r, magic),
     )
     conn.commit()
+
+
+def _ms(hour: int, minute: int = 0) -> int:
+    """Epoch ms (UTC) at a fixed date and the given UTC hour — for placing a
+    seeded trade in a known trading session (see test_sessions.py)."""
+    from datetime import datetime, timezone
+    dt = datetime(2026, 1, 15, hour, minute, tzinfo=timezone.utc)
+    return int(dt.timestamp() * 1000)
 
 
 # ---------------------------------------------------------- classification
@@ -198,6 +208,106 @@ def test_result_is_frozen_dataclass():
     assert ReportResult.__dataclass_params__.frozen
 
 
+# --------------------------------------------------------- M5.1 breakdowns
+
+
+def _bucket(buckets, label) -> BucketStat:
+    (b,) = [x for x in buckets if x.label == label]
+    return b
+
+
+def test_by_session_all_five_buckets_present_in_order_even_when_empty(conn):
+    _seed_account(conn)
+    _seed_trade(conn, 1, net_profit=10.0, open_time_msc=_ms(9))  # London only
+
+    r = build_report(conn)
+    assert tuple(b.label for b in r.by_session) == SESSION_ORDER
+    london = _bucket(r.by_session, "London")
+    assert london.n == 1
+    # The other four buckets are present with n=0 and no crash (empty-bucket
+    # ZeroDivision guard) -- shown, not dropped, so the table shape is stable.
+    for label in ("Asian", "LDN/NY", "New York", "Late"):
+        b = _bucket(r.by_session, label)
+        assert b.n == 0
+        assert b.win_rate is None and b.expectancy is None and b.avg_r is None
+
+
+def test_by_session_assigns_each_trade_to_its_utc_session(conn):
+    _seed_account(conn)
+    _seed_trade(conn, 1, net_profit=1.0, open_time_msc=_ms(3))   # Asian
+    _seed_trade(conn, 2, net_profit=1.0, open_time_msc=_ms(9))   # London
+    _seed_trade(conn, 3, net_profit=1.0, open_time_msc=_ms(9, 30))  # London
+    _seed_trade(conn, 4, net_profit=1.0, open_time_msc=_ms(14))  # LDN/NY
+    _seed_trade(conn, 5, net_profit=1.0, open_time_msc=_ms(18))  # New York
+    _seed_trade(conn, 6, net_profit=1.0, open_time_msc=_ms(22))  # Late
+
+    r = build_report(conn)
+    counts = {b.label: b.n for b in r.by_session}
+    assert counts == {"Asian": 1, "London": 2, "LDN/NY": 1, "New York": 1, "Late": 1}
+    # Session buckets partition the closed trades exactly.
+    assert sum(b.n for b in r.by_session) == r.n_closed
+
+
+def test_by_source_splits_ea_from_discretionary(conn):
+    _seed_account(conn)
+    _seed_trade(conn, 1, net_profit=5.0, magic=123456)  # EA (magic truthy)
+    _seed_trade(conn, 2, net_profit=5.0, magic=0)       # Discretionary (magic 0)
+    _seed_trade(conn, 3, net_profit=5.0, magic=None)    # Discretionary (magic NULL)
+
+    r = build_report(conn)
+    assert tuple(b.label for b in r.by_source) == ("EA", "Discretionary")
+    assert _bucket(r.by_source, "EA").n == 1
+    # Rule 4: an unknown (NULL) magic is NOT evidence of EA -> discretionary.
+    assert _bucket(r.by_source, "Discretionary").n == 2
+    assert sum(b.n for b in r.by_source) == r.n_closed
+
+
+def test_bucket_stats_gated_below_n20(conn):
+    _seed_account(conn)
+    for pid in range(1, 7):  # 6 trades in one session -- below the n>=20 gate
+        _seed_trade(conn, pid, net_profit=10.0, r_multiple=1.5, open_time_msc=_ms(9))
+
+    london = _bucket(build_report(conn).by_session, "London")
+    assert london.n == 6            # raw count always shown
+    assert london.n_with_r == 6     # raw diagnostic always shown
+    assert london.win_rate is None  # averages withheld, not misleadingly precise
+    assert london.expectancy is None
+    assert london.avg_r is None
+
+
+def test_bucket_stats_shown_at_or_above_n20(conn):
+    _seed_account(conn)
+    for pid in range(1, 21):  # exactly 20 in one session -- clears the gate
+        _seed_trade(conn, pid, net_profit=10.0, r_multiple=2.0, open_time_msc=_ms(9))
+
+    london = _bucket(build_report(conn).by_session, "London")
+    assert london.n == 20
+    assert london.win_rate is not None and abs(london.win_rate - 1.0) < _TOL
+    assert london.expectancy is not None and abs(london.expectancy - 10.0) < _TOL
+    assert london.avg_r is not None and abs(london.avg_r - 2.0) < _TOL
+
+
+def test_buckets_exclude_open_and_partial_trades(conn):
+    _seed_account(conn)
+    _seed_trade(conn, 1, status="closed", net_profit=10.0, open_time_msc=_ms(9))
+    _seed_trade(conn, 2, status="open", net_profit=0.0, open_time_msc=_ms(9))
+    _seed_trade(conn, 3, status="partially_open", net_profit=0.0, open_time_msc=_ms(9))
+
+    r = build_report(conn)
+    assert _bucket(r.by_session, "London").n == 1  # only the closed trade
+    assert sum(b.n for b in r.by_session) == 1
+
+
+def test_empty_account_has_all_buckets_present_and_suppressed(conn):
+    _seed_account(conn)  # zero trades
+    r = build_report(conn)
+    assert tuple(b.label for b in r.by_session) == SESSION_ORDER
+    assert tuple(b.label for b in r.by_source) == ("EA", "Discretionary")
+    for b in (*r.by_session, *r.by_source):
+        assert b.n == 0
+        assert b.win_rate is None and b.expectancy is None and b.avg_r is None
+
+
 # --------------------------------------------------------------- integration
 
 
@@ -217,3 +327,8 @@ def test_report_against_real_fixture_does_not_crash(conn):
     assert r.win_rate is not None
     assert r.expectancy is not None
     assert r.currency == "USC"
+    # docs §7: exactly 6 trades are EA (magic != 0); the rest discretionary.
+    # Both breakdowns must partition all 68 closed trades with no leakage.
+    assert _bucket(r.by_source, "EA").n == 6
+    assert _bucket(r.by_source, "Discretionary").n == 62
+    assert sum(b.n for b in r.by_session) == 68

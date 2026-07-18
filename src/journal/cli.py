@@ -457,6 +457,20 @@ def _gated(n: int, avg: float | None) -> str:
     return f"{avg:.2f}  (n={n})"
 
 
+def _bucket_line(stat, ccy: str) -> str:
+    """One breakdown row (a session, or EA/discretionary). The bucket's `n` leads
+    the line and is always shown — it's the diagnostic that explains any `n/a`
+    that follows: win rate and expectancy are gated to None below §9's n≥20
+    (build_report already did that), so here they simply read 'n/a' with the
+    count sitting right beside them."""
+    wr = "n/a" if stat.win_rate is None else f"{stat.win_rate * 100:.1f}%"
+    exp = _fmt(stat.expectancy, ccy, sign=True)
+    return (
+        f"  {stat.label:<13} n={stat.n:<3}  win {wr:<6}  exp {exp:<12}  "
+        f"R {_gated(stat.n_with_r, stat.avg_r)}"
+    )
+
+
 @app.command()
 def report(db: str = typer.Option(_DEFAULT_DB, help="SQLite DB path.")) -> None:
     """A first read of this account's performance (M5). Pure DB, no bridge —
@@ -501,11 +515,21 @@ def report(db: str = typer.Option(_DEFAULT_DB, help="SQLite DB path.")) -> None:
     typer.echo(f"  candle coverage: {r.n_with_mae}/{r.n_closed} closed trades")
     typer.echo(f"  avg MAE (R):  {_gated(r.n_with_mae_r, r.avg_mae_r)}")
     typer.echo(f"  avg MFE (R):  {_gated(r.n_with_mfe_r, r.avg_mfe_r)}")
+    typer.echo()
+    typer.echo("-- by session (UTC; §9: win/exp/R gated per bucket at n≥20) --")
+    for b in r.by_session:
+        typer.echo(_bucket_line(b, r.currency))
+    typer.echo()
+    typer.echo("-- by source (EA = magic≠0, docs §7; same per-bucket gating) --")
+    for b in r.by_source:
+        typer.echo(_bucket_line(b, r.currency))
     if r.n_with_r < 20 or r.n_with_mae_r < 20:
         typer.echo(
             "\nR-based sections are thin by design, not by bug: sl_initial only "
             "goes forward from `journal poll` (M4) plus 6 historical EA trades "
-            "(docs §7) — they grow slowly as the poller covers new trades."
+            "(docs §7) — they grow slowly as the poller covers new trades. The "
+            "session/source win & expectancy figures are gated the same way: a "
+            "bucket under 20 trades shows n/a, not a number pretending to be one."
         )
 
 

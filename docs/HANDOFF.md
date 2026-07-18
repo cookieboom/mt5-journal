@@ -40,8 +40,9 @@ M1 + M1.1 + M1.2 (ingest, archive detector, bridge-free `verify`, reconcile,
 deals → trades, `journal rebuild`, `journal verify` §6 identity 2 — 55 tests
 green, `48a4cc7`) · M3 (candle store + mplfinance renderer, `journal chart
 <position_id>` — 83 tests green, `797849b`) · M4 (SL/TP poller, `journal poll`
-— 110 tests green, `0f1b088`) · **M5** (MAE/MFE + `journal report` — 138 tests
-green, `11cac94`).
+— 110 tests green, `0f1b088`) · M5 (MAE/MFE + `journal report` — 138 tests
+green, `11cac94`) · **M5.1** (session + EA/discretionary breakdowns in
+`journal report` — 150 tests green).
 
 **M5 in one line:** `trades.mae`/`mfe`/`mae_r`/`mfe_r` (NULL since M2) are now
 filled by `rebuild()`, and `journal report` gives a first honest read of the
@@ -119,15 +120,43 @@ average 6 R-multiple data points as if they were reliable.
 
 **Not blocked.**
 
-**Next: M5.1 — sessions + EA/discretionary behaviour breakdowns.** The two
-features scoped out of M5. Known going in: session bucketing must respect
-the measured per-symbol hours (doc §7: BTC 24/7, EUR ≈24h×5d, XAU ≈23h×5d,
-gold has a ~1h daily break) — do not assume a uniform trading week. EA vs
-discretionary is a clean split already (`magic != 0` ⟺ `reason == EXPERT` ⟺
-`sl != 0` on the opening order, docs §7) but the EA population is only 6
-trades — any EA-specific stat will be suppressed by §9's n<20 rule for a
-long time; build the split anyway, the pipeline is the point (§9's own
-instruction, already proven true once by M5's R-multiple sections).
+**M5.1 in one line:** `journal report` gained two behaviour breakdowns —
+`by session` (five fixed UTC trading-session buckets) and `by source` (EA vs
+discretionary) — each reusing M5's §9 `n≥20` gate per bucket, so a thin bucket
+reads `n/a` (with its count beside it) instead of a number pretending to be
+reliable. No schema change, no migration, `domain/reconstruct.py` untouched —
+`open_time_msc` and `magic` were already on `trades`. New pure module
+`analytics/sessions.py` (`session_of` + `SESSION_ORDER`); `build_report` gained
+`BucketStat` + `by_session`/`by_source`. 150 tests green (was 138). Followed the
+4-phase plan in `docs/plans/M5.1-sessions-ea-breakdown.md` verbatim, TDD each
+phase (test written and seen failing before the code).
+
+M5.1 decisions worth knowing:
+
+- **Session model = fixed UTC trading-session windows**, half-open `[start,end)`,
+  tiling the whole day: Asian 00–07 · London 07–12 · LDN/NY 12–16 · New York
+  16–21 · Late 21–24. Server clock IS UTC (`server_utc_offset_s=0`, docs §7),
+  so the hour is read with no offset — via the repo's canonical
+  `datetime.fromtimestamp(ms/1000, tz=timezone.utc)`, never the naive
+  `utcfromtimestamp` (rule 3).
+- **Counts, not denominators.** The per-symbol hours caveat (BTC 24/7 but
+  XAU/EUR are not — docs §7) is handled by reporting *raw bucket counts* and
+  gating averages; the report never divides by a "hours available" figure we
+  have not built. A low bucket count may just mean the symbol was shut.
+- **EA split classifies on `magic` alone** (docs §7: `magic!=0` ⟺ EXPERT ⟺ the
+  same 6 trades). A truthy magic is EA; `0` **and** `NULL` both fall to
+  discretionary — rule 4: an unknown magic is not evidence of EA.
+- **Live read (72 trades):** sessions partition exactly (23+35+5+3+6=72), source
+  splits 6 EA / 66 discretionary — matching §7's measured EA count. All six EA
+  trades opened in the London session (EA and London share `n_with_r=6`), a
+  consistency cross-check the data surfaced on its own. Every session but Asian
+  (23) and London (35) sits under the gate and reads `n/a`, by design.
+- **`journal rebuild` still succeeds** post-change (breakdowns are read-only);
+  the DoD run showed 72 trades / mae-mfe 72 computable, unchanged.
+
+**Next: M6 — annotations + weekly report.** Per-trade notes/tags plus a
+recurring weekly digest. The gated-bucket pipeline M5.1 built is the shape a
+weekly report's per-week breakdowns will reuse.
 
 ---
 
@@ -331,8 +360,8 @@ note what was measured.
 | M3 | Candle store + mplfinance renderer (`journal chart <position_id>`) | done (`797849b`) |
 | M4 | SL/TP poller — makes `sl_initial` knowable, and outruns the archiver | done (`0f1b088`) |
 | M5 | MAE/MFE + core `journal report` (money stats + gated R-stats) | done (`11cac94`) |
-| M5.1 | Session bucketing + EA/discretionary behaviour breakdowns | **next** |
-| M6 | Annotations + weekly report | |
+| M5.1 | Session bucketing + EA/discretionary behaviour breakdowns | done |
+| M6 | Annotations + weekly report | **next** |
 
 M0–M3 delivers the original ask: an automatic journal with charts. **Done.**
 M4 onward — poller, analytics, annotations — is what makes the journal worth

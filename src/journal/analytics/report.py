@@ -18,6 +18,7 @@ import sqlite3
 from dataclasses import dataclass
 
 from ..store.db import one_account_login
+from .sessions import SESSION_ORDER, session_of
 
 # docs §9: a bucket under this many trades is noise, not a statistic.
 _MIN_N = 20
@@ -26,6 +27,24 @@ _MIN_N = 20
 # Classifying win/loss/breakeven is the one place in this report where
 # getting this wrong silently corrupts every downstream count.
 _TOL = 1e-9
+
+
+@dataclass(frozen=True)
+class BucketStat:
+    """One row of a behaviour breakdown (a session, or EA/discretionary). Same
+    gating discipline as the top-level report (docs §9): the RAW counts (`n`,
+    `n_with_r`) are always shown — they are diagnostics, "how much data exists
+    yet", not averages — while every *averaged* field is pre-gated to `None`
+    when its own `n` is below `_MIN_N`, so a thin bucket can never masquerade as
+    a reliable statistic. On this account most buckets sit under the gate for a
+    long time by design (EA is 6 trades), exactly as M5's R-family sections do.
+    """
+    label: str
+    n: int                    # closed trades in bucket — raw count, always shown
+    win_rate: float | None    # n_wins / n; None if n < _MIN_N (gated) or n == 0
+    expectancy: float | None  # mean net_profit; None if n < _MIN_N or n == 0
+    n_with_r: int             # raw diagnostic, always shown
+    avg_r: float | None       # None unless n_with_r >= _MIN_N
 
 
 @dataclass(frozen=True)
@@ -56,6 +75,43 @@ class ReportResult:
     n_with_mfe_r: int
     avg_mfe_r: float | None      # None unless n_with_mfe_r >= _MIN_N
 
+    # M5.1 behaviour breakdowns. Each is the FULL set of buckets in a fixed
+    # order, always present even when empty, so the rendered table shape never
+    # shifts: by_session in SESSION_ORDER; by_source as (EA, Discretionary).
+    by_session: tuple[BucketStat, ...]
+    by_source: tuple[BucketStat, ...]
+
+
+def _bucket_stat(label: str, rows: list[sqlite3.Row]) -> BucketStat:
+    """Aggregate one bucket's closed-trade rows into a `BucketStat`, reusing the
+    exact win/loss classification (`_TOL`, rule 5) and §9 gating the top-level
+    report uses — so a bucket and the whole-account figure can never disagree on
+    what a "win" is. win_rate and expectancy are averages, so they are gated by
+    the bucket's own `n`; the `n >= _MIN_N` guard also makes the division safe
+    for empty buckets (n == 0 → None, no ZeroDivisionError)."""
+    n = len(rows)
+    n_wins = sum(1 for r in rows if r["net_profit"] > _TOL)
+
+    if n >= _MIN_N:
+        win_rate = n_wins / n
+        expectancy = sum(r["net_profit"] for r in rows) / n
+    else:
+        win_rate = None
+        expectancy = None
+
+    r_values = [r["r_multiple"] for r in rows if r["r_multiple"] is not None]
+    n_with_r = len(r_values)
+    avg_r = (sum(r_values) / n_with_r) if n_with_r >= _MIN_N else None
+
+    return BucketStat(
+        label=label,
+        n=n,
+        win_rate=win_rate,
+        expectancy=expectancy,
+        n_with_r=n_with_r,
+        avg_r=avg_r,
+    )
+
 
 def build_report(conn: sqlite3.Connection) -> ReportResult:
     """Pure DB read, no client — mirrors `verify`/`rebuild`. Resolves the
@@ -72,8 +128,8 @@ def build_report(conn: sqlite3.Connection) -> ReportResult:
     ).fetchone()
 
     rows = conn.execute(
-        "SELECT net_profit, r_multiple, mae, mae_r, mfe_r FROM trades "
-        "WHERE account_login = ? AND status = 'closed'",
+        "SELECT net_profit, r_multiple, mae, mae_r, mfe_r, open_time_msc, magic "
+        "FROM trades WHERE account_login = ? AND status = 'closed'",
         (login,),
     ).fetchall()
     n_closed = len(rows)
@@ -114,6 +170,25 @@ def build_report(conn: sqlite3.Connection) -> ReportResult:
     n_with_mfe_r = len(mfe_r_values)
     avg_mfe_r = (sum(mfe_r_values) / n_with_mfe_r) if n_with_mfe_r >= _MIN_N else None
 
+    # Session breakdown — every bucket in SESSION_ORDER, present even when empty.
+    # Server clock is UTC (docs §7), so session_of reads the hour with no offset.
+    session_groups: dict[str, list[sqlite3.Row]] = {label: [] for label in SESSION_ORDER}
+    for r in rows:
+        session_groups[session_of(r["open_time_msc"])].append(r)
+    by_session = tuple(
+        _bucket_stat(label, session_groups[label]) for label in SESSION_ORDER
+    )
+
+    # Source breakdown — EA vs discretionary. docs §7: magic != 0 ⟺ EA. Rule 4:
+    # an unknown (NULL) magic is not evidence of EA, so NULL and 0 both fall to
+    # discretionary; a truthy magic is EA.
+    ea_rows = [r for r in rows if r["magic"]]
+    disc_rows = [r for r in rows if not r["magic"]]
+    by_source = (
+        _bucket_stat("EA", ea_rows),
+        _bucket_stat("Discretionary", disc_rows),
+    )
+
     return ReportResult(
         account_login=login,
         currency=currency,
@@ -134,4 +209,6 @@ def build_report(conn: sqlite3.Connection) -> ReportResult:
         avg_mae_r=avg_mae_r,
         n_with_mfe_r=n_with_mfe_r,
         avg_mfe_r=avg_mfe_r,
+        by_session=by_session,
+        by_source=by_source,
     )
