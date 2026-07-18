@@ -41,8 +41,11 @@ deals → trades, `journal rebuild`, `journal verify` §6 identity 2 — 55 test
 green, `48a4cc7`) · M3 (candle store + mplfinance renderer, `journal chart
 <position_id>` — 83 tests green, `797849b`) · M4 (SL/TP poller, `journal poll`
 — 110 tests green, `0f1b088`) · M5 (MAE/MFE + `journal report` — 138 tests
-green, `11cac94`) · **M5.1** (session + EA/discretionary breakdowns in
-`journal report` — 150 tests green).
+green, `11cac94`) · M5.1 (session + EA/discretionary breakdowns in
+`journal report` — 150 tests green, `3a5d198`) · M6 (annotations +
+manual/auto tags, `journal annotate`/`tag` — 179 tests green, `24ce64b`) ·
+**M6.1** (weekly Markdown report, `journal weekly` — 188 tests green,
+`a989eac`).
 
 **M5 in one line:** `trades.mae`/`mfe`/`mae_r`/`mfe_r` (NULL since M2) are now
 filled by `rebuild()`, and `journal report` gives a first honest read of the
@@ -154,9 +157,44 @@ M5.1 decisions worth knowing:
 - **`journal rebuild` still succeeds** post-change (breakdowns are read-only);
   the DoD run showed 72 trades / mae-mfe 72 computable, unchanged.
 
-**Next: M6 — annotations + weekly report.** Per-trade notes/tags plus a
-recurring weekly digest. The gated-bucket pipeline M5.1 built is the shape a
-weekly report's per-week breakdowns will reuse.
+**M6 in one line:** the human layer landed. `journal annotate <position_id>`
+captures setup/confidence/emotion/plan/notes; `journal tag add/rm/ls` manages
+manual tags; `rebuild` now also writes auto tags; and `journal weekly` renders
+one ISO week to a Markdown file in `cache/`. The storage (`annotations`, `tags`,
+`v_trades_annotated`) already existed in `schema.sql` and the live DB, so M6 was
+**wiring only — no schema change, no migration**. 188 tests green (was 150).
+Shipped as two commits at the natural split, mirroring M5→M5.1: **M6**
+(annotations + tags, `24ce64b`) and **M6.1** (weekly report, `a989eac`).
+Followed `docs/plans/M6-annotations-weekly-report.md` with TDD each phase.
+
+M6 decisions worth knowing:
+
+- **The human layer is keyed on `position_id`, never `trades.id`** (which
+  renumbers every rebuild — schema comment). Annotations and manual tags live in
+  the "never rebuilt" section and **survive `rebuild`** — verified live: a
+  manual tag + annotation set before a rebuild both persisted while the 34 auto
+  tags regenerated around them.
+- **The auto-tag pass (`_fill_auto_tags` in `rebuild`, mirroring
+  `_fill_excursions`) deletes ONLY `source='auto'`** before re-inserting — that
+  one WHERE clause is what keeps manual tags safe. Idempotent across rebuilds.
+- **Auto tags are structural facts, not opinions:** `sub-1min`,
+  `held-overnight`, `weekend`. The value-laden `big-win`/`big-loss` are gated
+  off below n=20 (§9) and computed from account deciles by the caller, so no
+  outlier label is applied against a sample too small to define one.
+- **Weekly attributes a trade to the week it CLOSED in** (realized P&L),
+  Mon–Sun UTC, half-open. Weekly rates/averages are §9-gated (a week rarely
+  clears n≥20, so they usually read `n/a`); the raw counts, the realized net
+  total (a sum), and the annotated/manually-tagged trades are always shown —
+  that is what a weekly review is for. Reuses M5.1's `bucket_stat` (promoted
+  from private) so weekly and account reports share one definition of "a win".
+- **Weekly output is a reproducible `cache/` artifact** (rule 6) — verified
+  byte-identical on regeneration; `cache/` is gitignored.
+
+**Next: roadmap complete through M6.** The original ask (M0–M3) plus the
+poller, analytics, and human layer are all shipped. No milestone is currently
+scheduled; natural follow-ups if the tool earns daily use: auto-tag rule
+expansion (the `source='auto'` pipeline is built), a multi-week/trend view
+(the weekly builder generalises), and richer annotation querying/filtering.
 
 ---
 
@@ -360,8 +398,9 @@ note what was measured.
 | M3 | Candle store + mplfinance renderer (`journal chart <position_id>`) | done (`797849b`) |
 | M4 | SL/TP poller — makes `sl_initial` knowable, and outruns the archiver | done (`0f1b088`) |
 | M5 | MAE/MFE + core `journal report` (money stats + gated R-stats) | done (`11cac94`) |
-| M5.1 | Session bucketing + EA/discretionary behaviour breakdowns | done |
-| M6 | Annotations + weekly report | **next** |
+| M5.1 | Session bucketing + EA/discretionary behaviour breakdowns | done (`3a5d198`) |
+| M6 | Annotations + manual/auto tags (`journal annotate`/`tag`) | done (`24ce64b`) |
+| M6.1 | Weekly Markdown report (`journal weekly`) | done (`a989eac`) |
 
 M0–M3 delivers the original ask: an automatic journal with charts. **Done.**
 M4 onward — poller, analytics, annotations — is what makes the journal worth
