@@ -610,6 +610,227 @@ def test_killer_identity_2_holds_with_poller_snapshots_present(conn, client):
     assert abs(v.trades_net - 63.72) < _TOL   # unchanged by the poller data
 
 
+# --- M5: MAE/MFE, wired via rebuild()'s post-reconstruct() _fill_excursions ---
+
+
+def test_rebuild_populates_mae_mfe_with_real_candle_coverage(conn, client):
+    sync(client, conn)
+    rebuild(conn)
+    row = conn.execute(
+        "SELECT position_id, symbol, open_time_msc, close_time_msc, duration_s, "
+        "open_price, direction FROM trades WHERE status = 'closed' LIMIT 1"
+    ).fetchone()
+    assert row is not None
+    from journal.render.chart import choose_timeframe, window_for
+    tf = choose_timeframe(row["duration_s"])
+    from_msc, to_msc = window_for(row["open_time_msc"], row["close_time_msc"], tf)
+    # One bar covering the whole window with a known, controlled range.
+    conn.execute(
+        "INSERT INTO candles (symbol, timeframe, time_msc, open, high, low, close, "
+        "tick_volume) VALUES (?, ?, ?, ?, ?, ?, ?, 10)",
+        (row["symbol"], tf, from_msc, row["open_price"], row["open_price"] + 5.0,
+         row["open_price"] - 3.0, row["open_price"], ),
+    )
+    conn.commit()
+
+    rebuild(conn)
+    after = conn.execute(
+        "SELECT mae, mfe FROM trades WHERE position_id = ?", (row["position_id"],)
+    ).fetchone()
+    assert after["mae"] is not None and after["mfe"] is not None
+    if row["direction"] == "buy":
+        assert abs(after["mae"] - 3.0) < 1e-9
+        assert abs(after["mfe"] - 5.0) < 1e-9
+    else:
+        assert abs(after["mae"] - 5.0) < 1e-9
+        assert abs(after["mfe"] - 3.0) < 1e-9
+
+
+def test_rebuild_no_candles_mae_mfe_stay_null(conn, client):
+    sync(client, conn)
+    rebuild(conn)  # no candles seeded anywhere
+    rows = conn.execute(
+        "SELECT mae, mfe, mae_r, mfe_r FROM trades WHERE status = 'closed'"
+    ).fetchall()
+    assert rows  # sanity: real trades exist
+    assert all(r["mae"] is None and r["mfe"] is None for r in rows)
+    assert all(r["mae_r"] is None and r["mfe_r"] is None for r in rows)
+
+
+def test_open_trade_mae_mfe_stay_null_despite_candle_coverage(conn, client):
+    sync(client, conn)
+    # An IN-only deal (no OUT) -> an open trade -- excursion-so-far would be
+    # incomplete and misleading, so it must stay NULL regardless of how much
+    # candle coverage exists (mirrors r_multiple's status=='closed' gate).
+    open_t = 1_900_000_000_000
+    conn.execute(
+        "INSERT INTO deals_raw (account_login,ticket,order_ticket,position_id,"
+        "symbol,type,entry,reason,magic,volume,price,commission,swap,profit,fee,"
+        "time_msc,raw_json,ingested_at) VALUES "
+        "(?,900010,0,999001,'XAUUSDc',0,0,0,0,0.1,4000.0,0,0,0,0,?,'{}',?)",
+        (_LOGIN, open_t, open_t),
+    )
+    conn.commit()
+    for i in range(-5, 5):
+        conn.execute(
+            "INSERT INTO candles (symbol,timeframe,time_msc,open,high,low,close,"
+            "tick_volume) VALUES ('XAUUSDc','M1',?,4000,4010,3990,4000,10)",
+            (open_t + i * 60_000,),
+        )
+    conn.commit()
+
+    rebuild(conn)
+    row = conn.execute(
+        "SELECT status, mae, mfe FROM trades WHERE position_id = 999001"
+    ).fetchone()
+    assert row["status"] == "open"
+    assert row["mae"] is None and row["mfe"] is None
+
+
+def test_excursion_scoped_per_trade_not_contaminated_across_timeframes(conn, client):
+    # THE regression guard for the design bug this milestone's plan review
+    # caught: excursion MUST be scoped by (symbol, THIS trade's own TF), never
+    # a symbol-wide scan across every stored timeframe. Two trades share a
+    # symbol and open instant but pick DIFFERENT TFs -- a 30s trade -> M1, an
+    # ~8.3h trade -> M15 -- exactly the shape a hedging account produces
+    # (CLAUDE.md line 26: several positions on the same symbol can be open at
+    # once). An M15 bar's wide range must never leak into the 30s trade's own,
+    # narrowly-scoped M1 excursion.
+    sync(client, conn)
+    T0 = 1_800_000_000_000
+
+    # Trade A: 30s, buy, entry 4000 -> choose_timeframe(30) == 'M1'.
+    conn.execute(
+        "INSERT INTO deals_raw (account_login,ticket,order_ticket,position_id,"
+        "symbol,type,entry,reason,magic,volume,price,commission,swap,profit,fee,"
+        "time_msc,raw_json,ingested_at) VALUES "
+        "(?,900001,0,801,'XAUUSDc',0,0,0,0,0.1,4000.0,0,0,0,0,?,'{}',?)",
+        (_LOGIN, T0, T0),
+    )
+    conn.execute(
+        "INSERT INTO deals_raw (account_login,ticket,order_ticket,position_id,"
+        "symbol,type,entry,reason,magic,volume,price,commission,swap,profit,fee,"
+        "time_msc,raw_json,ingested_at) VALUES "
+        "(?,900002,0,801,'XAUUSDc',1,1,0,0,0.1,4001.0,0,0,1.0,0,?,'{}',?)",
+        (_LOGIN, T0 + 30_000, T0),
+    )
+    # Trade B: ~8.3h, buy, entry 4000 -> choose_timeframe(30000) == 'M15'.
+    conn.execute(
+        "INSERT INTO deals_raw (account_login,ticket,order_ticket,position_id,"
+        "symbol,type,entry,reason,magic,volume,price,commission,swap,profit,fee,"
+        "time_msc,raw_json,ingested_at) VALUES "
+        "(?,900003,0,802,'XAUUSDc',0,0,0,0,0.1,4000.0,0,0,0,0,?,'{}',?)",
+        (_LOGIN, T0, T0),
+    )
+    conn.execute(
+        "INSERT INTO deals_raw (account_login,ticket,order_ticket,position_id,"
+        "symbol,type,entry,reason,magic,volume,price,commission,swap,profit,fee,"
+        "time_msc,raw_json,ingested_at) VALUES "
+        "(?,900004,0,802,'XAUUSDc',1,1,0,0,0.1,4005.0,0,0,5.0,0,?,'{}',?)",
+        (_LOGIN, T0 + 30_000_000, T0),
+    )
+    conn.commit()
+
+    # Trade A's OWN M1 candle at T0: tight range.
+    conn.execute(
+        "INSERT INTO candles (symbol,timeframe,time_msc,open,high,low,close,"
+        "tick_volume) VALUES ('XAUUSDc','M1',?,4000,4002,3998,4001,10)", (T0,),
+    )
+    # Trade B's OWN M15 candle, at the SAME instant T0: an extreme, wide bar --
+    # this is the row that must NEVER leak into Trade A's excursion.
+    conn.execute(
+        "INSERT INTO candles (symbol,timeframe,time_msc,open,high,low,close,"
+        "tick_volume) VALUES ('XAUUSDc','M15',?,4000,5000,3000,4005,10)", (T0,),
+    )
+    conn.commit()
+
+    rebuild(conn)
+    a = conn.execute("SELECT mae, mfe FROM trades WHERE position_id = 801").fetchone()
+    b = conn.execute("SELECT mae, mfe FROM trades WHERE position_id = 802").fetchone()
+
+    # Trade A must use ONLY its own M1 bar -- small, correct values, NOT the
+    # M15 bar's [3000, 5000] range.
+    assert abs(a["mae"] - 2.0) < 1e-9   # 4000 - 3998
+    assert abs(a["mfe"] - 2.0) < 1e-9   # 4002 - 4000
+    # Trade B must use ONLY its own M15 bar -- the wide, extreme values.
+    assert abs(b["mae"] - 1000.0) < 1e-9   # 4000 - 3000
+    assert abs(b["mfe"] - 1000.0) < 1e-9   # 5000 - 4000
+
+
+def test_mae_r_mfe_r_zero_division_guard_sl_exactly_at_entry(conn, client):
+    # The SAME ZeroDivisionError shape r_multiple already guards (Trap 6 /
+    # M2.1), now in _fill_excursions: SL exactly at entry gives a KNOWN zero
+    # risk_distance, not an unknown one. mae/mfe must still populate (candle
+    # coverage exists); mae_r/mfe_r must stay None, never crash the rebuild.
+    sync(client, conn)
+    T0 = 1_850_000_000_000
+    conn.execute(
+        "INSERT INTO deals_raw (account_login,ticket,order_ticket,position_id,"
+        "symbol,type,entry,reason,magic,volume,price,commission,swap,profit,fee,"
+        "time_msc,raw_json,ingested_at) VALUES "
+        "(?,900005,700,850,'XAUUSDc',0,0,0,0,0.1,4000.0,0,0,0,0,?,'{}',?)",
+        (_LOGIN, T0, T0),
+    )
+    conn.execute(
+        "INSERT INTO deals_raw (account_login,ticket,order_ticket,position_id,"
+        "symbol,type,entry,reason,magic,volume,price,commission,swap,profit,fee,"
+        "time_msc,raw_json,ingested_at) VALUES "
+        "(?,900006,0,850,'XAUUSDc',1,1,0,0,0.1,4010.0,0,0,10.0,0,?,'{}',?)",
+        (_LOGIN, T0 + 373_000, T0),
+    )
+    conn.execute(
+        "INSERT INTO orders_raw (account_login,ticket,position_id,symbol,type,sl,"
+        "tp,price_open,raw_json,ingested_at) VALUES "
+        "(?,700,850,'XAUUSDc',0,4000.0,0,4000.0,'{}',?)",
+        (_LOGIN, T0),
+    )
+    conn.commit()
+    for i in range(-20, 20):
+        price = 4000 + i * 0.3
+        conn.execute(
+            "INSERT INTO candles (symbol,timeframe,time_msc,open,high,low,close,"
+            "tick_volume) VALUES ('XAUUSDc','M1',?,?,?,?,?,10)",
+            (T0 + i * 60_000, price, price + 1.0, price - 1.0, price + 0.1),
+        )
+    conn.commit()
+
+    rebuild(conn)  # must not raise ZeroDivisionError
+    row = conn.execute(
+        "SELECT mae, mfe, mae_r, mfe_r FROM trades WHERE position_id = 850"
+    ).fetchone()
+    assert row["mae"] is not None and row["mfe"] is not None
+    assert row["mae_r"] is None and row["mfe_r"] is None
+
+
+def test_rebuild_idempotent_with_mae_mfe_populated(conn, client):
+    sync(client, conn)
+    rebuild(conn)
+    row = conn.execute(
+        "SELECT position_id, symbol, open_time_msc, close_time_msc, duration_s "
+        "FROM trades WHERE status = 'closed' LIMIT 1"
+    ).fetchone()
+    from journal.render.chart import choose_timeframe, window_for
+    tf = choose_timeframe(row["duration_s"])
+    from_msc, _ = window_for(row["open_time_msc"], row["close_time_msc"], tf)
+    conn.execute(
+        "INSERT INTO candles (symbol, timeframe, time_msc, open, high, low, close, "
+        "tick_volume) VALUES (?, ?, ?, 4000, 4005, 3995, 4000, 10)",
+        (row["symbol"], tf, from_msc),
+    )
+    conn.commit()
+
+    rebuild(conn)
+    cols = _trade_value_cols(conn)
+    first = _snapshot(conn, cols)
+    assert any(
+        v[cols.index("mae")] is not None for v in first.values()
+    ), "test setup should have produced at least one non-NULL mae"
+
+    rebuild(conn)  # sl_tp_snapshots/candles are read-only here: must reproduce exactly
+    second = _snapshot(conn, cols)
+    assert first == second
+
+
 def test_killer_balance_identity_2_holds_over_real_history(conn, client):
     # §6 identity 2 — the partition check. THE test that proves reconstruction lost
     # and double-counted nothing across the whole history.

@@ -1,4 +1,5 @@
-"""Deals -> trades. The hard milestone (M2), extended by the poller (M4).
+"""Deals -> trades. The hard milestone (M2), extended by the poller (M4) and
+by excursion (M5).
 
 A "trade" is not an MT5 object; it is the human idea *I entered here, I exited
 there*, reconstructed by grouping deals on `position_id` (docs/mt5-deal-model.md §1).
@@ -23,6 +24,19 @@ poller-snapshot map) and it returns `Trade`s, no DB, no bridge (CLAUDE.md rule 7
 `rebuild()` is the DB orchestrator: it reads the append-only `_raw` tables, calls
 `reconstruct()`, then DELETEs and re-INSERTs `trades` — never UPDATE (rule 2, §4
 step 5). Enums come from the adapter; `domain/` holds no MT5 magic integer (rule 12).
+
+M5 adds `_fill_excursions()`: a POST-`reconstruct()` step in `rebuild()`, not a
+new `reconstruct()` parameter. MAE/MFE needs each trade's *already-computed*
+open/close/duration to scope its candle query — that only exists once
+`reconstruct()`'s pure loop has produced it, so this can't be threaded through
+the same way M4's `snapshots` was. `Trade` is a mutable dataclass; `rebuild()`
+sets `mae`/`mfe`/`mae_r`/`mfe_r` in place before the INSERT loop. See
+`_fill_excursions` and `domain/excursion.py` for why the query MUST be scoped
+per-trade (symbol + that trade's own timeframe + its own window) rather than a
+bulk cross-trade scan: the central `candles` table pools every trade's window
+on a symbol, and a global scan can silently pick up a different, disjoint
+trade's cluster, or (on this hedging account) a coarser overlapping trade's
+wider bar.
 """
 
 from __future__ import annotations
@@ -33,7 +47,9 @@ import sqlite3
 from dataclasses import dataclass, field
 
 from ..adapter.base import Deal, DealEntry, DealType, Order
+from ..render.chart import choose_timeframe, window_for
 from ..store.db import now_ms, one_account_login
+from .excursion import compute_excursion
 from .risk import risk_amount
 from .symbols import to_base
 
@@ -117,6 +133,7 @@ class RebuildReport:
     n_partial: int = 0
     n_with_sl: int = 0
     n_with_r: int = 0
+    n_with_mae: int = 0
     skipped_orphans: int = 0
 
 
@@ -446,10 +463,72 @@ def _load_sl_snapshots(conn: sqlite3.Connection, login: int) -> dict[int, list[S
     return out
 
 
+def _fill_excursions(conn: sqlite3.Connection, trades: list[Trade]) -> int:
+    """Mutates each CLOSED trade's mae/mfe/mae_r/mfe_r in place (M5). Scoped
+    PER-TRADE: symbol, this trade's own `choose_timeframe(duration_s)` (the
+    same TF `journal candles` fetched it at), and its own
+    `window_for(open, close, tf)` bounds. NEVER a bulk cross-trade scan — the
+    central `candles` table pools every trade's window on a symbol
+    (schema.sql: "Dedupes across trades on the same symbol/day"), and this
+    account is hedging (CLAUDE.md line 26): two overlapping trades of
+    different durations can sit at different timeframes. A query scoped to
+    THIS trade's own window at its own TF cannot pick up a different trade's
+    disjoint cluster or a coarser overlapping trade's wider bar; a global
+    "nearest preceding row anywhere" scan could.
+
+    mae_r/mfe_r are PURE PRICE RATIOS, not money: risk_amount's tick_size/
+    tick_value/volume all cancel in mae_money/risk_amount, leaving
+    mae_r = mae / |open_price - real_sl|. No money conversion, no dependency
+    on domain/risk.py. Guards the SAME ZeroDivisionError shape r_multiple
+    already guards (Trap 6/M2.1): an SL exactly at entry gives a KNOWN zero
+    risk_distance, not an unknown one -- gate on it being TRUTHY.
+
+    Returns the count of trades that got a real (non-NULL) mae/mfe, for
+    RebuildReport."""
+    n_with_mae = 0
+    for t in trades:
+        if t.status != "closed":
+            continue
+        tf = choose_timeframe(t.duration_s)
+        from_msc, to_msc = window_for(t.open_time_msc, t.close_time_msc, tf)
+        rows = conn.execute(
+            "SELECT time_msc, low, high FROM candles "
+            "WHERE symbol = ? AND timeframe = ? AND time_msc BETWEEN ? AND ? "
+            "ORDER BY time_msc",
+            (t.symbol, tf, from_msc, to_msc),
+        ).fetchall()
+        mae, mfe = compute_excursion(
+            [(r["time_msc"], r["low"], r["high"]) for r in rows],
+            t.open_time_msc, t.close_time_msc, t.open_price, t.direction,
+        )
+        t.mae, t.mfe = mae, mfe
+        if mae is not None:
+            n_with_mae += 1
+
+        real_sl = _real_sl_price(t.sl_initial)
+        risk_distance = abs(t.open_price - real_sl) if real_sl is not None else None
+        if risk_distance:  # truthy: not None AND not 0.0 (Trap 6 shape)
+            if mae is not None:
+                t.mae_r = mae / risk_distance
+            if mfe is not None:
+                t.mfe_r = mfe / risk_distance
+
+    return n_with_mae
+
+
 def rebuild(conn: sqlite3.Connection) -> RebuildReport:
     """DELETE + re-INSERT `trades` for the account from the append-only `_raw` tables.
     NEVER UPDATE (rule 2): `trades` is fully derived and must be reproducible. One
-    commit at the end. Reads typed columns only, never raw_json (amendment 2)."""
+    commit at the end. Reads typed columns only, never raw_json (amendment 2).
+
+    MAE/MFE (M5) depends on `candles`, which `journal candles` only fetches for
+    trades that already exist in `trades` -- so on a fresh account the natural
+    order is `sync -> rebuild -> candles -> rebuild` (rebuild TWICE): the first
+    run has nothing to compute excursion from yet, `candles` then fetches each
+    closed trade's window, and a second `rebuild` picks the new coverage up.
+    Safe to do -- rebuild is idempotent (M2.1-tested) -- and unavoidable even in
+    steady state, since a newly-closed trade must be in `trades` before its
+    window can be fetched at all."""
     login = one_account_login(conn)
     deals = _load_deals(conn, login)
     orders = _load_orders(conn, login)
@@ -457,6 +536,7 @@ def rebuild(conn: sqlite3.Connection) -> RebuildReport:
     snapshots = _load_sl_snapshots(conn, login)
 
     trades = reconstruct(deals, orders, specs, account_login=login, snapshots=snapshots)
+    n_with_mae = _fill_excursions(conn, trades)
     ts = now_ms()
 
     conn.execute("DELETE FROM trades WHERE account_login = ?", (login,))
@@ -491,4 +571,5 @@ def rebuild(conn: sqlite3.Connection) -> RebuildReport:
         n_partial=sum(1 for t in trades if t.status == "partially_open"),
         n_with_sl=sum(1 for t in trades if t.sl_initial is not None),
         n_with_r=sum(1 for t in trades if t.r_multiple is not None),
+        n_with_mae=n_with_mae,
     )

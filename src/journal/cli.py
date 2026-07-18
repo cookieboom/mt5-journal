@@ -257,12 +257,20 @@ def verify(db: str = typer.Option(_DEFAULT_DB, help="SQLite DB path.")) -> None:
 
 @app.command()
 def rebuild(db: str = typer.Option(_DEFAULT_DB, help="SQLite DB path.")) -> None:
-    """Rebuild `trades` from the append-only `_raw` tables (M2).
+    """Rebuild `trades` from the append-only `_raw` tables (M2, extended by M4/M5).
 
     DELETEs every trade for the account and re-INSERTs from `deals_raw`/`orders_raw` —
     never UPDATE. `trades` is fully derived, so this is always safe to re-run. Needs
-    no bridge; it reads the store `sync` already populated. Run `journal verify`
-    afterwards to check the reconstruction partitions the deals (§6 identity 2).
+    no bridge; it reads the store `sync`/`poll`/`candles` already populated. Run
+    `journal verify` afterwards to check the reconstruction partitions the deals
+    (§6 identity 2).
+
+    MAE/MFE (M5) needs `candles`, which `journal candles` only fetches for trades
+    that already exist in `trades` — so on a fresh account the order is
+    `sync -> rebuild -> candles -> rebuild` (rebuild TWICE): the first run has
+    nothing to compute excursion from yet, `candles` then fetches each closed
+    trade's window, and a second `rebuild` picks the new coverage up. Safe either
+    way — rebuild is idempotent.
     """
     from .domain.reconstruct import rebuild as run_rebuild
 
@@ -284,6 +292,13 @@ def rebuild(db: str = typer.Option(_DEFAULT_DB, help="SQLite DB path.")) -> None
     # poller. R can only be computed where sl_initial is known, hence the two counts.
     typer.echo(f"  sl_initial: {r.n_with_sl} known, {r.n_trades - r.n_with_sl} unknown")
     typer.echo(f"  r_multiple: {r.n_with_r} computable")
+    # mae/mfe need candles (M3) to exist for a trade's window -- less than
+    # n_closed just means `journal candles` hasn't (re-)run for every trade
+    # yet. Not an error; only worth the hint when there's still a gap.
+    mae_line = f"  mae/mfe:    {r.n_with_mae} computable"
+    if r.n_with_mae < r.n_closed:
+        mae_line += " (run `journal candles` for the rest)"
+    typer.echo(mae_line)
     typer.echo("\nNext: `journal verify` — check identity 2 (trades partition the deals).")
 
 
@@ -419,6 +434,79 @@ def poll(
     typer.echo(f"cycles:         {r.cycles}")
     typer.echo(f"new snapshots:  {r.snapshots_written}")
     typer.echo(f"stopped by:     {r.stopped_by}")
+
+
+# -------------------------------------------------------------------- report
+
+
+def _fmt(x: float | None, ccy: str = "", *, sign: bool = False) -> str:
+    """One place money/ratio numbers turn into text. `None` always reads
+    "n/a" — never 0, never blank — so a missing value can't be misread as a
+    real zero (CLAUDE.md rule 4)."""
+    if x is None:
+        return "n/a"
+    s = f"{x:+.2f}" if sign else f"{x:.2f}"
+    return f"{s} {ccy}".strip()
+
+
+def _gated(n: int, avg: float | None) -> str:
+    """A statistic's display, honestly gated by docs §9: n<20 shows the count
+    and says why there's no number, never a silently-omitted line."""
+    if avg is None:
+        return f"n/a (n={n}, need ≥20)"
+    return f"{avg:.2f}  (n={n})"
+
+
+@app.command()
+def report(db: str = typer.Option(_DEFAULT_DB, help="SQLite DB path.")) -> None:
+    """A first read of this account's performance (M5). Pure DB, no bridge —
+    reads `trades` (run `journal rebuild` first; `journal candles` +
+    `journal rebuild` again for MAE/MFE, see `journal rebuild --help`).
+
+    Money-based stats (win rate, avg win/loss, profit factor, expectancy)
+    have FULL coverage — every closed trade has a net_profit. R-based stats
+    do not: sl_initial is recoverable for only 6/68 trades so far (docs §7),
+    and MAE/MFE needs candle coverage on top of that. Every number carries
+    its n; anything computed over n<20 shows why it's withheld instead of a
+    misleadingly precise figure (docs §9).
+    """
+    from .analytics.report import build_report
+
+    conn = connect(db)
+    try:
+        r = build_report(conn)
+    finally:
+        conn.close()
+
+    typer.echo("== report ==")
+    typer.echo(f"account:        {r.account_login}  ({r.currency})")
+    typer.echo(f"trades:         {r.n_total} total, {r.n_closed} closed")
+    typer.echo(
+        f"  outcomes:     {r.n_wins} win, {r.n_losses} loss, "
+        f"{r.n_breakeven} breakeven"
+    )
+    typer.echo()
+    typer.echo(f"-- money (full coverage, n={r.n_closed}) --")
+    win_rate_text = "n/a" if r.win_rate is None else f"{r.win_rate * 100:.1f}%"
+    typer.echo(f"  win rate:     {win_rate_text}")
+    typer.echo(f"  avg win:      {_fmt(r.avg_win, r.currency)}")
+    typer.echo(f"  avg loss:     {_fmt(r.avg_loss, r.currency, sign=True)}")
+    typer.echo(f"  profit factor: {_fmt(r.profit_factor)}")
+    typer.echo(f"  expectancy:   {_fmt(r.expectancy, r.currency, sign=True)}")
+    typer.echo()
+    typer.echo("-- R-multiple (§9: needs n≥20) --")
+    typer.echo(f"  avg R:        {_gated(r.n_with_r, r.avg_r)}")
+    typer.echo()
+    typer.echo("-- MAE/MFE (§9: needs n≥20; needs candle coverage AND known SL) --")
+    typer.echo(f"  candle coverage: {r.n_with_mae}/{r.n_closed} closed trades")
+    typer.echo(f"  avg MAE (R):  {_gated(r.n_with_mae_r, r.avg_mae_r)}")
+    typer.echo(f"  avg MFE (R):  {_gated(r.n_with_mfe_r, r.avg_mfe_r)}")
+    if r.n_with_r < 20 or r.n_with_mae_r < 20:
+        typer.echo(
+            "\nR-based sections are thin by design, not by bug: sl_initial only "
+            "goes forward from `journal poll` (M4) plus 6 historical EA trades "
+            "(docs §7) — they grow slowly as the poller covers new trades."
+        )
 
 
 # -------------------------------------------------------------- reconcile
