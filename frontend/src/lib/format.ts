@@ -42,6 +42,10 @@ export function isGated(n: number, avg: number | null): boolean {
 
 export function price(x: number | null): string {
   // rule 4: null = unknown, never 0. A genuine 0.0 ("none set") shows as "0".
+  // Deliberately shows FULL precision (String(x)), NOT web/format.py's `%g`
+  // 6-significant-figure truncation — a trading journal must not drop a price
+  // digit (XAUUSDc tick size is 0.001, so 4010.123 must stay 4010.123). This is
+  // an intentional, approved divergence from the legacy Jinja formatter.
   if (x === null || x === undefined) return "unknown";
   return String(x);
 }

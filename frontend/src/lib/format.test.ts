@@ -35,5 +35,7 @@ describe("format", () => {
     expect(price(4010)).toBe("4010");
     expect(price(4010.5)).toBe("4010.5");
     expect(price(0)).toBe("0");
+    expect(price(4010.123)).toBe("4010.123");   // full precision, not %g's 4010.12
+    expect(price(100000.5)).toBe("100000.5");   // not %g's 100000
   });
 });
