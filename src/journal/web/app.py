@@ -23,10 +23,20 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from ..annotate import AnnotateError, add_tag, remove_tag, set_annotation
+from ..execute import CommandError, enqueue
 from ..render.chart import NoCandlesError, TradeNotFoundError, render_trade
 from ..store.db import connect
 from . import format as fmt
 from . import views
+
+# URL path segment → command kind. The URL uses hyphens; the kind uses
+# underscores (matching trade_commands.kind and domain/commands.KINDS).
+_ACTIONS = {
+    "sltp": "modify_sltp",
+    "close": "close",
+    "close-partial": "close_partial",
+    "add-volume": "add_volume",
+}
 
 _HERE = Path(__file__).resolve().parent
 _DEFAULT_DB = "data/journal.db"
@@ -160,6 +170,102 @@ def create_app(db_path: str | None = None) -> FastAPI:
         except RuntimeError as e:
             return error_page(request, str(e))
         return render(request, "weekly.html", ctx)
+
+    # --------------------------------------------------------------- live (M9)
+
+    @app.get("/live", response_class=HTMLResponse)
+    def live(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
+        """Current open positions + total FLOATING P&L, with a staleness warning.
+        Read-only over `open_positions`; the bridge is never touched here."""
+        try:
+            ctx = views.live_context(conn)
+            ctx["header"] = views.account_header(conn)
+        except RuntimeError as e:
+            return error_page(request, str(e))
+        return render(request, "live.html", ctx)
+
+    @app.get("/live/commands", response_class=HTMLResponse)
+    def live_commands(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
+        """The trade-command audit log."""
+        try:
+            ctx = views.commands_context(conn)
+            ctx["header"] = views.account_header(conn)
+        except RuntimeError as e:
+            return error_page(request, str(e))
+        return render(request, "commands.html", ctx)
+
+    def _parse_fields(sl: str, tp: str, volume: str) -> tuple:
+        """Form strings → optional floats, preserving the rule-4 ""≠"0" distinction
+        (`views._opt_float`). A non-numeric field raises ValueError up to the route."""
+        return (
+            views._opt_float(sl),
+            views._opt_float(tp),
+            views._opt_float(volume),
+        )
+
+    @app.post("/live/{position_id}/{action}/confirm", response_class=HTMLResponse)
+    def live_confirm(
+        request: Request,
+        position_id: int,
+        action: str,
+        sl: str = Form(""),
+        tp: str = Form(""),
+        volume: str = Form(""),
+        conn: sqlite3.Connection = Depends(get_conn),
+    ):
+        """Step 1 of the mandatory two-step confirm: parse the form and PREVIEW the
+        command. Writes NOTHING — renders the confirm page whose button posts to the
+        enqueue step. A refused command (`CommandError`) shows the error page."""
+        kind = _ACTIONS.get(action)
+        if kind is None:
+            return error_page(request, f"Aksi tidak dikenal: {action!r}.", 404)
+        try:
+            header = views.account_header(conn)
+            login = header["login"]
+            slf, tpf, volf = _parse_fields(sl, tp, volume)
+        except RuntimeError as e:
+            return error_page(request, str(e))
+        except ValueError:
+            return error_page(request, "SL/TP/volume harus berupa angka.")
+        try:
+            preview = views.preview_command(
+                conn, login, position_id, kind, sl=slf, tp=tpf, volume=volf
+            )
+        except CommandError as e:
+            return error_page(request, str(e))
+        return render(
+            request, "confirm.html",
+            {"header": header, "preview": preview, "action": action},
+        )
+
+    @app.post("/live/{position_id}/{action}")
+    def live_enqueue(
+        request: Request,
+        position_id: int,
+        action: str,
+        sl: str = Form(""),
+        tp: str = Form(""),
+        volume: str = Form(""),
+        conn: sqlite3.Connection = Depends(get_conn),
+    ):
+        """Step 2: ENQUEUE a `pending` row via `execute.enqueue`, then 303 → /live.
+        No bridge call anywhere — `journal live` picks the row up. A `CommandError`
+        (the world moved since the preview) shows the error page and writes nothing."""
+        kind = _ACTIONS.get(action)
+        if kind is None:
+            return error_page(request, f"Aksi tidak dikenal: {action!r}.", 404)
+        try:
+            login = views.account_header(conn)["login"]
+            slf, tpf, volf = _parse_fields(sl, tp, volume)
+        except RuntimeError as e:
+            return error_page(request, str(e))
+        except ValueError:
+            return error_page(request, "SL/TP/volume harus berupa angka.")
+        try:
+            enqueue(conn, login, kind, position_id, sl=slf, tp=tpf, volume=volf)
+        except CommandError as e:
+            return error_page(request, str(e))
+        return RedirectResponse("/live", status_code=303)
 
     # ------------------------------------------------------- writes (human layer)
 

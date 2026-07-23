@@ -14,12 +14,91 @@ from __future__ import annotations
 
 import sqlite3
 
+from .. import execute
 from ..analytics.report import build_report
 from ..analytics.sessions import session_of
 from ..analytics.weekly import build_weekly, iso_week_bounds_ms
 from ..annotate import get_annotation, list_tags
-from ..store.db import one_account_login
+from ..domain.commands import build_request
+from ..store.db import now_ms, one_account_login
 from . import format as fmt
+
+# ~15s = 3× the 5s idle interval `journal live` polls at. A snapshot older than
+# this means the live process is probably not running; the view flags itself
+# STALE and warns rather than showing figures the human will read as current.
+_STALE_MS = 15_000
+
+# int retcode → short NAME, for the audit log. These MIRROR adapter/base.py's
+# `TradeRetcode` IntEnum but are DUPLICATED here deliberately: web/ must never
+# import the adapter (CLAUDE.md rules 1 & 12), and a name is all the log needs.
+# Any code not listed falls back to "retcode {n}" — honest, never a fake label.
+_RETCODE_NAMES: dict[int, str] = {
+    10004: "REQUOTE",
+    10008: "PLACED",
+    10009: "DONE",
+    10010: "DONE_PARTIAL",
+    10016: "INVALID_STOPS",
+    10018: "MARKET_CLOSED",
+    10019: "NO_MONEY",
+    10025: "NO_CHANGES",
+    10030: "INVALID_FILL",
+}
+
+
+def _retcode_name(code: int | None) -> str | None:
+    """A retcode's NAME (not the bare int). `None` (broker said nothing yet) stays
+    `None` so the template can show its own 'unknown' state."""
+    if code is None:
+        return None
+    return _RETCODE_NAMES.get(int(code), f"retcode {code}")
+
+
+def _opt_float(s: str | None) -> float | None:
+    """Parse an optional numeric form field, preserving rule 4 to the letter.
+
+    EMPTY / whitespace → `None` ("leave this level unchanged"). An explicit "0" or
+    "0.0" → `0.0` ("clear this level"). These are DIFFERENT and the difference must
+    survive: collapsing "" into 0.0 would silently clear a stop the human meant to
+    leave; coercing None→0 would do the same. So the two are never merged here.
+    """
+    if s is None or not s.strip():
+        return None
+    return float(s)
+
+
+def _level_word(level: float | None) -> str:
+    """A modify-SL/TP level for the plain-language intent string: `None` = leave it
+    ('(tetap)'), `0.0` = clear it ('(hapus)'), else the price (rule 4)."""
+    if level is None:
+        return "(tetap)"
+    if abs(level) < 1e-9:
+        return "(hapus)"
+    return fmt.price(level)
+
+
+def _intent_text(
+    kind: str, pos: sqlite3.Row, *,
+    sl: float | None, tp: float | None, volume: float | None,
+) -> str:
+    """Plain-Indonesian description of exactly what will be queued — the sentence
+    the human confirms. No numbers are invented: it echoes what was typed."""
+    symbol = pos["symbol"]
+    position_id = pos["position_id"]
+    if kind == "modify_sltp":
+        return (
+            f"Ubah SL→{_level_word(sl)}, TP→{_level_word(tp)} "
+            f"pada posisi {position_id} ({symbol})"
+        )
+    if kind == "close":
+        held = pos["volume"]
+        return f"Tutup {held} lot {symbol} (posisi {position_id})"
+    if kind == "close_partial":
+        return f"Tutup sebagian {volume} lot {symbol} (posisi {position_id})"
+    # add_volume — a hedging account opens a SECOND position, not a bigger one.
+    return (
+        f"Tambah {volume} lot {symbol} searah posisi {position_id} "
+        f"— membuka posisi BARU (akun hedging)"
+    )
 
 
 def account_header(conn: sqlite3.Connection) -> dict:
@@ -173,4 +252,102 @@ def weekly_context(conn: sqlite3.Connection, iso_year: int, iso_week: int) -> di
         "result": result,
         "weeks": _available_weeks(conn, header["login"]),
         "start_ms": start_ms,
+    }
+
+
+# --------------------------------------------------------------- live (M9)
+
+
+def live_context(conn: sqlite3.Connection) -> dict:
+    """The current open positions (mirrored into `open_positions` by `journal
+    live`), their TOTAL FLOATING P&L, and how fresh the snapshot is.
+
+    Honest about a hard ambiguity: with no heartbeat table, an empty `open_positions`
+    could mean 'no positions open' OR '`journal live` never ran' — indistinguishable
+    here, so the template says both. A snapshot older than `_STALE_MS` flags the view
+    STALE with a warning that live may not be running.
+
+    `profit` is FLOATING, in accounts.currency (USC); the template must label it so
+    and never present it as realized. `observed_msc` is true UTC (wall clock); it is
+    NOT compared with `open_time_msc`, which is broker server time (Trap 7).
+    """
+    login = one_account_login(conn)
+    rows = conn.execute(
+        "SELECT * FROM open_positions WHERE account_login = ? "
+        "ORDER BY observed_msc DESC, position_id",
+        (login,),
+    ).fetchall()
+
+    total_floating = sum((r["profit"] or 0.0) for r in rows)
+
+    now = now_ms()
+    if rows:
+        newest = max(r["observed_msc"] for r in rows)
+        age_s = max(0, (now - newest) // 1000)
+        stale = (now - newest) > _STALE_MS
+        empty = False
+    else:
+        # No rows: cannot tell 'flat' from 'live never ran'. Not stale (there is
+        # no snapshot to be old); the template shows the both-meanings message.
+        age_s = None
+        stale = False
+        empty = True
+
+    return {
+        "positions": rows,
+        "total_floating": total_floating,
+        "age_s": age_s,
+        "stale": stale,
+        "empty": empty,
+    }
+
+
+def commands_context(conn: sqlite3.Connection, limit: int = 50) -> dict:
+    """The trade-command audit log (newest first) mapped for display: the human
+    intent, the STATUS, the retcode NAME (never the bare int), and any error text
+    (e.g. the never-retried 'process died mid-command' message)."""
+    login = one_account_login(conn)
+    rows = execute.list_commands(conn, login, limit=limit)
+    cmds = [
+        {
+            "id": r["id"],
+            "position_id": r["position_id"],
+            "kind": r["kind"],
+            "status": r["status"],
+            "sl": r["sl"],
+            "tp": r["tp"],
+            "volume": r["volume"],
+            "requested_msc": r["requested_msc"],
+            "retcode": r["retcode"],
+            "retcode_name": _retcode_name(r["retcode"]),
+            "result_volume": r["result_volume"],
+            "result_price": r["result_price"],
+            "broker_comment": r["broker_comment"],
+            "error": r["error"],
+        }
+        for r in rows
+    ]
+    return {"commands": cmds}
+
+
+def preview_command(
+    conn: sqlite3.Connection, login: int, position_id: int, kind: str,
+    *, sl: float | None, tp: float | None, volume: float | None,
+) -> dict:
+    """The CONFIRM-step data. Loads the (position, spec) pair and runs
+    `build_request` — which VALIDATES — purely, so a command that would be refused
+    is refused HERE, before anything is written. Writes NOTHING.
+
+    Returns the plain-language intent plus the exact parsed sl/tp/volume to re-POST
+    at the enqueue step. `load_context`/`build_request` raise `CommandError` on
+    refusal; that propagates to the route, which renders the error page.
+    """
+    pos, spec = execute.load_context(conn, login, position_id)
+    build_request(kind, pos, spec, sl=sl, tp=tp, volume=volume)  # validates; may raise
+    return {
+        "intent": _intent_text(kind, pos, sl=sl, tp=tp, volume=volume),
+        "position_id": position_id,
+        "kind": kind,
+        "symbol": pos["symbol"],
+        "fields": {"sl": sl, "tp": tp, "volume": volume},
     }

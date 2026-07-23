@@ -706,6 +706,18 @@ def weekly(
 # --------------------------------------------------------------------- serve
 
 
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+
+
+def _is_loopback(host: str) -> bool:
+    """True only for a loopback bind address. `journal serve` refuses anything else
+    because M9 exposes order-entry routes BY DEFAULT (no `--trading` flag, human
+    decision 2026-07-23): binding to a LAN address would be an unauthenticated
+    order-entry endpoint. Case-insensitive; surrounding brackets on '[::1]' are
+    stripped so the IPv6 loopback matches whether or not it is bracketed."""
+    return host.strip().strip("[]").lower() in _LOOPBACK_HOSTS
+
+
 @app.command()
 def serve(
     host: str = typer.Option("127.0.0.1", help="Bind address (localhost only by default)."),
@@ -734,6 +746,19 @@ def serve(
     claim it. A .py edit still restarts the worker, which re-reads templates.
     Leave --reload OFF for normal use.
     """
+    # M9: order-entry routes are exposed by default (no --trading flag). Binding
+    # anywhere but loopback would put an unauthenticated order-entry endpoint on
+    # the network, so refuse it outright — before uvicorn ever opens the socket.
+    if not _is_loopback(host):
+        typer.echo(
+            f"Menolak bind ke {host!r}: sejak M9 halaman web mengekspos entri "
+            f"order (tutup/ubah/tambah posisi) SECARA DEFAULT. Membuka itu ke "
+            f"jaringan = endpoint order tanpa autentikasi. Hanya loopback "
+            f"diizinkan: {', '.join(sorted(_LOOPBACK_HOSTS))}.",
+            err=True,
+        )
+        raise typer.Exit(1)
+
     # Lazy import (like LiveMT5Client): keeps the CLI importable without the web
     # stack installed, and off the hot path of every other command.
     import importlib.util

@@ -16,8 +16,9 @@ from datetime import datetime, timezone
 
 import pytest
 
+from journal import execute
 from journal.analytics.report import build_report
-from journal.store.db import connect
+from journal.store.db import connect, now_ms
 from journal.web import format as fmt
 from journal.web import views
 
@@ -205,3 +206,163 @@ def test_weekly_context_attributes_by_close(conn):
     assert ctx["result"].n_closed == 1
     assert ctx["result"].net_total == pytest.approx(5.0)
     assert (2026, 3) in ctx["weeks"]
+
+
+# --------------------------------------------------------------- live (M9)
+
+
+def _seed_spec(
+    conn, symbol="XAUUSDc", *, trade_mode=4,
+    volume_min=0.01, volume_max=100.0, volume_step=0.01,
+):
+    conn.execute(
+        "INSERT INTO symbol_specs (symbol, symbol_base, fetched_at, "
+        "volume_min, volume_max, volume_step, trade_mode) "
+        "VALUES (?, ?, 1, ?, ?, ?, ?)",
+        (symbol, symbol[:-1], volume_min, volume_max, volume_step, trade_mode),
+    )
+    conn.commit()
+
+
+def _seed_position(
+    conn, position_id, *, symbol="XAUUSDc", direction="buy", volume=0.10,
+    open_price=4000.0, price_current=4010.0, sl=None, tp=None, profit=0.0,
+    observed_msc=None, open_time_msc=None,
+):
+    observed_msc = now_ms() if observed_msc is None else observed_msc
+    open_time_msc = _ms(9) if open_time_msc is None else open_time_msc
+    conn.execute(
+        "INSERT INTO open_positions (account_login, position_id, symbol, symbol_base, "
+        "direction, volume, open_price, price_current, sl, tp, profit, swap, magic, "
+        "open_time_msc, observed_msc) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?)",
+        (_LOGIN, position_id, symbol, symbol[:-1], direction, volume, open_price,
+         price_current, sl, tp, profit, open_time_msc, observed_msc),
+    )
+    conn.commit()
+
+
+def _seed_command(
+    conn, *, position_id=1, kind="close", status="pending",
+    retcode=None, error=None, sl=None, tp=None, volume=None,
+):
+    conn.execute(
+        "INSERT INTO trade_commands (account_login, position_id, kind, sl, tp, "
+        "volume, requested_msc, status, retcode, error) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (_LOGIN, position_id, kind, sl, tp, volume, now_ms(), status, retcode, error),
+    )
+    conn.commit()
+
+
+def test_live_context_sums_floating_and_is_fresh(conn):
+    _seed_account(conn)
+    _seed_position(conn, 1, profit=12.0, observed_msc=now_ms())
+    _seed_position(conn, 2, profit=-5.0, observed_msc=now_ms())
+    ctx = views.live_context(conn)
+    assert {p["position_id"] for p in ctx["positions"]} == {1, 2}
+    # total floating is the plain sum of `profit` (labelled floating by template).
+    assert ctx["total_floating"] == pytest.approx(7.0)
+    assert ctx["empty"] is False
+    assert ctx["stale"] is False
+
+
+def test_live_context_empty_states_the_ambiguity(conn):
+    _seed_account(conn)
+    ctx = views.live_context(conn)
+    assert ctx["empty"] is True
+    assert ctx["positions"] == []
+    # No snapshot exists, so there is nothing to be 'stale'; the age is unknown.
+    assert ctx["stale"] is False
+    assert ctx["age_s"] is None
+
+
+def test_live_context_stale_when_snapshot_is_old(conn):
+    _seed_account(conn)
+    _seed_position(conn, 1, observed_msc=now_ms() - 60_000)
+    ctx = views.live_context(conn)
+    assert ctx["stale"] is True
+    assert ctx["age_s"] >= 60
+
+
+def test_preview_command_close_returns_intent(conn):
+    _seed_account(conn)
+    _seed_spec(conn)
+    _seed_position(conn, 123456, volume=0.10)
+    p = views.preview_command(conn, _LOGIN, 123456, "close", sl=None, tp=None, volume=None)
+    assert "123456" in p["intent"]
+    assert p["kind"] == "close"
+
+
+def test_preview_command_modify_intent_mentions_levels(conn):
+    _seed_account(conn)
+    _seed_spec(conn)
+    _seed_position(conn, 1, direction="buy", price_current=4010.0)
+    p = views.preview_command(conn, _LOGIN, 1, "modify_sltp", sl=2000.5, tp=None, volume=None)
+    assert "2000.5" in p["intent"]
+    assert "(tetap)" in p["intent"]  # TP left unchanged (None), rule 4
+
+
+def test_preview_command_over_max_lot_raises(conn):
+    _seed_account(conn)
+    _seed_spec(conn)
+    _seed_position(conn, 1)
+    with pytest.raises(execute.CommandError):
+        views.preview_command(conn, _LOGIN, 1, "add_volume", sl=None, tp=None, volume=5.0)
+
+
+def test_preview_command_unknown_position_raises(conn):
+    _seed_account(conn)
+    with pytest.raises(execute.CommandError):
+        views.preview_command(conn, _LOGIN, 999, "close", sl=None, tp=None, volume=None)
+
+
+def test_enqueue_inserts_exactly_one_pending_row_no_bridge(conn):
+    # The write side the route uses: exactly one 'pending' row, nothing 'sent'
+    # (there is no bridge in this process to send it).
+    _seed_account(conn)
+    _seed_spec(conn)
+    _seed_position(conn, 1, volume=0.10)
+    execute.enqueue(conn, _LOGIN, "close", 1)
+    n_pending = conn.execute(
+        "SELECT count(*) FROM trade_commands WHERE status='pending'"
+    ).fetchone()[0]
+    assert n_pending == 1
+    n_sent = conn.execute(
+        "SELECT count(*) FROM trade_commands WHERE status='sent'"
+    ).fetchone()[0]
+    assert n_sent == 0
+
+
+def test_opt_float_preserves_rule4_distinction():
+    # "" ≠ "0": empty means leave unchanged (None); an explicit 0 means clear it.
+    assert views._opt_float("") is None
+    assert views._opt_float("   ") is None
+    assert views._opt_float("0") == 0.0
+    assert views._opt_float("0.0") == 0.0
+    assert views._opt_float("2000.5") == 2000.5
+
+
+def test_commands_context_maps_retcode_name_and_shows_error(conn):
+    _seed_account(conn)
+    _seed_command(conn, position_id=1, kind="close", status="done", retcode=10009)
+    _seed_command(conn, position_id=2, kind="close", status="failed",
+                  error="proses berhenti di tengah perintah")
+    _seed_command(conn, position_id=3, kind="close", status="failed", retcode=99999)
+    ctx = views.commands_context(conn)
+    by_pos = {c["position_id"]: c for c in ctx["commands"]}
+    assert by_pos[1]["retcode_name"] == "DONE"          # name, not the int 10009
+    assert by_pos[2]["error"] == "proses berhenti di tengah perintah"
+    assert by_pos[2]["retcode_name"] is None            # nothing said yet
+    assert by_pos[3]["retcode_name"] == "retcode 99999"  # honest fallback
+
+
+def test_is_loopback():
+    from journal.cli import _is_loopback
+
+    assert _is_loopback("127.0.0.1") is True
+    assert _is_loopback("::1") is True
+    assert _is_loopback("localhost") is True
+    assert _is_loopback("0.0.0.0") is False
+    assert _is_loopback("192.168.1.5") is False
+    assert _is_loopback("example.com") is False
