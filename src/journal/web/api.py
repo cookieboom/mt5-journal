@@ -51,3 +51,23 @@ def dashboard_payload(conn: sqlite3.Connection) -> dict:
         "live": ctx["live"],
         "equity": ctx["equity"],
     })
+
+
+def live_payload(conn: sqlite3.Connection) -> dict:
+    """Header + the open-positions strip (floating P&L, staleness) for /api/live.
+    Wraps `views.live_context`; adds no logic. `profit` is FLOATING (USC);
+    `observed_msc` is true UTC (never compared with the server-time open_time_msc)."""
+    return to_jsonable({
+        "header": views.account_header(conn),
+        "live": views.live_context(conn),
+    })
+
+
+def commands_payload(conn: sqlite3.Connection) -> dict:
+    """Header + the trade-command audit log (newest first) for /api/commands.
+    Wraps `views.commands_context`; the retcode NAME (never the bare int) and any
+    error text arrive already mapped."""
+    return to_jsonable({
+        "header": views.account_header(conn),
+        "commands": views.commands_context(conn)["commands"],
+    })

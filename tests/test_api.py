@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from journal.store.db import connect
+from journal.store.db import connect, now_ms
 from journal.web import api
 
 _LOGIN = 0
@@ -99,3 +99,77 @@ def test_dashboard_payload_is_jsonable_and_honest(conn):
     assert p["report"]["avg_r"] is None
     assert p["equity"]["n"] == 2
     assert isinstance(p["live"]["positions"], list)
+
+
+# --- live / commands seed helpers (mirror tests/test_web.py) ---------------
+
+def _seed_spec(conn, symbol="XAUUSDc", *, trade_mode=4,
+               volume_min=0.01, volume_max=100.0, volume_step=0.01):
+    conn.execute(
+        "INSERT INTO symbol_specs (symbol, symbol_base, fetched_at, "
+        "volume_min, volume_max, volume_step, trade_mode) VALUES (?, ?, 1, ?, ?, ?, ?)",
+        (symbol, symbol[:-1], volume_min, volume_max, volume_step, trade_mode),
+    )
+    conn.commit()
+
+
+def _seed_position(conn, position_id, *, symbol="XAUUSDc", direction="buy",
+                   volume=0.10, open_price=4000.0, price_current=4010.0,
+                   sl=None, tp=None, profit=0.0, observed_msc=None):
+    observed_msc = now_ms() if observed_msc is None else observed_msc
+    conn.execute(
+        "INSERT INTO open_positions (account_login, position_id, symbol, symbol_base, "
+        "direction, volume, open_price, price_current, sl, tp, profit, swap, magic, "
+        "open_time_msc, observed_msc) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?)",
+        (_LOGIN, position_id, symbol, symbol[:-1], direction, volume, open_price,
+         price_current, sl, tp, profit, _ms(9), observed_msc),
+    )
+    conn.commit()
+
+
+def _seed_command(conn, *, position_id=1, kind="close", status="pending",
+                  retcode=None, error=None, sl=None, tp=None, volume=None):
+    conn.execute(
+        "INSERT INTO trade_commands (account_login, position_id, kind, sl, tp, "
+        "volume, requested_msc, status, retcode, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (_LOGIN, position_id, kind, sl, tp, volume, now_ms(), status, retcode, error),
+    )
+    conn.commit()
+
+
+def test_live_payload_shape_and_floating(conn):
+    _seed_account(conn)
+    _seed_position(conn, 1, profit=120.0, volume=0.10)
+    _seed_position(conn, 2, profit=-30.0, volume=0.20)
+    p = api.live_payload(conn)
+    json.dumps(p)
+    assert p["header"]["currency"] == "USC"
+    assert p["live"]["count"] == 2
+    assert abs(p["live"]["total_floating"] - 90.0) < 1e-9
+    assert p["live"]["empty"] is False
+    # positions carry the full field set the card renders
+    pos = {r["position_id"]: r for r in p["live"]["positions"]}
+    assert pos[1]["direction"] == "buy"
+    assert pos[1]["symbol_base"] == "XAUUSD"
+    assert "price_current" in pos[1] and "sl" in pos[1] and "observed_msc" in pos[1]
+
+
+def test_live_payload_empty_is_honest(conn):
+    _seed_account(conn)
+    p = api.live_payload(conn)
+    assert p["live"]["empty"] is True
+    assert p["live"]["count"] == 0
+    assert p["live"]["positions"] == []
+
+
+def test_commands_payload_maps_retcode_name(conn):
+    _seed_account(conn)
+    _seed_command(conn, position_id=1, kind="close", status="done", retcode=10009)
+    _seed_command(conn, position_id=2, kind="close", status="failed",
+                  error="proses berhenti di tengah perintah")
+    p = api.commands_payload(conn)
+    json.dumps(p)
+    by_pos = {c["position_id"]: c for c in p["commands"]}
+    assert by_pos[1]["retcode_name"] == "DONE"      # name, not the int
+    assert by_pos[2]["retcode_name"] is None         # nothing said yet
+    assert by_pos[2]["error"] == "proses berhenti di tengah perintah"
