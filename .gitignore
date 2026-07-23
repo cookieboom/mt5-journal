@@ -11,6 +11,7 @@ venv/
 # Personal, machine-local Claude Code config (keep .claude/settings.json shared)
 .claude/settings.local.json
 
-# graphify graph is tracked; its internal cache and dated backups are not
-graphify-out/cache/
-graphify-out/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/
+# graphify output is regenerated on demand (`graphify update .`), not tracked —
+# the graph is non-deterministic and churned every commit via the hook. Kept
+# local so queries work; out of git so it stops dirtying the tree.
+graphify-out/
