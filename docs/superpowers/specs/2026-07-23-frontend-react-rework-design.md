@@ -63,9 +63,19 @@ journal serve  →  FastAPI :8000  (loopback-only bind, as today)
 - **Raw numbers, not pre-formatted strings.** JSON carries numeric values plus a
   `currency` field (`"USC"`); the client formats. R-multiple is unit-free.
 - **Sample-size honesty travels in the payload.** Any bucketed/averaged stat
-  carries `n` and a `gated: bool` flag (true when `n < 20`); the client greys or
-  suppresses it. Mirrors `fmt.is_gated` / docs §8 — the rule is enforced by the
-  server flag, not client whim.
+  arrives with its count(s) and its average as JSON `null` when withheld; the
+  client greys or suppresses it. Mirrors `fmt.is_gated` / docs §8.
+  **Implementation note (Phase 1):** gating is computed *client-side* by
+  `frontend/src/lib/format.ts:isGated`, a faithful mirror of
+  `web/format.py:is_gated` (the same client-mirrors-server pattern `format.ts`
+  uses for the money/R formatters), gating each stat on its *relevant* count —
+  e.g. the per-symbol R value gates on `n_with_r`, not the closed-trade `n`. The
+  originally-proposed explicit server `gated: bool` flag was not added, because
+  the analytics layer already encodes gating as `avg = None` and the client
+  mirror suffices for the Dashboard. **Phase 4** (the `/report` page, with much
+  denser bucket tables) must re-evaluate whether to surface an explicit
+  server-computed `gated` flag per bucket rather than relying on the client
+  heuristic — decided there, not inherited silently.
 - **Timestamps** are epoch-ms UTC (rule 3); the client converts to WIB for
   display only.
 - **NULL vs 0** distinction (rule 4, esp. `sl_initial`/`tp_initial`) is preserved
