@@ -3,6 +3,7 @@ import AppShell from "./components/AppShell";
 import Placeholder from "./pages/Placeholder";
 import Dashboard from "./pages/Dashboard";
 import Live from "./pages/Live";
+import Commands from "./pages/Commands";
 
 export default function App() {
   return (
@@ -15,7 +16,7 @@ export default function App() {
           <Route path="/trades/:id" element={<Placeholder name="Trade detail" />} />
           <Route path="/report" element={<Placeholder name="Report" />} />
           <Route path="/weekly" element={<Placeholder name="Weekly" />} />
-          <Route path="/commands" element={<Placeholder name="Commands" />} />
+          <Route path="/commands" element={<Commands />} />
         </Routes>
       </AppShell>
     </BrowserRouter>
