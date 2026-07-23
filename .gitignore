@@ -15,3 +15,4 @@ venv/
 # the graph is non-deterministic and churned every commit via the hook. Kept
 # local so queries work; out of git so it stops dirtying the tree.
 graphify-out/
+.superpowers/
