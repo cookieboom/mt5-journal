@@ -22,14 +22,48 @@ export interface Equity {
 }
 
 export interface LivePosition {
-  position_id: number; symbol: string; volume: number; profit: number | null;
+  position_id: number;
+  symbol: string;
+  symbol_base: string;
+  direction: "buy" | "sell";
+  volume: number;
+  open_price: number | null;
+  price_current: number | null;
+  sl: number | null;
+  tp: number | null;
+  profit: number | null;
+  observed_msc: number;
 }
 export interface Live {
-  positions: LivePosition[]; count: number;
-  total_floating: number; total_volume: number;
-  age_s: number | null; stale: boolean; empty: boolean;
+  positions: LivePosition[];
+  count: number;
+  total_floating: number;
+  total_volume: number;
+  age_s: number | null;
+  stale: boolean;
+  empty: boolean;
 }
 
 export interface DashboardData {
   header: Header; report: Report; live: Live; equity: Equity;
 }
+
+export interface LiveData { header: Header; live: Live; }
+
+export interface CommandRow {
+  id: number; position_id: number; kind: string; status: string;
+  sl: number | null; tp: number | null; volume: number | null;
+  requested_msc: number; retcode: number | null; retcode_name: string | null;
+  result_volume: number | null; result_price: number | null;
+  broker_comment: string | null; error: string | null;
+}
+export interface CommandsData { header: Header; commands: CommandRow[]; }
+
+export interface PreviewResult {
+  intent: string; position_id: number; kind: string; symbol: string;
+  fields: { sl: number | null; tp: number | null; volume: number | null };
+}
+
+// A trade action: the URL segment and the command body it carries.
+export type ActionKind = "sltp" | "close" | "close-partial" | "add-volume";
+export interface CommandBody { sl?: number | null; tp?: number | null; volume?: number | null; }
