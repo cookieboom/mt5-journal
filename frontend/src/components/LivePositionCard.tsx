@@ -12,8 +12,18 @@ export default function LivePositionCard({
   const [sl, setSl] = useState("");
   const [tp, setTp] = useState("");
   const [vol, setVol] = useState("");
-  // "" = leave unchanged (null); a typed number (incl. 0) = that value.
-  const opt = (s: string): number | null => (s.trim() === "" ? null : Number(s));
+  const [fieldError, setFieldError] = useState<string | null>(null);
+  // "" = leave unchanged (null); a typed number (incl. 0) = that value;
+  // a non-empty but non-numeric entry (e.g. "40o0") returns NaN as a sentinel —
+  // callers below must check for it and refuse to submit, since
+  // JSON.stringify(NaN) === "null" and the server would silently read that
+  // as "leave unchanged" instead of rejecting the typo.
+  const opt = (s: string): number | null => {
+    const t = s.trim();
+    if (t === "") return null;
+    const n = Number(t);
+    return Number.isFinite(n) ? n : NaN;
+  };
   const dirTone = pos.direction === "buy" ? "text-cyan" : "text-violet";
   const pnlTone = (pos.profit ?? 0) >= 0 ? "text-pos" : "text-neg";
 
@@ -45,20 +55,38 @@ export default function LivePositionCard({
             <input className="bg-white/5 rounded px-2 py-1 w-24 text-ink num" value={tp}
               onChange={(e) => setTp(e.target.value)} placeholder="kosong=tetap · 0=hapus" /></label>
           <button className="px-3 py-1.5 rounded bg-violet/20 ring-1 ring-violet/40 text-ink"
-            onClick={() => onAction("sltp", { sl: opt(sl), tp: opt(tp) })}>Ubah SL/TP…</button>
+            onClick={() => {
+              const slV = opt(sl), tpV = opt(tp);
+              // Guard: a non-empty-but-invalid entry must never reach onAction —
+              // NaN would serialize to null and be silently read as "unchanged".
+              if (Number.isNaN(slV) || Number.isNaN(tpV)) { setFieldError("angka tidak valid"); return; }
+              setFieldError(null);
+              onAction("sltp", { sl: slV, tp: tpV });
+            }}>Ubah SL/TP…</button>
         </div>
         <button className="px-3 py-1.5 rounded bg-neg/15 ring-1 ring-neg/35 text-ink"
-          onClick={() => onAction("close", {})}>Tutup {pos.volume} lot…</button>
+          onClick={() => { setFieldError(null); onAction("close", {}); }}>Tutup {pos.volume} lot…</button>
         <div className="flex gap-2 items-end">
           <label className="flex flex-col text-muted text-[10px]">Vol sebagian
             <input className="bg-white/5 rounded px-2 py-1 w-20 text-ink num" value={vol}
               onChange={(e) => setVol(e.target.value)} placeholder="0.01" /></label>
           <button className="px-3 py-1.5 rounded bg-white/8 ring-1 ring-panel-border text-ink"
-            onClick={() => onAction("close-partial", { volume: opt(vol) })}>Tutup sebagian…</button>
+            onClick={() => {
+              const volV = opt(vol);
+              if (Number.isNaN(volV)) { setFieldError("angka tidak valid"); return; }
+              setFieldError(null);
+              onAction("close-partial", { volume: volV });
+            }}>Tutup sebagian…</button>
           <button className="px-3 py-1.5 rounded bg-white/8 ring-1 ring-panel-border text-ink"
-            onClick={() => onAction("add-volume", { volume: opt(vol) })}>Tambah (posisi BARU)…</button>
+            onClick={() => {
+              const volV = opt(vol);
+              if (Number.isNaN(volV)) { setFieldError("angka tidak valid"); return; }
+              setFieldError(null);
+              onAction("add-volume", { volume: volV });
+            }}>Tambah (posisi BARU)…</button>
         </div>
       </div>
+      {fieldError && <div className="text-neg text-[11px] mt-1">{fieldError}</div>}
     </div>
   );
 }

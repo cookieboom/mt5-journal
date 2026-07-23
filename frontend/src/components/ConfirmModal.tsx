@@ -1,0 +1,33 @@
+import { PreviewResult } from "../lib/types";
+
+export default function ConfirmModal({
+  preview, submitting, error, onConfirm, onCancel,
+}: {
+  preview: PreviewResult;
+  submitting: boolean;
+  error: string | null;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+         onClick={onCancel}>
+      <div className="glass max-w-md w-full p-5" onClick={(e) => e.stopPropagation()}>
+        <h2 className="text-[15px] font-bold mb-1">Konfirmasi perintah</h2>
+        <p className="text-[12px] text-muted mb-3">
+          Perintah masuk antrean; <code>journal live</code> yang mengeksekusinya. Belum ada yang dikirim.
+        </p>
+        <div className="rounded-lg bg-white/5 p-3 text-[13px] mb-3">{preview.intent}</div>
+        {error && <div className="text-neg text-[12px] mb-3">Ditolak: {error}</div>}
+        <div className="flex justify-end gap-2">
+          <button className="px-3 py-1.5 rounded bg-white/8 ring-1 ring-panel-border text-ink"
+            onClick={onCancel} disabled={submitting}>Batal</button>
+          <button className="px-3 py-1.5 rounded bg-cyan/20 ring-1 ring-cyan/45 text-ink font-semibold"
+            onClick={onConfirm} disabled={submitting}>
+            {submitting ? "Mengirim…" : "Konfirmasi & kirim"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
