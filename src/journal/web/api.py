@@ -38,3 +38,16 @@ def account_payload(conn: sqlite3.Connection) -> dict:
     """`{login, currency, offset_s}` — the header every page needs. Raises
     RuntimeError (no account / multi-account) up to the route."""
     return to_jsonable(views.account_header(conn))
+
+
+def dashboard_payload(conn: sqlite3.Connection) -> dict:
+    """Header + the M5 report + live strip + equity/R tape — the Dashboard's
+    single JSON read. Wraps `views.dashboard_context`; adds no logic. The §9
+    gate and NULLs arrive as JSON null and pass through untouched."""
+    ctx = views.dashboard_context(conn)
+    return to_jsonable({
+        "header": views.account_header(conn),
+        "report": ctx["report"],
+        "live": ctx["live"],
+        "equity": ctx["equity"],
+    })

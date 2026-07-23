@@ -82,3 +82,20 @@ def test_account_payload_shape(conn):
 def test_account_payload_raises_without_account(conn):
     with pytest.raises(RuntimeError):
         api.account_payload(conn)
+
+
+def test_dashboard_payload_is_jsonable_and_honest(conn):
+    _seed_account(conn)
+    _seed_trade(conn, 1, net_profit=120.0, r_multiple=1.5)
+    _seed_trade(conn, 2, net_profit=-80.0, r_multiple=-1.0)
+
+    p = api.dashboard_payload(conn)
+    json.dumps(p)  # must not raise
+
+    assert set(p.keys()) == {"header", "report", "live", "equity"}
+    assert p["header"]["currency"] == "USC"
+    assert p["report"]["n_closed"] == 2
+    # §9 gate: with only 2 R-known trades, avg_r is withheld as null (never 0).
+    assert p["report"]["avg_r"] is None
+    assert p["equity"]["n"] == 2
+    assert isinstance(p["live"]["positions"], list)
