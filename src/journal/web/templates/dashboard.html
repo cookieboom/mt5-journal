@@ -3,38 +3,133 @@
 
 {% block content %}
 {% set r = report %}
+{% set lv = live %}
+{% set eq = equity %}
+
+{# ---- live strip: floating P&L is the thing a trader checks mid-session ---- #}
+<div class="live-strip {{ 'is-empty' if lv.empty else ('is-stale' if lv.stale else '') }}">
+  {% if lv.empty %}
+  <div class="metric">
+    <span class="label">Posisi terbuka</span>
+    <span class="v"><span class="dot"></span>—</span>
+  </div>
+  <div class="status">
+    Tidak ada posisi terbuka <em>atau</em> <code>journal live</code> belum jalan —
+    tanpa heartbeat keduanya tak terbedakan.
+  </div>
+  {% else %}
+  <div class="metric">
+    <span class="label">Posisi terbuka</span>
+    <span class="v"><span class="dot"></span>{{ lv.count }}</span>
+  </div>
+  <div class="metric">
+    <span class="label">P&amp;L <span class="floating-tag">mengambang · floating</span></span>
+    <span class="v {{ 'pos' if lv.total_floating > 0 else ('neg' if lv.total_floating < 0 else '') }}">
+      {{ lv.total_floating | money(header.currency, sign=True) }}</span>
+  </div>
+  <div class="metric">
+    <span class="label">Eksposur</span>
+    <span class="v">{{ '%.2f' % lv.total_volume }} lot</span>
+  </div>
+  <div class="status">
+    {% if lv.stale %}
+      <span class="neg">⚠ snapshot {{ lv.age_s }}s lalu — <code>journal live</code> mungkin mati.</span>
+    {% else %}
+      Data {{ lv.age_s }}s lalu · <a href="/live">kelola →</a>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+
 <h1>Ringkasan akun</h1>
-<p class="note"><a href="/report">Lihat report lengkap →</a> — money penuh, MAE/MFE, dan breakdown per session / source / symbol.</p>
+<p class="note"><a href="/report">Report lengkap →</a> — money penuh, MAE/MFE, breakdown per session / source / symbol.</p>
 
 <div class="cards">
   <div class="card">
-    <div class="label">Win rate</div>
+    <span class="label">Win rate</span>
     <div class="value">{{ r.win_rate | pct }}</div>
     <div class="sub">n = {{ r.n_closed }} closed</div>
   </div>
   <div class="card">
-    <div class="label">Expectancy</div>
+    <span class="label">Expectancy</span>
     <div class="value">{{ r.expectancy | money(r.currency, sign=True) }}</div>
     <div class="sub">rata-rata net / trade</div>
   </div>
   <div class="card">
-    <div class="label">Profit factor</div>
+    <span class="label">Profit factor</span>
     <div class="value">{{ r.profit_factor | num }}</div>
     <div class="sub">Σwin / |Σloss|</div>
   </div>
   <div class="card">
-    <div class="label">Avg R</div>
+    <span class="label">Avg R</span>
     <div class="value">{{ r.avg_r | rmult }}</div>
-    <div class="sub">n = {{ r.n_with_r }}{% if r.n_with_r < 20 %}, perlu ≥20{% endif %}</div>
+    <div class="sub">{% if r.n_with_r < 20 %}<span class="na" title="perlu n≥20 trade dengan R; SL hanya diketahui sebagian">n = {{ r.n_with_r }}, perlu ≥20</span>{% else %}n = {{ r.n_with_r }}{% endif %}</div>
+  </div>
+</div>
+
+{# ---- signature: the equity + cumulative-R tape (inline SVG, no JS) ------- #}
+<h2>Kurva ekuitas &amp; R kumulatif</h2>
+<div class="tapes">
+  <div class="tape">
+    <div class="tape-head">
+      <span class="label">Ekuitas kumulatif · {{ header.currency }}</span>
+      <span class="now {{ 'pos' if eq.equity_last and eq.equity_last > 0 else ('neg' if eq.equity_last and eq.equity_last < 0 else '') }}">
+        {{ eq.equity_last | money(header.currency, sign=True) }}</span>
+    </div>
+    {% set s = eq.equity_svg %}
+    {% if s.empty %}
+    <p class="empty-note">Belum ada trade tertutup — kurva muncul setelah trade pertama ditutup.</p>
+    {% else %}
+    <svg viewBox="{{ s.viewbox }}" role="img" aria-label="kurva ekuitas kumulatif dalam {{ header.currency }}">
+      <line class="baseline" x1="0" y1="{{ s.baseline_y }}" x2="720" y2="{{ s.baseline_y }}"></line>
+      <polygon class="area" points="{{ s.area }}"></polygon>
+      <polyline class="trace" points="{{ s.points }}"></polyline>
+      <circle class="cap" cx="{{ s.last_x }}" cy="{{ s.last_y }}" r="3.5"></circle>
+    </svg>
+    <div class="axis">
+      <span>{{ s.first_msc | wib(header.offset_s) }}</span>
+      <span class="r">{{ s.last_msc | wib(header.offset_s) }}</span>
+    </div>
+    <div class="axis">
+      <span>min {{ s.vmin | money(header.currency, sign=True) }}</span>
+      <span class="r">max {{ s.vmax | money(header.currency, sign=True) }}</span>
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="tape">
+    <div class="tape-head">
+      <span class="label">R kumulatif · unit-free</span>
+      <span class="now">{{ eq.r_last | rmult }}</span>
+    </div>
+    {% set rs = eq.r_svg %}
+    {% if rs.empty %}
+    <p class="empty-note">Belum ada trade dengan R diketahui (butuh SL awal) — <span class="na" title="R hanya terhitung saat SL awal diketahui; tumbuh seiring poller M4">n=0</span>.</p>
+    {% else %}
+    <svg viewBox="{{ rs.viewbox }}" role="img" aria-label="R kumulatif atas {{ eq.n_with_r }} trade dengan R diketahui">
+      <line class="baseline" x1="0" y1="{{ rs.baseline_y }}" x2="720" y2="{{ rs.baseline_y }}"></line>
+      <polygon class="area area-r" points="{{ rs.area }}"></polygon>
+      <polyline class="trace trace-r" points="{{ rs.points }}"></polyline>
+      <circle class="cap" cx="{{ rs.last_x }}" cy="{{ rs.last_y }}" r="3.5"></circle>
+    </svg>
+    <div class="axis">
+      <span>{{ rs.first_msc | wib(header.offset_s) }}</span>
+      <span class="r">{{ rs.last_msc | wib(header.offset_s) }}</span>
+    </div>
+    <div class="axis">
+      <span>min {{ rs.vmin | rmult }}</span>
+      <span class="r">meliputi {{ eq.n_with_r }} / {{ eq.n }} trade</span>
+    </div>
+    {% endif %}
   </div>
 </div>
 
 <h2>Outcomes</h2>
 <div class="cards">
-  <div class="card"><div class="label">Total</div><div class="value">{{ r.n_total }}</div></div>
-  <div class="card"><div class="label">Closed</div><div class="value">{{ r.n_closed }}</div></div>
-  <div class="card"><div class="label">Win</div><div class="value pos">{{ r.n_wins }}</div></div>
-  <div class="card"><div class="label">Loss</div><div class="value neg">{{ r.n_losses }}</div></div>
-  <div class="card"><div class="label">Breakeven</div><div class="value">{{ r.n_breakeven }}</div></div>
+  <div class="card"><span class="label">Total</span><div class="value">{{ r.n_total }}</div></div>
+  <div class="card"><span class="label">Closed</span><div class="value">{{ r.n_closed }}</div></div>
+  <div class="card"><span class="label">Win</span><div class="value pos">{{ r.n_wins }}</div></div>
+  <div class="card"><span class="label">Loss</span><div class="value neg">{{ r.n_losses }}</div></div>
+  <div class="card"><span class="label">Breakeven</span><div class="value">{{ r.n_breakeven }}</div></div>
 </div>
 {% endblock %}

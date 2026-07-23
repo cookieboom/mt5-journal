@@ -31,7 +31,74 @@ home each, and a second copy is a future lie. Point, never duplicate.
 
 ## CURRENT STATE — update this section every session
 
-**Last updated:** 2026-07-18
+**Last updated:** 2026-07-23
+
+**M9 in one line (`claude/trading-system-plan-2959b7`, NOT yet merged):** the
+journal became able to *act*, not just describe. Six phases: (1) a real
+migration runner in `store/db.py` + `migrations/002_live_trading.sql` (bumps
+`SCHEMA_VERSION=2`, applied automatically by `connect()`); (2) trade ops at the
+adapter boundary (`order_check`/`order_send` on the Protocol, new `TradeAction`/
+`OrderType`/`OrderFilling`/`TradeRetcode` enums, a scriptable `FakeMT5Client`
+write side); (3) a pure command layer (`domain/commands.py` validate/
+build_request/classify + `execute.py` enqueue/claim/record) with the human's
+1.00-lot hard cap unit-tested; (4) `journal live` — the single process that owns
+the bridge: mirrors `open_positions`, **auto-ingests on close** (sync→rebuild→
+candles→rebuild, ask 2), and executes queued commands, never auto-retrying a
+`sent` order; (5) the web live view + a mandatory two-step confirm before any
+order (`/live`, `/live/commands`), with `serve` refusing any non-loopback
+`--host`; (6) a frontend redesign — live strip, an inline-SVG equity/cumulative-R
+tape, design tokens with light+dark, self-explaining `n/a` cells.
+
+**M9 decisions (human, 2026-07-23):** execution is GO; trading is **ON BY
+DEFAULT** (`--no-trading` opts out of command execution; the UI confirm step and
+the loopback bind-check are the primary guards, not a flag); **1.00-lot hard cap**
+per command, enforced in `domain/commands.py`; a real account is acceptable (no
+demo gate). Rule 9 still binds: the human types every number; the system only
+validates, sends, and reports the broker's verbatim answer — no suggested SL, no
+auto-breakeven, no sizing.
+
+**M9 verification — MEASURED so far:** `uv run pytest` **375 green** (was 202 at
+M8's baseline; +173 across the six phases). Boundary greps clean: no
+`import MetaTrader5` and no `TRADE_*`/`ORDER_*` value outside `adapter/`; `web/`
+imports no adapter. Migration replay test passes (fresh-v2 == migrated-v1→v2).
+On the live DB (migrated in place, backup kept): `migrate`→v2, `rebuild`→72/72
+mae-mfe, `verify`→**both identities PASS**, residual +0.00, the 14.50 USC archived
+reconciliation intact.
+
+**Live smoke — MEASURED 2026-07-23 (real account, real bridge):**
+- **Auto-ingest on close (ask 2) — PROVEN.** `journal live --no-trading` running,
+  a real XAUUSDc position (#1582918124, 0.01 lot) opened → heartbeat went
+  `0 open` → `1 open · 1 SL/TP snapshot(s)`; closed → `closed [1582918124] —
+  menjalankan ingest… -> ingested`. `trades` grew 72→82 and `verify` still PASSED
+  both identities afterward — the close-triggered pipeline ran and left the DB
+  consistent, with no manual command.
+- **Web live view — PROVEN.** `/live` rendered the open position live (floating
+  P&L −0.90 USC labelled floating, SL/TP shown as `0`=none-set, "data 3s ago").
+- **Two real bugs found and fixed by running it live** (regression-tested):
+  `database is locked` (connect() now WAL + busy_timeout so live+serve coexist),
+  and a silent heartbeat that read as a freeze (per-cycle heartbeat + an
+  `on_closing` notice before the blocking ingest). **Footgun learned:** run
+  `live` AND `serve` with the SAME absolute `--db`; `serve` without `--db` from
+  the worktree makes a stray empty `data/journal.db` and `/live` looks empty.
+- **Order SEND path (ask 1) — REACHED THE BROKER, verdict recorded faithfully.**
+  A `modify_sltp` (SL 4090, TP left unchanged) typed in `/live` on a real 0.01-lot
+  XAUUSDc position went UI → `pending` → claimed → `order_check` → `order_send` →
+  **the broker answered**. The loop recorded it `failed`, retcode **10027
+  (`TRADE_RETCODE_CLIENT_DISABLES_AT` — "AutoTrading disabled by client")**, with
+  the broker comment, and did NOT retry. So the whole plumbing AND the failure
+  path are proven; the rejection is a TERMINAL SETTING (the container's MT5 has
+  Algo/AutoTrading turned OFF), not a code fault. This also surfaced and fixed a
+  real honesty bug: the audit log rendered a left-unchanged `TP` (NULL) as
+  "unknown"; it now reads "(tetap)" via a shared `format.level_word` — a modify's
+  NULL level is a deliberate "leave it", not ignorance (rule 4).
+- **STILL NOT measured:** a `done` order that actually LANDS — enable Algo Trading
+  in the container's MT5 terminal, resend one `modify_sltp` on the smallest
+  position, and confirm the SL changed in MT5 itself. Also unmeasured: browser
+  visual/contrast check of the redesign in light and dark.
+
+M9 is now *live-verified for ingest, the read/observe surface, and the full
+order-send plumbing up to the broker's verdict; a successful (accepted) order has
+not landed yet only because the terminal's AutoTrading is off.*
 
 **Done:** M0 (adapter + store + doctor) · M0.1 (Candle→ms, enums probed from the
 bridge) · M0.2 (fixtures re-recorded with `comment` preserved, `a15cc5e`) ·
@@ -418,6 +485,7 @@ note what was measured.
 | M6.1 | Weekly Markdown report (`journal weekly`) | done (`a989eac`) |
 | M7 | Web dashboard on localhost (`journal serve`) — read-mostly + annotation/tag writes | done |
 | M8 | Per-symbol breakdown (`by_symbol`) + dedicated `/report` web page | done |
+| M9 | Live positions + trade interaction + auto-ingest on close + UI redesign (`journal live`, `/live`) | code-complete, offline-verified; live smoke pending human (`claude/trading-system-plan-2959b7`) |
 
 M0–M3 delivers the original ask: an automatic journal with charts. **Done.**
 M4 onward — poller, analytics, annotations — is what makes the journal worth

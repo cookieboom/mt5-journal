@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Konfirmasi perintah — mt5-journal{% endblock %}
+{% block content %}
+<h1>Konfirmasi perintah</h1>
+<div class="panel">
+  <p>Perintah ini akan dikirim ke antrean untuk <code>journal live</code>:</p>
+  <p><strong>{{ preview.intent }}</strong></p>
+
+  {# Hidden inputs carry the EXACT parsed values so the enqueue step re-parses
+     them identically: None → "" (tetap), 0.0 → "0" (hapus). rule 4 survives. #}
+  <form method="post" action="/live/{{ preview.position_id }}/{{ action }}">
+    <input type="hidden" name="sl"
+           value="{{ preview.fields.sl if preview.fields.sl is not none else '' }}">
+    <input type="hidden" name="tp"
+           value="{{ preview.fields.tp if preview.fields.tp is not none else '' }}">
+    <input type="hidden" name="volume"
+           value="{{ preview.fields.volume if preview.fields.volume is not none else '' }}">
+    <button class="primary" type="submit">Ya, kirim perintah</button>
+  </form>
+  <p><a href="/live">← Batal</a></p>
+</div>
+{% endblock %}

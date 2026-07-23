@@ -19,14 +19,19 @@
         <dt>Volume</dt><dd>{{ trade.volume }}</dd>
         <dt>Entry</dt><dd>{{ trade.open_price | price }}</dd>
         <dt>Exit</dt><dd>{{ trade.close_price | price }}</dd>
-        <dt>SL awal</dt><dd>{{ trade.sl_initial | price }}</dd>
-        <dt>TP awal</dt><dd>{{ trade.tp_initial | price }}</dd>
+        <dt>SL awal</dt>
+        <dd>{% if trade.sl_initial is none %}<span class="na" title="SL awal tidak diketahui — trade ini dikecualikan dari statistik R (rule 4)">unknown</span>{% else %}{{ trade.sl_initial | price }}{% endif %}</dd>
+        <dt>TP awal</dt>
+        <dd>{% if trade.tp_initial is none %}<span class="na" title="TP awal tidak diketahui (rule 4: NULL ≠ 0)">unknown</span>{% else %}{{ trade.tp_initial | price }}{% endif %}</dd>
         <dt>Net</dt>
         <dd class="{{ 'pos' if trade.net_profit and trade.net_profit > 0 else ('neg' if trade.net_profit and trade.net_profit < 0 else '') }}">
           {{ trade.net_profit | money(header.currency, sign=True) }}</dd>
-        <dt>R-multiple</dt><dd>{{ trade.r_multiple | rmult }}</dd>
-        <dt>MAE (R)</dt><dd>{{ trade.mae_r | rmult }}</dd>
-        <dt>MFE (R)</dt><dd>{{ trade.mfe_r | rmult }}</dd>
+        <dt>R-multiple</dt>
+        <dd>{% if trade.r_multiple is none %}<span class="na" title="perlu SL awal diketahui untuk menghitung risiko → R">n/a</span>{% else %}{{ trade.r_multiple | rmult }}{% endif %}</dd>
+        <dt>MAE (R)</dt>
+        <dd>{% if trade.mae_r is none %}<span class="na" title="perlu candle coverage (M3) + SL awal diketahui">n/a</span>{% else %}{{ trade.mae_r | rmult }}{% endif %}</dd>
+        <dt>MFE (R)</dt>
+        <dd>{% if trade.mfe_r is none %}<span class="na" title="perlu candle coverage (M3) + SL awal diketahui">n/a</span>{% else %}{{ trade.mfe_r | rmult }}{% endif %}</dd>
       </dl>
     </div>
 

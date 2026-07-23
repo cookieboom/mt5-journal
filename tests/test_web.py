@@ -16,8 +16,9 @@ from datetime import datetime, timezone
 
 import pytest
 
+from journal import execute
 from journal.analytics.report import build_report
-from journal.store.db import connect
+from journal.store.db import connect, now_ms
 from journal.web import format as fmt
 from journal.web import views
 
@@ -98,6 +99,15 @@ def test_price_unknown_vs_zero():
     assert fmt.price(None) == "unknown"
     assert fmt.price(0.0) == "0"
     assert fmt.price(3987.5) == "3987.5"
+
+
+def test_level_word_on_a_modify_is_leave_not_unknown():
+    # A modify carries INTENT about a level, so a blank field is a deliberate
+    # "leave it", not ignorance — it must NOT read "unknown" (the audit log did).
+    assert fmt.level_word(None) == "(tetap)"     # leave unchanged
+    assert fmt.level_word(0.0) == "(hapus)"      # clear it
+    assert fmt.level_word(4085.0) == "4085"      # set it
+    assert fmt.level_word(None) != fmt.price(None)  # the whole point of the fix
 
 
 def test_wib_converts_and_handles_none():
@@ -205,3 +215,312 @@ def test_weekly_context_attributes_by_close(conn):
     assert ctx["result"].n_closed == 1
     assert ctx["result"].net_total == pytest.approx(5.0)
     assert (2026, 3) in ctx["weeks"]
+
+
+# --------------------------------------------------------------- live (M9)
+
+
+def _seed_spec(
+    conn, symbol="XAUUSDc", *, trade_mode=4,
+    volume_min=0.01, volume_max=100.0, volume_step=0.01,
+):
+    conn.execute(
+        "INSERT INTO symbol_specs (symbol, symbol_base, fetched_at, "
+        "volume_min, volume_max, volume_step, trade_mode) "
+        "VALUES (?, ?, 1, ?, ?, ?, ?)",
+        (symbol, symbol[:-1], volume_min, volume_max, volume_step, trade_mode),
+    )
+    conn.commit()
+
+
+def _seed_position(
+    conn, position_id, *, symbol="XAUUSDc", direction="buy", volume=0.10,
+    open_price=4000.0, price_current=4010.0, sl=None, tp=None, profit=0.0,
+    observed_msc=None, open_time_msc=None,
+):
+    observed_msc = now_ms() if observed_msc is None else observed_msc
+    open_time_msc = _ms(9) if open_time_msc is None else open_time_msc
+    conn.execute(
+        "INSERT INTO open_positions (account_login, position_id, symbol, symbol_base, "
+        "direction, volume, open_price, price_current, sl, tp, profit, swap, magic, "
+        "open_time_msc, observed_msc) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?)",
+        (_LOGIN, position_id, symbol, symbol[:-1], direction, volume, open_price,
+         price_current, sl, tp, profit, open_time_msc, observed_msc),
+    )
+    conn.commit()
+
+
+def _seed_command(
+    conn, *, position_id=1, kind="close", status="pending",
+    retcode=None, error=None, sl=None, tp=None, volume=None,
+):
+    conn.execute(
+        "INSERT INTO trade_commands (account_login, position_id, kind, sl, tp, "
+        "volume, requested_msc, status, retcode, error) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (_LOGIN, position_id, kind, sl, tp, volume, now_ms(), status, retcode, error),
+    )
+    conn.commit()
+
+
+def test_live_context_sums_floating_and_is_fresh(conn):
+    _seed_account(conn)
+    _seed_position(conn, 1, profit=12.0, observed_msc=now_ms())
+    _seed_position(conn, 2, profit=-5.0, observed_msc=now_ms())
+    ctx = views.live_context(conn)
+    assert {p["position_id"] for p in ctx["positions"]} == {1, 2}
+    # total floating is the plain sum of `profit` (labelled floating by template).
+    assert ctx["total_floating"] == pytest.approx(7.0)
+    assert ctx["empty"] is False
+    assert ctx["stale"] is False
+
+
+def test_live_context_empty_states_the_ambiguity(conn):
+    _seed_account(conn)
+    ctx = views.live_context(conn)
+    assert ctx["empty"] is True
+    assert ctx["positions"] == []
+    # No snapshot exists, so there is nothing to be 'stale'; the age is unknown.
+    assert ctx["stale"] is False
+    assert ctx["age_s"] is None
+
+
+def test_live_context_stale_when_snapshot_is_old(conn):
+    _seed_account(conn)
+    _seed_position(conn, 1, observed_msc=now_ms() - 60_000)
+    ctx = views.live_context(conn)
+    assert ctx["stale"] is True
+    assert ctx["age_s"] >= 60
+
+
+def test_preview_command_close_returns_intent(conn):
+    _seed_account(conn)
+    _seed_spec(conn)
+    _seed_position(conn, 123456, volume=0.10)
+    p = views.preview_command(conn, _LOGIN, 123456, "close", sl=None, tp=None, volume=None)
+    assert "123456" in p["intent"]
+    assert p["kind"] == "close"
+
+
+def test_preview_command_modify_intent_mentions_levels(conn):
+    _seed_account(conn)
+    _seed_spec(conn)
+    _seed_position(conn, 1, direction="buy", price_current=4010.0)
+    p = views.preview_command(conn, _LOGIN, 1, "modify_sltp", sl=2000.5, tp=None, volume=None)
+    assert "2000.5" in p["intent"]
+    assert "(tetap)" in p["intent"]  # TP left unchanged (None), rule 4
+
+
+def test_preview_command_over_max_lot_raises(conn):
+    _seed_account(conn)
+    _seed_spec(conn)
+    _seed_position(conn, 1)
+    with pytest.raises(execute.CommandError):
+        views.preview_command(conn, _LOGIN, 1, "add_volume", sl=None, tp=None, volume=5.0)
+
+
+def test_preview_command_unknown_position_raises(conn):
+    _seed_account(conn)
+    with pytest.raises(execute.CommandError):
+        views.preview_command(conn, _LOGIN, 999, "close", sl=None, tp=None, volume=None)
+
+
+def test_enqueue_inserts_exactly_one_pending_row_no_bridge(conn):
+    # The write side the route uses: exactly one 'pending' row, nothing 'sent'
+    # (there is no bridge in this process to send it).
+    _seed_account(conn)
+    _seed_spec(conn)
+    _seed_position(conn, 1, volume=0.10)
+    execute.enqueue(conn, _LOGIN, "close", 1)
+    n_pending = conn.execute(
+        "SELECT count(*) FROM trade_commands WHERE status='pending'"
+    ).fetchone()[0]
+    assert n_pending == 1
+    n_sent = conn.execute(
+        "SELECT count(*) FROM trade_commands WHERE status='sent'"
+    ).fetchone()[0]
+    assert n_sent == 0
+
+
+def test_opt_float_preserves_rule4_distinction():
+    # "" ≠ "0": empty means leave unchanged (None); an explicit 0 means clear it.
+    assert views._opt_float("") is None
+    assert views._opt_float("   ") is None
+    assert views._opt_float("0") == 0.0
+    assert views._opt_float("0.0") == 0.0
+    assert views._opt_float("2000.5") == 2000.5
+
+
+def test_commands_context_maps_retcode_name_and_shows_error(conn):
+    _seed_account(conn)
+    _seed_command(conn, position_id=1, kind="close", status="done", retcode=10009)
+    _seed_command(conn, position_id=2, kind="close", status="failed",
+                  error="proses berhenti di tengah perintah")
+    _seed_command(conn, position_id=3, kind="close", status="failed", retcode=99999)
+    ctx = views.commands_context(conn)
+    by_pos = {c["position_id"]: c for c in ctx["commands"]}
+    assert by_pos[1]["retcode_name"] == "DONE"          # name, not the int 10009
+    assert by_pos[2]["error"] == "proses berhenti di tengah perintah"
+    assert by_pos[2]["retcode_name"] is None            # nothing said yet
+    assert by_pos[3]["retcode_name"] == "retcode 99999"  # honest fallback
+
+
+# --------------------------------------------------- equity / R tape (M9)
+
+
+def test_equity_curve_cumulative_last_equals_sum_and_r_sums_known(conn):
+    _seed_account(conn)
+    _seed_trade(conn, 1, status="closed", close_time_msc=_ms(10, day=15), net_profit=5.0, r_multiple=1.2)
+    _seed_trade(conn, 2, status="closed", close_time_msc=_ms(11, day=16), net_profit=-2.0)  # r unknown
+    _seed_trade(conn, 3, status="closed", close_time_msc=_ms(12, day=17), net_profit=3.0, r_multiple=-0.5)
+    eq = views.equity_curve(conn)
+    assert eq["n"] == 3
+    # monotonic in count: one point per closed trade, ordered by close time
+    assert len(eq["series"]) == 3
+    times = [p["close_time_msc"] for p in eq["series"]]
+    assert times == sorted(times)
+    # last equity == sum(net_profit) over ALL closed trades
+    assert eq["equity_last"] == pytest.approx(6.0)
+    assert eq["series"][-1]["equity"] == pytest.approx(6.0)
+    # cumulative equity is a running sum, not per-trade
+    assert [p["equity"] for p in eq["series"]] == pytest.approx([5.0, 3.0, 6.0])
+    # R curve sums ONLY the known r_multiple (1.2 + -0.5), over exactly 2 trades
+    assert eq["n_with_r"] == 2
+    assert eq["r_last"] == pytest.approx(0.7)
+    assert eq["equity_svg"]["empty"] is False and eq["r_svg"]["empty"] is False
+
+
+def test_equity_curve_zero_trades_is_safe(conn):
+    _seed_account(conn)  # account but no trades — must not divide by zero
+    eq = views.equity_curve(conn)
+    assert eq["n"] == 0 and eq["series"] == []
+    assert eq["equity_last"] is None and eq["r_last"] is None
+    assert eq["equity_svg"]["empty"] is True and eq["r_svg"]["empty"] is True
+    # a flat baseline exists so the template can still draw something safely
+    assert eq["equity_svg"]["baseline_y"] > 0
+
+
+def test_equity_curve_one_trade_no_crash(conn):
+    _seed_account(conn)
+    _seed_trade(conn, 1, status="closed", close_time_msc=_ms(10), net_profit=4.0)
+    eq = views.equity_curve(conn)
+    assert eq["n"] == 1
+    assert eq["equity_last"] == pytest.approx(4.0)
+    s = eq["equity_svg"]
+    assert s["empty"] is False and s["points"]  # single-point geometry, no crash
+    assert eq["r_svg"]["empty"] is True          # no r_multiple → empty R curve, still safe
+
+
+def test_dashboard_context_carries_live_and_equity(conn):
+    _seed_account(conn)
+    _seed_trade(conn, 1, status="closed", close_time_msc=_ms(10), net_profit=8.0)
+    ctx = views.dashboard_context(conn)
+    assert "live" in ctx and "equity" in ctx
+    assert ctx["equity"]["equity_last"] == pytest.approx(8.0)
+    assert ctx["live"]["empty"] is True  # no open positions seeded
+
+
+# --------------------------------------------------- template rendering
+
+
+def _env():
+    """The SAME Jinja env `web/app.py` configures — built here so templates can
+    be rendered against a seeded DB with no HTTP layer (matches this file's
+    no-TestClient discipline)."""
+    from pathlib import Path
+
+    from fastapi.templating import Jinja2Templates
+
+    here = Path(views.__file__).resolve().parent
+    t = Jinja2Templates(directory=str(here / "templates"))
+    t.env.filters.update(
+        money=fmt.money, pct=fmt.pct, rmult=fmt.rmult, num=fmt.num,
+        gated=fmt.gated, wib=fmt.wib, dur=fmt.dur, price=fmt.price,
+    )
+    t.env.globals["gated"] = fmt.gated
+    t.env.globals["is_gated"] = fmt.is_gated
+    return t.env
+
+
+def _render(name, ctx):
+    html = _env().get_template(name).render(ctx)
+    assert isinstance(html, str) and html.strip()  # non-empty, did not raise
+    return html
+
+
+def _seed_a_bit(conn):
+    _seed_account(conn)
+    _seed_trade(conn, 1, status="closed", close_time_msc=_ms(10, day=15),
+                net_profit=10.0, r_multiple=1.3, symbol="XAUUSDc")
+    _seed_trade(conn, 2, status="closed", close_time_msc=_ms(11, day=16),
+                net_profit=-4.0, symbol="BTCUSDc")
+
+
+def test_all_pages_render_with_seeded_db(conn):
+    _seed_a_bit(conn)
+    d = views.dashboard_context(conn); d["header"] = views.account_header(conn)
+    _render("dashboard.html", d)
+    rp = views.report_context(conn); rp["header"] = views.account_header(conn)
+    _render("report.html", rp)
+    _render("trades.html", views.trades_context(conn))
+    _render("trade_detail.html", views.trade_detail_context(conn, 1))
+    _render("weekly.html", views.weekly_context(conn, 2026, 3))
+    lv = views.live_context(conn); lv["header"] = views.account_header(conn)
+    _render("live.html", lv)
+    cm = views.commands_context(conn); cm["header"] = views.account_header(conn)
+    _render("commands.html", cm)
+    _render("error.html", {"message": "contoh pesan error"})
+
+
+def test_all_pages_render_with_empty_db(conn):
+    # Account but ZERO trades / positions — the explicit plan verification.
+    _seed_account(conn)
+    d = views.dashboard_context(conn); d["header"] = views.account_header(conn)
+    _render("dashboard.html", d)
+    rp = views.report_context(conn); rp["header"] = views.account_header(conn)
+    _render("report.html", rp)
+    _render("trades.html", views.trades_context(conn))
+    lv = views.live_context(conn); lv["header"] = views.account_header(conn)
+    _render("live.html", lv)
+    cm = views.commands_context(conn); cm["header"] = views.account_header(conn)
+    _render("commands.html", cm)
+    # trade_detail has no trade to show on an empty DB — the route returns None → 404.
+    assert views.trade_detail_context(conn, 1) is None
+
+
+def test_report_gated_cell_explains_itself_in_html(conn):
+    # A thin bucket (n<20) must render its WHY, not a bare "n/a".
+    _seed_a_bit(conn)
+    rp = views.report_context(conn); rp["header"] = views.account_header(conn)
+    html = _render("report.html", rp)
+    assert "perlu ≥20" in html
+    assert "n=" in html
+
+
+def test_rendered_money_carries_currency_no_bare_dollar(conn):
+    _seed_a_bit(conn)
+    d = views.dashboard_context(conn); d["header"] = views.account_header(conn)
+    html = _render("dashboard.html", d)
+    assert "USC" in html          # money figures carry the currency code
+    assert "$" not in html        # never a bare dollar (Trap 13)
+
+
+def test_live_strip_labels_floating_not_realized(conn):
+    _seed_account(conn)
+    _seed_position(conn, 1, profit=12.0, observed_msc=now_ms())
+    d = views.dashboard_context(conn); d["header"] = views.account_header(conn)
+    html = _render("dashboard.html", d)
+    assert "floating" in html.lower()  # floating P&L is labelled, never realized
+    assert "USC" in html
+
+
+def test_is_loopback():
+    from journal.cli import _is_loopback
+
+    assert _is_loopback("127.0.0.1") is True
+    assert _is_loopback("::1") is True
+    assert _is_loopback("localhost") is True
+    assert _is_loopback("0.0.0.0") is False
+    assert _is_loopback("192.168.1.5") is False
+    assert _is_loopback("example.com") is False

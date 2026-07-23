@@ -108,9 +108,13 @@ A task is done when: tests pass, you have pasted the actual pytest output, and
 
 M0 doctor · M1 ingest deals · M2 reconstruct trades · M3 candles + renderer
 · M4 SL/TP poller · M5 analytics (R, MAE/MFE) · M6 annotations + weekly report
-· M7 web dashboard (`journal serve`)
+· M7 web dashboard (`journal serve`) · M8 by_symbol + `/report` page · M9 live
+positions + trade interaction + auto-ingest on close + UI redesign (`journal
+live`, `/live`; trading ON by default, 1.00-lot cap)
 
-Currently on: **M7 shipped — see docs/HANDOFF.md for current state**
+Currently on: **M9 code-complete + offline-verified (branch
+`claude/trading-system-plan-2959b7`); live-bridge smoke pending human run —
+see docs/HANDOFF.md**
 
 ## graphify
 

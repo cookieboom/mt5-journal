@@ -30,6 +30,9 @@ from .base import (
     Position,
     SymbolInfo,
     Tick,
+    TradeRequest,
+    TradeResult,
+    TradeRetcode,
 )
 
 _DEFAULT_FIXTURES = Path(__file__).resolve().parents[3] / "tests" / "fixtures"
@@ -50,6 +53,11 @@ class FakeMT5Client:
     def __init__(self, fixtures_dir: str | Path = _DEFAULT_FIXTURES) -> None:
         self._dir = Path(fixtures_dir)
         self._cache: dict[str, Any] = {}
+        # M9 write side. `sent` and `checked` are the record of what a test's
+        # code under test asked the broker to do; `_results` is what to answer.
+        self.sent: list[TradeRequest] = []
+        self.checked: list[TradeRequest] = []
+        self._results: list[TradeResult | Exception] = []
 
     def _load(self, name: str, default: Any) -> Any:
         if name not in self._cache:
@@ -112,3 +120,41 @@ class FakeMT5Client:
 
     def positions_get(self) -> list[Position]:
         return [_build(Position, p) for p in self._load("positions", [])]
+
+    # ----------------------------------------------------------- write side (M9)
+    # There is no fixture behind these: an order is an EVENT, not recorded state.
+    # Instead the fake records what it was asked to do and replays whatever the
+    # test scripted — which is what lets every later phase assert on WHAT WOULD
+    # HAVE BEEN SENT with no bridge, no terminal, and nothing at risk.
+
+    def script_results(self, *results: TradeResult | Exception) -> None:
+        """Queue the outcomes `order_send`/`order_check` will return, in order.
+
+        An `Exception` in the queue is RAISED instead of returned — the only way
+        to test that `journal live` survives the container disappearing
+        mid-command. Once the queue is empty the default DONE resumes, so a test
+        scripts only the calls it cares about.
+        """
+        self._results.extend(results)
+
+    def _next_result(self) -> TradeResult:
+        if not self._results:
+            # Default happy path: the broker accepted it. Deliberately carries no
+            # deal/volume — a test that cares about the fill must script it, and
+            # inventing plausible numbers here would let a caller "pass" while
+            # reading fields the real broker might not have set.
+            return TradeResult(retcode=TradeRetcode.DONE)
+        nxt = self._results.pop(0)
+        if isinstance(nxt, Exception):
+            raise nxt
+        return nxt
+
+    def order_check(self, request: TradeRequest) -> TradeResult:
+        self.checked.append(request)
+        return self._next_result()
+
+    def order_send(self, request: TradeRequest) -> TradeResult:
+        # Recorded on a SEPARATE list from `checked` so a test asserting
+        # "nothing was actually sent" cannot be fooled by a dry run.
+        self.sent.append(request)
+        return self._next_result()

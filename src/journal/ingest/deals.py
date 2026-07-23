@@ -259,8 +259,10 @@ def _ingest_symbol_specs(conn, client: MT5Client, symbols, ts) -> list[str]:
             """
             INSERT INTO symbol_specs
                 (symbol, symbol_base, digits, point, tick_size, tick_value,
-                 contract_size, currency_profit, fetched_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 contract_size, currency_profit, fetched_at,
+                 volume_min, volume_max, volume_step, stops_level,
+                 freeze_level, trade_mode, filling_mode)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(symbol) DO UPDATE SET
                 symbol_base     = excluded.symbol_base,
                 digits          = excluded.digits,
@@ -269,12 +271,26 @@ def _ingest_symbol_specs(conn, client: MT5Client, symbols, ts) -> list[str]:
                 tick_value      = excluded.tick_value,
                 contract_size   = excluded.contract_size,
                 currency_profit = excluded.currency_profit,
-                fetched_at      = excluded.fetched_at
+                fetched_at      = excluded.fetched_at,
+                volume_min      = excluded.volume_min,
+                volume_max      = excluded.volume_max,
+                volume_step     = excluded.volume_step,
+                stops_level     = excluded.stops_level,
+                freeze_level    = excluded.freeze_level,
+                trade_mode      = excluded.trade_mode,
+                filling_mode    = excluded.filling_mode
             """,
             (
                 sym, to_base(sym), info.digits, info.point, info.trade_tick_size,
                 info.trade_tick_value, info.trade_contract_size,
                 info.currency_profit, ts,
+                # M9: the order-validation group. A spec stored before M9 has
+                # these as NULL until the next sync overwrites them — unknown,
+                # not zero, and `domain/commands.py` refuses to validate against
+                # an unknown spec rather than assuming a permissive default.
+                info.volume_min, info.volume_max, info.volume_step,
+                info.trade_stops_level, info.trade_freeze_level,
+                info.trade_mode, info.filling_mode,
             ),
         )
         specced.append(sym)

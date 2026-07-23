@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Log perintah — mt5-journal{% endblock %}
+{% block content %}
+<h1>Log perintah (audit)</h1>
+{% if not commands %}
+<p class="note">Belum ada perintah.</p>
+{% else %}
+<table>
+  <thead>
+    <tr>
+      <th>#</th><th>Waktu</th><th>Posisi</th><th>Jenis</th><th>Intent</th>
+      <th>Status</th><th>Retcode</th><th>Catatan</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for c in commands %}
+  <tr>
+    <td>{{ c.id }}</td>
+    <td>{{ c.requested_msc | wib(header.offset_s) }}</td>
+    <td class="mono">#{{ c.position_id }}</td>
+    <td>{{ c.kind }}</td>
+    <td>
+      {% if c.kind == 'modify_sltp' %}SL {{ c.sl | level_word }} · TP {{ c.tp | level_word }}
+      {% elif c.kind == 'close' %}tutup penuh
+      {% else %}{{ c.volume }} lot{% endif %}
+    </td>
+    <td>{{ c.status }}</td>
+    <td>{{ c.retcode_name if c.retcode_name is not none else '—' }}</td>
+    <td>
+      {% if c.error %}<span class="neg">{{ c.error }}</span>{% endif %}
+      {% if c.broker_comment %} {{ c.broker_comment }}{% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+<p><a href="/live">← Live</a></p>
+{% endblock %}

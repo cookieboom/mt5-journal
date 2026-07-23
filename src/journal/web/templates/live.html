@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}Live — mt5-journal{% endblock %}
+{% block content %}
+<h1>Posisi terbuka (live)</h1>
+
+{% if empty %}
+<p class="note">Tidak ada posisi terbuka — <em>atau</em> <code>journal live</code>
+belum pernah jalan. Tanpa heartbeat, keduanya tak bisa dibedakan dari sini.</p>
+{% else %}
+  {% if stale %}
+  <p class="warn">⚠ Data mungkin BASI: snapshot terakhir {{ age_s }} detik lalu.
+  <code>journal live</code> mungkin tidak sedang berjalan.</p>
+  {% else %}
+  <p class="note">Data {{ age_s }} detik lalu.</p>
+  {% endif %}
+
+  <p>Total P&amp;L <strong>mengambang (floating)</strong>:
+    {{ total_floating | money(header.currency, sign=True) }}</p>
+
+  {% for p in positions %}
+  <div class="panel">
+    <h2>{{ p.symbol_base }} {{ p.direction | upper }}
+      <span class="muted mono">#{{ p.position_id }}</span></h2>
+    <dl class="kv">
+      <dt>Volume</dt><dd>{{ p.volume }}</dd>
+      <dt>Harga buka</dt><dd>{{ p.open_price | price }}</dd>
+      <dt>Harga sekarang</dt><dd>{{ p.price_current | price }}</dd>
+      <dt>SL</dt><dd>{{ p.sl | price }}</dd>
+      <dt>TP</dt><dd>{{ p.tp | price }}</dd>
+      <dt>P&amp;L (mengambang / floating)</dt>
+      <dd>{{ p.profit | money(header.currency, sign=True) }}</dd>
+    </dl>
+
+    <h3>Ubah SL / TP</h3>
+    <form method="post" action="/live/{{ p.position_id }}/sltp/confirm">
+      <label>SL <input name="sl" placeholder="kosong = tetap · 0 = hapus"></label>
+      <label>TP <input name="tp" placeholder="kosong = tetap · 0 = hapus"></label>
+      <button type="submit">Tinjau…</button>
+    </form>
+
+    <h3>Tutup seluruh</h3>
+    <form method="post" action="/live/{{ p.position_id }}/close/confirm">
+      <button type="submit">Tutup {{ p.volume }} lot…</button>
+    </form>
+
+    <h3>Tutup sebagian</h3>
+    <form method="post" action="/live/{{ p.position_id }}/close-partial/confirm">
+      <label>Volume <input name="volume" placeholder="mis. 0.01"></label>
+      <button type="submit">Tinjau…</button>
+    </form>
+
+    <h3>Tambah volume (membuka posisi BARU — akun hedging)</h3>
+    <form method="post" action="/live/{{ p.position_id }}/add-volume/confirm">
+      <label>Volume <input name="volume" placeholder="mis. 0.01"></label>
+      <button type="submit">Tinjau…</button>
+    </form>
+  </div>
+  {% endfor %}
+{% endif %}
+
+<p><a href="/live/commands">→ Log perintah (audit)</a></p>
+{% endblock %}

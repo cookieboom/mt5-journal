@@ -14,12 +14,88 @@ from __future__ import annotations
 
 import sqlite3
 
+from .. import execute
 from ..analytics.report import build_report
 from ..analytics.sessions import session_of
 from ..analytics.weekly import build_weekly, iso_week_bounds_ms
 from ..annotate import get_annotation, list_tags
-from ..store.db import one_account_login
+from ..domain.commands import build_request
+from ..store.db import now_ms, one_account_login
 from . import format as fmt
+
+# ~15s = 3× the 5s idle interval `journal live` polls at. A snapshot older than
+# this means the live process is probably not running; the view flags itself
+# STALE and warns rather than showing figures the human will read as current.
+_STALE_MS = 15_000
+
+# int retcode → short NAME, for the audit log. These MIRROR adapter/base.py's
+# `TradeRetcode` IntEnum but are DUPLICATED here deliberately: web/ must never
+# import the adapter (CLAUDE.md rules 1 & 12), and a name is all the log needs.
+# Any code not listed falls back to "retcode {n}" — honest, never a fake label.
+_RETCODE_NAMES: dict[int, str] = {
+    10004: "REQUOTE",
+    10008: "PLACED",
+    10009: "DONE",
+    10010: "DONE_PARTIAL",
+    10016: "INVALID_STOPS",
+    10018: "MARKET_CLOSED",
+    10019: "NO_MONEY",
+    10025: "NO_CHANGES",
+    10030: "INVALID_FILL",
+}
+
+
+def _retcode_name(code: int | None) -> str | None:
+    """A retcode's NAME (not the bare int). `None` (broker said nothing yet) stays
+    `None` so the template can show its own 'unknown' state."""
+    if code is None:
+        return None
+    return _RETCODE_NAMES.get(int(code), f"retcode {code}")
+
+
+def _opt_float(s: str | None) -> float | None:
+    """Parse an optional numeric form field, preserving rule 4 to the letter.
+
+    EMPTY / whitespace → `None` ("leave this level unchanged"). An explicit "0" or
+    "0.0" → `0.0` ("clear this level"). These are DIFFERENT and the difference must
+    survive: collapsing "" into 0.0 would silently clear a stop the human meant to
+    leave; coercing None→0 would do the same. So the two are never merged here.
+    """
+    if s is None or not s.strip():
+        return None
+    return float(s)
+
+
+def _level_word(level: float | None) -> str:
+    """Thin alias kept for callers here; the definition now lives in `format.py`
+    so templates (the audit log) and this intent string render a modify level the
+    SAME way — `None`='(tetap)', not 'unknown'."""
+    return fmt.level_word(level)
+
+
+def _intent_text(
+    kind: str, pos: sqlite3.Row, *,
+    sl: float | None, tp: float | None, volume: float | None,
+) -> str:
+    """Plain-Indonesian description of exactly what will be queued — the sentence
+    the human confirms. No numbers are invented: it echoes what was typed."""
+    symbol = pos["symbol"]
+    position_id = pos["position_id"]
+    if kind == "modify_sltp":
+        return (
+            f"Ubah SL→{_level_word(sl)}, TP→{_level_word(tp)} "
+            f"pada posisi {position_id} ({symbol})"
+        )
+    if kind == "close":
+        held = pos["volume"]
+        return f"Tutup {held} lot {symbol} (posisi {position_id})"
+    if kind == "close_partial":
+        return f"Tutup sebagian {volume} lot {symbol} (posisi {position_id})"
+    # add_volume — a hedging account opens a SECOND position, not a bigger one.
+    return (
+        f"Tambah {volume} lot {symbol} searah posisi {position_id} "
+        f"— membuka posisi BARU (akun hedging)"
+    )
 
 
 def account_header(conn: sqlite3.Connection) -> dict:
@@ -37,11 +113,127 @@ def account_header(conn: sqlite3.Connection) -> dict:
     }
 
 
+# --- equity / cumulative-R tape (M9) --------------------------------------
+#
+# The dashboard had NO time dimension. `equity_curve` adds one as a PURE,
+# tested function: cumulative net_profit (USC) and, separately, cumulative
+# r_multiple over only the trades where R is known. It returns both the point
+# series AND ready-to-drop inline-SVG geometry so the template stays dumb (no
+# arithmetic in Jinja) and the maths is unit-testable. All money stays USC; the
+# trace is drawn neutral-INK by the CSS, never money-green (see app.css).
+
+# viewBox units — unitless; the <svg> scales to 100% width via CSS.
+_VB_W = 720.0
+_VB_H = 160.0
+_PAD_X = 6.0
+_PAD_Y = 10.0
+
+
+def _svg_geometry(pts: list[tuple[int, float]]) -> dict:
+    """Turn a (time_msc, value) series into inline-SVG geometry. Handles the
+    degenerate cases the plan calls out WITHOUT dividing by zero:
+      * empty  → `empty=True`, a flat baseline, no points (template shows a note);
+      * one point → single dot, flat baseline, no span division;
+      * a flat series (all equal, e.g. all-zero) → a synthetic ±1 range so the
+        baseline sits centred instead of NaN.
+    The value range is forced to include 0 so the dashed zero-line is always in
+    view and the curve's relationship to breakeven reads honestly."""
+    vb = f"0 0 {_VB_W:g} {_VB_H:g}"
+    if not pts:
+        return {
+            "empty": True, "viewbox": vb, "points": "", "area": "",
+            "baseline_y": round(_VB_H / 2, 2),
+            "first_msc": None, "last_msc": None, "last_value": None,
+            "last_x": None, "last_y": None, "vmin": None, "vmax": None,
+        }
+
+    values = [v for _, v in pts]
+    vmin = min(0.0, min(values))
+    vmax = max(0.0, max(values))
+    span = vmax - vmin
+    if span < 1e-9:  # flat/degenerate series — avoid /0, centre the baseline
+        vmin, vmax, span = -1.0, 1.0, 2.0
+
+    n = len(pts)
+
+    def x_of(i: int) -> float:
+        if n == 1:
+            return _VB_W / 2
+        return _PAD_X + (_VB_W - 2 * _PAD_X) * i / (n - 1)
+
+    def y_of(v: float) -> float:
+        return _VB_H - _PAD_Y - (_VB_H - 2 * _PAD_Y) * (v - vmin) / span
+
+    coords = [(x_of(i), y_of(v)) for i, (_, v) in enumerate(pts)]
+    points = " ".join(f"{x:.2f},{y:.2f}" for x, y in coords)
+    baseline_y = y_of(0.0)
+    x0, xl = coords[0][0], coords[-1][0]
+    # area polygon: baseline-left → the trace → baseline-right, filled faintly.
+    area = f"{x0:.2f},{baseline_y:.2f} {points} {xl:.2f},{baseline_y:.2f}"
+    return {
+        "empty": False, "viewbox": vb, "points": points, "area": area,
+        "baseline_y": round(baseline_y, 2),
+        "first_msc": pts[0][0], "last_msc": pts[-1][0], "last_value": pts[-1][1],
+        "last_x": round(xl, 2), "last_y": round(coords[-1][1], 2),
+        "vmin": vmin, "vmax": vmax,
+    }
+
+
+def equity_curve(conn: sqlite3.Connection) -> dict:
+    """Cumulative equity (net_profit, USC) and cumulative-R over CLOSED trades,
+    ordered by realized close time. Pure DB read; no writes, no adapter.
+
+    Two honest, separate series:
+      * equity — running sum of `net_profit` over every closed trade (USC);
+      * r-curve — running sum of `r_multiple` over ONLY the trades where R is
+        known (`r_multiple IS NOT NULL`), with `n_with_r` exposed so the template
+        can say how many trades it covers. R is unit-free (a ratio), so the two
+        curves are never mixed.
+    Returns the point series plus inline-SVG geometry for each. Zero and one-trade
+    cases are handled by `_svg_geometry` without a ZeroDivisionError."""
+    login = one_account_login(conn)
+    rows = conn.execute(
+        "SELECT close_time_msc, net_profit, r_multiple FROM trades "
+        "WHERE account_login = ? AND status = 'closed' AND close_time_msc IS NOT NULL "
+        "ORDER BY close_time_msc ASC",
+        (login,),
+    ).fetchall()
+
+    equity_pts: list[tuple[int, float]] = []
+    cum = 0.0
+    for r in rows:
+        cum += r["net_profit"] or 0.0  # a closed trade should have net; guard anyway
+        equity_pts.append((r["close_time_msc"], cum))
+
+    r_pts: list[tuple[int, float]] = []
+    cum_r = 0.0
+    for r in rows:
+        if r["r_multiple"] is not None:
+            cum_r += r["r_multiple"]
+            r_pts.append((r["close_time_msc"], cum_r))
+
+    return {
+        "n": len(equity_pts),
+        "n_with_r": len(r_pts),
+        "series": [{"close_time_msc": t, "equity": e} for t, e in equity_pts],
+        "equity_last": equity_pts[-1][1] if equity_pts else None,
+        "r_last": r_pts[-1][1] if r_pts else None,
+        "equity_svg": _svg_geometry(equity_pts),
+        "r_svg": _svg_geometry(r_pts),
+    }
+
+
 def dashboard_context(conn: sqlite3.Connection) -> dict:
-    """Account-wide report (M5). The dataclass already did §9 gating, so the
-    template only has to render `None` honestly. The dashboard shows the
-    at-a-glance cards; the full tables live at /report (`report_context`)."""
-    return {"report": build_report(conn)}
+    """Account-wide report (M5) + a live strip + the equity/R tape (M9). The
+    ReportResult dataclass already did §9 gating, so the template only renders
+    `None` honestly. The full analytics tables live at /report; the live strip
+    reuses `live_context` (floating P&L, never realized) and the tape reuses
+    `equity_curve`."""
+    return {
+        "report": build_report(conn),
+        "live": live_context(conn),
+        "equity": equity_curve(conn),
+    }
 
 
 def report_context(conn: sqlite3.Connection) -> dict:
@@ -93,10 +285,15 @@ def trades_context(
 
     rows = conn.execute(
         "SELECT position_id, symbol_base, direction, status, open_time_msc, "
-        "close_time_msc, net_profit, r_multiple, magic "
+        "close_time_msc, duration_s, net_profit, r_multiple, magic "
         "FROM trades WHERE " + " AND ".join(where) + " ORDER BY open_time_msc DESC",
         params,
     ).fetchall()
+
+    # Largest |net| in the visible set — the sparkbar scales each row's bar to
+    # this so the per-row win/loss mark is honest RELATIVE to the page. The USC
+    # figure itself always sits in its own cell; the bar is only a glance cue.
+    max_abs_net = max((abs(r["net_profit"]) for r in rows if r["net_profit"] is not None), default=0.0)
 
     tags = _tags_by_position(conn, login)
     symbols = [
@@ -112,6 +309,7 @@ def trades_context(
         "trades": rows,
         "tags": tags,
         "symbols": symbols,
+        "max_abs_net": max_abs_net,
         "filters": {"symbol": symbol or "", "status": status or "", "source": source or ""},
     }
 
@@ -173,4 +371,109 @@ def weekly_context(conn: sqlite3.Connection, iso_year: int, iso_week: int) -> di
         "result": result,
         "weeks": _available_weeks(conn, header["login"]),
         "start_ms": start_ms,
+    }
+
+
+# --------------------------------------------------------------- live (M9)
+
+
+def live_context(conn: sqlite3.Connection) -> dict:
+    """The current open positions (mirrored into `open_positions` by `journal
+    live`), their TOTAL FLOATING P&L, and how fresh the snapshot is.
+
+    Honest about a hard ambiguity: with no heartbeat table, an empty `open_positions`
+    could mean 'no positions open' OR '`journal live` never ran' — indistinguishable
+    here, so the template says both. A snapshot older than `_STALE_MS` flags the view
+    STALE with a warning that live may not be running.
+
+    `profit` is FLOATING, in accounts.currency (USC); the template must label it so
+    and never present it as realized. `observed_msc` is true UTC (wall clock); it is
+    NOT compared with `open_time_msc`, which is broker server time (Trap 7).
+    """
+    login = one_account_login(conn)
+    rows = conn.execute(
+        "SELECT * FROM open_positions WHERE account_login = ? "
+        "ORDER BY observed_msc DESC, position_id",
+        (login,),
+    ).fetchall()
+
+    total_floating = sum((r["profit"] or 0.0) for r in rows)
+
+    now = now_ms()
+    if rows:
+        newest = max(r["observed_msc"] for r in rows)
+        age_s = max(0, (now - newest) // 1000)
+        stale = (now - newest) > _STALE_MS
+        empty = False
+    else:
+        # No rows: cannot tell 'flat' from 'live never ran'. Not stale (there is
+        # no snapshot to be old); the template shows the both-meanings message.
+        age_s = None
+        stale = False
+        empty = True
+
+    # Exposure = total open volume in lots (a plain sum; notional in USC would
+    # need per-symbol contract maths we don't do here). Labelled "lot" so it is
+    # never mistaken for a money figure.
+    total_volume = sum((r["volume"] or 0.0) for r in rows)
+
+    return {
+        "positions": rows,
+        "count": len(rows),
+        "total_floating": total_floating,
+        "total_volume": total_volume,
+        "age_s": age_s,
+        "stale": stale,
+        "empty": empty,
+    }
+
+
+def commands_context(conn: sqlite3.Connection, limit: int = 50) -> dict:
+    """The trade-command audit log (newest first) mapped for display: the human
+    intent, the STATUS, the retcode NAME (never the bare int), and any error text
+    (e.g. the never-retried 'process died mid-command' message)."""
+    login = one_account_login(conn)
+    rows = execute.list_commands(conn, login, limit=limit)
+    cmds = [
+        {
+            "id": r["id"],
+            "position_id": r["position_id"],
+            "kind": r["kind"],
+            "status": r["status"],
+            "sl": r["sl"],
+            "tp": r["tp"],
+            "volume": r["volume"],
+            "requested_msc": r["requested_msc"],
+            "retcode": r["retcode"],
+            "retcode_name": _retcode_name(r["retcode"]),
+            "result_volume": r["result_volume"],
+            "result_price": r["result_price"],
+            "broker_comment": r["broker_comment"],
+            "error": r["error"],
+        }
+        for r in rows
+    ]
+    return {"commands": cmds}
+
+
+def preview_command(
+    conn: sqlite3.Connection, login: int, position_id: int, kind: str,
+    *, sl: float | None, tp: float | None, volume: float | None,
+) -> dict:
+    """The CONFIRM-step data. Loads the (position, spec) pair and runs
+    `build_request` — which VALIDATES — purely, so a command that would be refused
+    is refused HERE, before anything is written. Writes NOTHING.
+
+    Returns the plain-language intent plus the exact parsed sl/tp/volume to re-POST
+    at the enqueue step. `load_context`/`build_request` raise `CommandError` on
+    refusal; that propagates to the route, which renders the error page.
+    """
+    pos, spec = execute.load_context(conn, login, position_id)
+    build_request(kind, pos, spec, sl=sl, tp=tp, volume=volume)  # validates; may raise
+    return {
+        "intent": _intent_text(kind, pos, sl=sl, tp=tp, volume=volume),
+        "position_id": position_id,
+        "kind": kind,
+        "symbol": pos["symbol"],
+        "fields": {"sl": sl, "tp": tp, "volume": volume},
     }

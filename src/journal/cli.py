@@ -303,6 +303,42 @@ def rebuild(db: str = typer.Option(_DEFAULT_DB, help="SQLite DB path.")) -> None
     typer.echo("\nNext: `journal verify` — check identity 2 (trades partition the deals).")
 
 
+# ------------------------------------------------------------------ migrate
+
+
+@app.command()
+def migrate(db: str = typer.Option(_DEFAULT_DB, help="SQLite DB path.")) -> None:
+    """Bring an existing database's schema up to date (M9). Pure DB, no bridge.
+
+    Every other command already calls this via `connect()`, so you rarely need to
+    run it by hand — it exists so a schema upgrade can be done, and SEEN, as a
+    deliberate step rather than as a side effect of the next command.
+
+    Idempotent: running it twice reports nothing to do. Migrations are additive
+    only — no table is dropped and no row is rewritten.
+    """
+    from .store.db import SCHEMA_VERSION, current_version
+
+    conn = connect(db)   # connect() itself applies anything pending
+    try:
+        version = current_version(conn)
+    finally:
+        conn.close()
+
+    typer.echo("== migrate ==")
+    typer.echo(f"db:      {db}")
+    typer.echo(f"version: {version} (latest is {SCHEMA_VERSION})")
+    if version == SCHEMA_VERSION:
+        typer.echo("status:  up to date — nothing to apply.")
+    else:
+        # Unreachable in normal operation; a loud line beats a silent wrong state.
+        typer.echo(
+            f"status:  STILL BEHIND after migrating — expected {SCHEMA_VERSION}. "
+            f"Do not run other commands against this DB; investigate first."
+        )
+        raise typer.Exit(code=1)
+
+
 # ------------------------------------------------------------------ candles
 
 
@@ -434,6 +470,108 @@ def poll(
     typer.echo("== poll ==")
     typer.echo(f"cycles:         {r.cycles}")
     typer.echo(f"new snapshots:  {r.snapshots_written}")
+    typer.echo(f"stopped by:     {r.stopped_by}")
+
+
+# ---------------------------------------------------------------------- live
+
+
+@app.command()
+def live(
+    interval: float = typer.Option(
+        5.0, help="Idle seconds between cycles (drops to 1s while a command is queued)."
+    ),
+    no_trading: bool = typer.Option(
+        False, "--no-trading", help="Ingest only — do NOT execute queued trade commands."
+    ),
+    once: bool = typer.Option(
+        False, help="Run a single cycle and exit (cron-friendly / smoke test)."
+    ),
+    duration: float = typer.Option(
+        None, help="Stop after this many seconds (default: run until Ctrl+C)."
+    ),
+    db: str = typer.Option(_DEFAULT_DB, help="SQLite DB path."),
+) -> None:
+    """The one process that owns the bridge (M9): mirror open positions, auto-
+    ingest a trade when its position closes, and execute queued trade commands.
+
+    Needs the live bridge and an account already known to the store (`journal
+    sync` first). Trading is ON BY DEFAULT — this loop WILL send real orders that
+    the web has queued; pass `--no-trading` for a pure-ingest run. A queued
+    command that may have reached the broker is NEVER auto-retried; the next
+    startup marks it failed and tells you to check MT5 by hand. Ctrl+C stops
+    cleanly.
+    """
+    from .adapter.live import LiveMT5Client
+    from .ingest.live import live_loop
+
+    trading = not no_trading
+
+    def _echo_cycle(r) -> None:
+        # `journal live` is a foreground command a human WATCHES — unlike the M4
+        # poller it must show a heartbeat every cycle, not stay silent on idle.
+        # A silent terminal here reads as "hung / nothing happening" even while
+        # the loop is correctly mirroring positions (the exact confusion reported
+        # the first time this ran live). So print one line per cycle: at minimum
+        # the open-position count, plus anything real that happened.
+        when = datetime.fromtimestamp(r.observed_msc / 1000, tz=timezone.utc)
+        parts = [f"{r.positions_seen} open"]
+        if r.snapshots_written:
+            parts.append(f"{r.snapshots_written} SL/TP snapshot(s)")
+        if r.closed_ids:
+            parts.append(
+                f"closed {r.closed_ids}"
+                + (" -> ingested" if r.ingest_ran else " (ingest FAILED — see log)")
+            )
+        if r.command_id is not None:
+            parts.append(f"cmd {r.command_id} -> {r.command_status}")
+        typer.echo(f"  [{when:%H:%M:%S} UTC] " + " · ".join(parts))
+
+    def _echo_closing(closed_ids) -> None:
+        # Fires the moment a close is detected, BEFORE the ingest pipeline blocks
+        # the loop on a bridge round-trip (sync + candles) that can take several
+        # seconds. Without this the heartbeat just goes quiet and reads as a
+        # freeze — which is exactly how it was first misread when run live.
+        typer.echo(
+            f"  closed {closed_ids} — menjalankan ingest "
+            f"(sync → rebuild → candles → rebuild), tunggu beberapa detik…"
+        )
+
+    conn = connect(db)
+    try:
+        login = _one_account_login(conn)  # friendly exit if `sync` never ran
+        client = LiveMT5Client()
+        mode = "TRADING ON — will send real orders" if trading else "ingest only (--no-trading)"
+        typer.echo(
+            f"live: {mode}; idle interval {interval}s"
+            + ("" if once else " — Ctrl+C to stop" + (f", max {duration}s" if duration else ""))
+        )
+        r = live_loop(
+            client, conn, login,
+            interval_idle=interval, trading=trading,
+            once=once, duration=duration,
+            on_cycle=_echo_cycle, on_closing=_echo_closing,
+        )
+    except sqlite3.OperationalError as e:
+        # WAL + busy_timeout (store/db.py) makes this rare, but two `journal live`
+        # processes on one DB still contend past the timeout. Only ONE live loop
+        # may own the bridge (plan §0.4) — say so plainly instead of a traceback.
+        if "locked" in str(e).lower():
+            typer.echo(
+                "live: database TERKUNCI — kemungkinan ada `journal live` lain yang "
+                "sedang menulis DB ini. Jalankan HANYA SATU `journal live` sekaligus "
+                "(satu proses saja yang boleh memegang bridge). `journal serve` boleh "
+                "jalan bersamaan."
+            )
+            raise typer.Exit(1)
+        raise
+    finally:
+        conn.close()
+
+    typer.echo("== live ==")
+    typer.echo(f"cycles:         {r.cycles}")
+    typer.echo(f"recovered:      {r.recovered} interrupted command(s) at startup")
+    typer.echo(f"trading:        {'on' if trading else 'off (--no-trading)'}")
     typer.echo(f"stopped by:     {r.stopped_by}")
 
 
@@ -600,6 +738,18 @@ def weekly(
 # --------------------------------------------------------------------- serve
 
 
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+
+
+def _is_loopback(host: str) -> bool:
+    """True only for a loopback bind address. `journal serve` refuses anything else
+    because M9 exposes order-entry routes BY DEFAULT (no `--trading` flag, human
+    decision 2026-07-23): binding to a LAN address would be an unauthenticated
+    order-entry endpoint. Case-insensitive; surrounding brackets on '[::1]' are
+    stripped so the IPv6 loopback matches whether or not it is bracketed."""
+    return host.strip().strip("[]").lower() in _LOOPBACK_HOSTS
+
+
 @app.command()
 def serve(
     host: str = typer.Option("127.0.0.1", help="Bind address (localhost only by default)."),
@@ -628,6 +778,19 @@ def serve(
     claim it. A .py edit still restarts the worker, which re-reads templates.
     Leave --reload OFF for normal use.
     """
+    # M9: order-entry routes are exposed by default (no --trading flag). Binding
+    # anywhere but loopback would put an unauthenticated order-entry endpoint on
+    # the network, so refuse it outright — before uvicorn ever opens the socket.
+    if not _is_loopback(host):
+        typer.echo(
+            f"Menolak bind ke {host!r}: sejak M9 halaman web mengekspos entri "
+            f"order (tutup/ubah/tambah posisi) SECARA DEFAULT. Membuka itu ke "
+            f"jaringan = endpoint order tanpa autentikasi. Hanya loopback "
+            f"diizinkan: {', '.join(sorted(_LOOPBACK_HOSTS))}.",
+            err=True,
+        )
+        raise typer.Exit(1)
+
     # Lazy import (like LiveMT5Client): keeps the CLI importable without the web
     # stack installed, and off the hot path of every other command.
     import importlib.util

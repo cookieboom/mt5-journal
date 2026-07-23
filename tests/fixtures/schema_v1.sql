@@ -136,10 +136,6 @@ CREATE TABLE IF NOT EXISTS candles (
 ) WITHOUT ROWID;
 
 -- Needed for risk_amount. Do not compute risk from price distance alone (trap 11).
--- The volume_*/stops_level group (M9) is what makes a trade command validatable;
--- all of it is nullable because a spec fetched before M9 has never seen those
--- values, and NULL = unknown, not zero. `domain/commands.py` REJECTS a command
--- whose spec is unknown rather than assuming a permissive default.
 CREATE TABLE IF NOT EXISTS symbol_specs (
     symbol            TEXT PRIMARY KEY,   -- verbatim, e.g. 'XAUUSDc'
     symbol_base       TEXT NOT NULL,      -- normalised, e.g. 'XAUUSD'
@@ -149,14 +145,7 @@ CREATE TABLE IF NOT EXISTS symbol_specs (
     tick_value        REAL,               -- trade_tick_value, in ACCOUNT currency
     contract_size     REAL,
     currency_profit   TEXT,
-    fetched_at        INTEGER NOT NULL,   -- refetch weekly; brokers change these
-    volume_min        REAL,               -- M9 (migration 002)
-    volume_max        REAL,
-    volume_step       REAL,
-    stops_level       INTEGER,            -- min SL/TP distance, in points
-    freeze_level      INTEGER,            -- distance where modification is frozen
-    trade_mode        INTEGER,            -- 0=disabled .. 4=full
-    filling_mode      INTEGER             -- broker's allowed fill modes, bitmask
+    fetched_at        INTEGER NOT NULL    -- refetch weekly; brokers change these
 );
 
 -- ---------------------------------------------------------------- derived (rebuildable)
@@ -263,73 +252,6 @@ CREATE TABLE IF NOT EXISTS reconciliations (
 );
 
 CREATE INDEX IF NOT EXISTS ix_recon_account ON reconciliations (account_login);
-
--- ---------------------------------------------------------------- live (M9)
-
--- Kept byte-identical in intent with migrations/002_live_trading.sql — a fresh
--- DB and a migrated one must end up with the same schema. See that file for the
--- full rationale on each table; the comments here stay short on purpose so the
--- two copies cannot drift in meaning.
-
--- CURRENT open positions, mirrored from positions_get() by `journal live`.
--- NOT history: one row per open position, REPLACEd each cycle, deleted on close.
--- The history of how SL/TP moved is the append-only `sl_tp_snapshots` (M4).
--- The web reads THIS instead of the bridge, which is what keeps rules 1 and 12
--- literally true inside `web/`.
--- `observed_msc` is true UTC; `open_time_msc` is broker server time (trap 7).
-CREATE TABLE IF NOT EXISTS open_positions (
-    account_login  INTEGER NOT NULL,
-    position_id    INTEGER NOT NULL,
-    symbol         TEXT NOT NULL,
-    symbol_base    TEXT NOT NULL,
-    direction      TEXT CHECK (direction IN ('buy','sell')),
-    volume         REAL,
-    open_price     REAL,
-    price_current  REAL,
-    sl             REAL,                    -- 0.0 = none set, NULL = unknown
-    tp             REAL,
-    profit         REAL,                    -- FLOATING, not realized. USC.
-    swap           REAL,
-    magic          INTEGER,
-    open_time_msc  INTEGER,                 -- broker SERVER time
-    observed_msc   INTEGER NOT NULL,        -- true UTC
-    PRIMARY KEY (account_login, position_id)
-);
-
--- The intent queue AND the audit log. Web INSERTs 'pending'; `journal live`
--- claims, sends, and writes the outcome back. The intent columns (kind/sl/tp/
--- volume) are write-once; only the lifecycle and result columns move.
---   pending -> claimed -> sent -> done | failed
---   pending -> rejected                     (refused by validation, never sent)
--- A 'sent' row orphaned by a crash is failed with an explanation and is NEVER
--- auto-retried.
---   sl/tp: NULL = leave untouched, 0.0 = clear it. (rule 4, load-bearing here)
-CREATE TABLE IF NOT EXISTS trade_commands (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    account_login   INTEGER NOT NULL,
-    position_id     INTEGER NOT NULL,
-    kind            TEXT NOT NULL CHECK (kind IN
-                        ('modify_sltp','close','close_partial','add_volume')),
-    sl              REAL,
-    tp              REAL,
-    volume          REAL,
-    requested_msc   INTEGER NOT NULL,       -- true UTC
-    status          TEXT NOT NULL DEFAULT 'pending' CHECK (status IN
-                        ('pending','claimed','sent','done','failed','rejected')),
-    claimed_msc     INTEGER,
-    completed_msc   INTEGER,
-    retcode         INTEGER,
-    result_deal     INTEGER,
-    result_order    INTEGER,
-    result_volume   REAL,                   -- ACTUAL filled volume (partial fills)
-    result_price    REAL,
-    broker_comment  TEXT,
-    error           TEXT,
-    raw_json        TEXT
-);
-
-CREATE INDEX IF NOT EXISTS ix_cmd_pending  ON trade_commands (account_login, status, id);
-CREATE INDEX IF NOT EXISTS ix_cmd_position ON trade_commands (account_login, position_id, id);
 
 -- ---------------------------------------------------------------- convenience
 
