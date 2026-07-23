@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { LivePosition, ActionKind, CommandBody } from "../lib/types";
 import { money, price } from "../lib/format";
+import { optNum } from "../lib/parse";
 
 export default function LivePositionCard({
   pos, currency, onAction,
@@ -17,13 +18,7 @@ export default function LivePositionCard({
   // a non-empty but non-numeric entry (e.g. "40o0") returns NaN as a sentinel —
   // callers below must check for it and refuse to submit, since
   // JSON.stringify(NaN) === "null" and the server would silently read that
-  // as "leave unchanged" instead of rejecting the typo.
-  const opt = (s: string): number | null => {
-    const t = s.trim();
-    if (t === "") return null;
-    const n = Number(t);
-    return Number.isFinite(n) ? n : NaN;
-  };
+  // as "leave unchanged" instead of rejecting the typo. See lib/parse.ts.
   const dirTone = pos.direction === "buy" ? "text-cyan" : "text-violet";
   const pnlTone = (pos.profit ?? 0) >= 0 ? "text-pos" : "text-neg";
 
@@ -56,7 +51,7 @@ export default function LivePositionCard({
               onChange={(e) => setTp(e.target.value)} placeholder="kosong=tetap · 0=hapus" /></label>
           <button className="px-3 py-1.5 rounded bg-violet/20 ring-1 ring-violet/40 text-ink"
             onClick={() => {
-              const slV = opt(sl), tpV = opt(tp);
+              const slV = optNum(sl), tpV = optNum(tp);
               // Guard: a non-empty-but-invalid entry must never reach onAction —
               // NaN would serialize to null and be silently read as "unchanged".
               if (Number.isNaN(slV) || Number.isNaN(tpV)) { setFieldError("angka tidak valid"); return; }
@@ -72,14 +67,14 @@ export default function LivePositionCard({
               onChange={(e) => setVol(e.target.value)} placeholder="0.01" /></label>
           <button className="px-3 py-1.5 rounded bg-white/8 ring-1 ring-panel-border text-ink"
             onClick={() => {
-              const volV = opt(vol);
+              const volV = optNum(vol);
               if (Number.isNaN(volV)) { setFieldError("angka tidak valid"); return; }
               setFieldError(null);
               onAction("close-partial", { volume: volV });
             }}>Tutup sebagian…</button>
           <button className="px-3 py-1.5 rounded bg-white/8 ring-1 ring-panel-border text-ink"
             onClick={() => {
-              const volV = opt(vol);
+              const volV = optNum(vol);
               if (Number.isNaN(volV)) { setFieldError("angka tidak valid"); return; }
               setFieldError(null);
               onAction("add-volume", { volume: volV });

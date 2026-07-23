@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useApi, postJson } from "../lib/api";
 import { LiveData, PreviewResult, ActionKind, CommandBody } from "../lib/types";
 import { money } from "../lib/format";
@@ -13,6 +13,7 @@ export default function Live() {
   const [submitting, setSubmitting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const enqueuing = useRef(false);
 
   if (loading) return <div className="text-muted p-6">Memuat…</div>;
   if (error) return <div className="glass p-6 text-neg">Gagal memuat: {error}</div>;
@@ -31,16 +32,19 @@ export default function Live() {
   // Step 2: enqueue — the ONLY write. Server re-validates.
   const onConfirm = async () => {
     if (!preview || !pending) return;
+    if (enqueuing.current) return;   // sub-tick double-submit latch (money path)
+    enqueuing.current = true;
     setSubmitting(true);
     const r = await postJson<{ ok: boolean; command_id: number }>(
       `/api/live/${preview.position_id}/${pending.action}`, pending.body);
     setSubmitting(false);
-    if (!r.ok) { setActionError(r.error ?? "gagal"); return; }
+    if (!r.ok) { setActionError(r.error ?? "gagal"); enqueuing.current = false; return; }
     setPreview(null); setPending(null); setActionError(null);
     setToast(`Perintah #${r.data?.command_id} masuk antrean — journal live akan mengeksekusi.`);
+    enqueuing.current = false;
   };
 
-  const onCancel = () => { setPreview(null); setPending(null); setActionError(null); };
+  const onCancel = () => { setPreview(null); setPending(null); setActionError(null); enqueuing.current = false; };
 
   return (
     <div>
