@@ -1,0 +1,331 @@
+"""`journal live` — the single process that OWNS the bridge (M9 Phase 4).
+
+Exactly one thing may hold the bridge connection and issue orders, and this is
+it. The web never talks to MT5; it INSERTs a `pending` row into `trade_commands`
+and this loop claims, sends, and records it. That split is what keeps CLAUDE.md
+rules 1 and 12 literally true everywhere else in the codebase.
+
+One cycle does three jobs, in this order and for a reason:
+
+  1. **Mirror.** Fetch `positions_get()` ONCE and use that single list for
+     everything downstream — the SL/TP snapshots (via the reused `poll_once`),
+     the `open_positions` mirror, AND close detection. Fetching twice would risk
+     the three consumers seeing three slightly different worlds a few ms apart.
+
+  2. **Detect closes → ingest.** A `position_id` that was in `open_positions` at
+     the START of this cycle but is absent from the fresh feed has CLOSED. MT5
+     drops a closed position from `positions_get()` forever (Trap 6), so this is
+     the one moment we know to pull its finished deal. On any close(s) we run the
+     full pipeline — sync → rebuild → candles → rebuild — ONCE, coalesced, no
+     matter how many closed together. A failed ingest is caught and logged, never
+     propagated: losing this loop loses unrecoverable live SL history, which is
+     the whole reason M4 exists, so a transient bridge hiccup must not kill it.
+
+  3. **Execute one command.** If trading is on, claim the OLDEST pending command
+     and run it through the same gate the web used at enqueue time — the world
+     moves between enqueue and claim, so we re-validate. One command per cycle
+     keeps the sequence serial and auditable.
+
+The single most important refusal (shared with `execute.recover_interrupted`):
+an order that MAY have reached the broker is NEVER re-sent by a machine. If
+`order_send` raises, the row stays `sent` — evidence of possible broker contact —
+and the next startup's `recover_interrupted` marks it failed with an instruction
+to check MT5 by hand. We do not mark it failed here and we do not re-send.
+
+`open_positions` is CURRENT state, not history: it is replaced wholesale every
+cycle (DELETE the account's rows, re-INSERT the live feed). `observed_msc` is
+this poller's TRUE-UTC wall clock (`now_ms`); `open_time_msc` is broker SERVER
+time. They are different clocks — never compare or subtract them (Trap 7). Money
+columns (profit/swap) are in `accounts.currency` = USC; stored as-is.
+
+`live_cycle` is the timing-free unit surface (mirrors `poll_once`); `live_loop`
+wraps it in a sleep loop with an injectable clock (mirrors `poll_loop`) so
+`--once`/`--duration`/Ctrl+C are all testable without a real wall-clock wait.
+"""
+
+from __future__ import annotations
+
+import logging
+import sqlite3
+import time
+from dataclasses import dataclass, field
+
+from ..adapter.base import MT5Client, Position
+from ..domain.commands import CommandError, build_request
+from ..domain.symbols import to_base
+from ..execute import (
+    claim_next,
+    load_context,
+    mark_sent,
+    pending_count,
+    record_result,
+    recover_interrupted,
+    reject,
+)
+from ..store.db import now_ms
+from .poller import poll_once
+
+log = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class LiveReport:
+    account_login: int
+    observed_msc: int
+    positions_seen: int = 0
+    snapshots_written: int = 0
+    closed_ids: list[int] = field(default_factory=list)
+    ingest_ran: bool = False              # pipeline attempted AND succeeded
+    command_id: int | None = None         # the command this cycle acted on, if any
+    command_status: str | None = None     # its resulting status ('done'/'failed'/…)
+
+
+@dataclass(frozen=True)
+class LiveLoopReport:
+    cycles: int = 0
+    recovered: int = 0                    # orphans closed out at startup
+    stopped_by: str = "duration"          # 'once' | 'duration' | 'interrupt'
+
+
+def _direction(type_: int | None) -> str | None:
+    """MT5 position `type`: 0 = buy, 1 = sell. Anything else is unknown — return
+    None (the `open_positions.direction` CHECK allows NULL) rather than guess."""
+    if type_ == 0:
+        return "buy"
+    if type_ == 1:
+        return "sell"
+    return None
+
+
+def _open_position_ids(conn: sqlite3.Connection, login: int) -> set[int]:
+    """The position_ids currently mirrored for this account. Read BEFORE the
+    wholesale replace so close detection compares last cycle to this one."""
+    rows = conn.execute(
+        "SELECT position_id FROM open_positions WHERE account_login = ?", (login,)
+    ).fetchall()
+    return {int(r["position_id"]) for r in rows}
+
+
+def _replace_open_positions(
+    conn: sqlite3.Connection, login: int, positions: list[Position], observed_msc: int
+) -> None:
+    """Mirror the live feed wholesale: drop this account's rows and re-insert the
+    current ones, all in one transaction so the table is never seen half-empty."""
+    conn.execute("DELETE FROM open_positions WHERE account_login = ?", (login,))
+    for p in positions:
+        if p.identifier is None:
+            continue  # malformed, same skip as poll_once
+        conn.execute(
+            "INSERT INTO open_positions "
+            "(account_login, position_id, symbol, symbol_base, direction, volume, "
+            " open_price, price_current, sl, tp, profit, swap, magic, "
+            " open_time_msc, observed_msc) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                login,
+                p.identifier,
+                p.symbol,
+                to_base(p.symbol) if p.symbol is not None else None,
+                _direction(p.type),
+                p.volume,
+                p.price_open,
+                p.price_current,
+                p.sl,
+                p.tp,
+                p.profit,
+                p.swap,
+                p.magic,
+                p.time_msc,        # broker SERVER time -> open_time_msc (Trap 7)
+                observed_msc,      # true UTC, when WE saw it
+            ),
+        )
+    conn.commit()
+
+
+def _run_ingest_pipeline(client: MT5Client, conn: sqlite3.Connection) -> None:
+    """sync → rebuild → candles → rebuild, the documented on-close order.
+
+    Rebuild twice on purpose: the first pass reconstructs the freshly-closed
+    trade from the new deals; `sync_candles` then fetches the OHLC that spans it;
+    the second rebuild folds MAE/MFE (which need those candles) into the trade.
+
+    Imported lazily, mirroring cli.py: keeps this module importable with no
+    bridge present, and lets a test monkeypatch each stage at its source module.
+    """
+    from ..ingest.deals import sync as run_sync
+    from ..domain.reconstruct import rebuild as run_rebuild
+    from ..ingest.candles import sync_candles
+
+    run_sync(client, conn)
+    run_rebuild(conn)
+    sync_candles(client, conn)
+    run_rebuild(conn)
+
+
+def _execute_one_command(
+    client: MT5Client, conn: sqlite3.Connection, login: int
+) -> tuple[int | None, str | None]:
+    """Claim and run the single oldest pending command, or do nothing.
+
+    Returns (command_id, status). The lifecycle is deliberately fussy because
+    every step is about real money:
+      * `load_context`/`build_request` raising CommandError => `reject` (the world
+        moved since enqueue: position closed, spec changed). Never sent.
+      * `order_check` is a broker-side dry run first; then `mark_sent` COMMITS
+        before `order_send`, so a crash mid-flight leaves the row as evidence.
+      * if `order_send` (or `order_check`) raises, we catch, log loudly, and
+        LEAVE the row where it is — a `sent` row is never re-sent here; the next
+        startup's `recover_interrupted` deals with it. We must not guess success,
+        must not mark it failed, and must not re-send.
+    """
+    row = claim_next(conn, login)
+    if row is None:
+        return None, None
+
+    cmd_id = int(row["id"])
+
+    try:
+        pos, spec = load_context(conn, login, row["position_id"])
+        req = build_request(
+            row["kind"], pos, spec, sl=row["sl"], tp=row["tp"], volume=row["volume"]
+        )
+    except CommandError as e:
+        # Valid when queued, not now. Refuse WITHOUT sending.
+        reject(conn, cmd_id, str(e))
+        log.info("live: command %d rejected — %s", cmd_id, e)
+        return cmd_id, "rejected"
+
+    try:
+        client.order_check(req)     # dry run; the bridge logs its verdict
+        mark_sent(conn, cmd_id)     # committed BEFORE the real send (evidence)
+        result = client.order_send(req)
+    except Exception:
+        # The bridge died somewhere in check/send. If we got past mark_sent the
+        # row is 'sent' and MAY exist at the broker; if not it is 'claimed'.
+        # Either way we do NOT re-send and do NOT invent an outcome — startup
+        # recovery marks it failed with an instruction to check MT5 by hand.
+        log.exception(
+            "live: bridge raised while sending command %d — NOT retried; "
+            "check MT5 before re-sending", cmd_id
+        )
+        status = conn.execute(
+            "SELECT status FROM trade_commands WHERE id = ?", (cmd_id,)
+        ).fetchone()["status"]
+        return cmd_id, status
+
+    status = record_result(conn, cmd_id, result)
+    log.info("live: command %d -> %s", cmd_id, status)
+    return cmd_id, status
+
+
+def live_cycle(
+    client: MT5Client,
+    conn: sqlite3.Connection,
+    login: int,
+    *,
+    trading: bool = True,
+    on_close=None,
+) -> LiveReport:
+    """One live cycle: mirror open positions, ingest any that closed, and (if
+    `trading`) execute one queued command. Timing-free — this is the unit surface.
+
+    `on_close`, if given, is called with the list of closed position_ids on a
+    cycle that had any (like `poll_loop`'s `on_cycle`): a test can spy without a
+    bridge and the CLI can print feedback.
+    """
+    positions = client.positions_get()
+    observed_msc = now_ms()
+
+    # (1) SL/TP snapshots — reuse poll_once with the SAME fetched list so
+    # positions_get() is called exactly once this cycle.
+    poll_report = poll_once(client, conn, login, positions=positions)
+
+    # (2) close detection reads the PRIOR mirror before we overwrite it.
+    prior_ids = _open_position_ids(conn, login)
+    live_ids = {int(p.identifier) for p in positions if p.identifier is not None}
+    closed_ids = sorted(prior_ids - live_ids)
+
+    _replace_open_positions(conn, login, positions, observed_msc)
+
+    ingest_ran = False
+    if closed_ids:
+        log.info("live: %d position(s) closed: %s", len(closed_ids), closed_ids)
+        try:
+            _run_ingest_pipeline(client, conn)   # ONCE, coalesced across closes
+            ingest_ran = True
+        except Exception:
+            # A failed ingest must NOT kill the loop — losing the loop loses
+            # unrecoverable live SL history. Catch, log, carry on.
+            log.exception(
+                "live: ingest pipeline failed after close(s) %s — loop continues",
+                closed_ids,
+            )
+        if on_close is not None:
+            on_close(closed_ids)
+
+    # (3) one command per cycle.
+    command_id: int | None = None
+    command_status: str | None = None
+    if trading:
+        command_id, command_status = _execute_one_command(client, conn, login)
+
+    return LiveReport(
+        account_login=login,
+        observed_msc=observed_msc,
+        positions_seen=poll_report.positions_seen,
+        snapshots_written=poll_report.snapshots_written,
+        closed_ids=closed_ids,
+        ingest_ran=ingest_ran,
+        command_id=command_id,
+        command_status=command_status,
+    )
+
+
+def live_loop(
+    client: MT5Client,
+    conn: sqlite3.Connection,
+    login: int,
+    *,
+    interval_idle: float = 5.0,
+    interval_busy: float = 1.0,
+    trading: bool = True,
+    once: bool = False,
+    duration: float | None = None,
+    sleep=time.sleep,
+    monotonic=time.monotonic,
+    on_cycle=None,
+) -> LiveLoopReport:
+    """Repeatedly run `live_cycle`. `recover_interrupted` runs ONCE before the
+    first cycle — a `claimed`/`sent` row on startup means a crash mid-command and
+    is marked failed, never re-sent.
+
+    After each cycle the next sleep is `interval_busy` when a command is pending
+    (be responsive) else `interval_idle`. `sleep`/`monotonic` are injectable so
+    `--once`/`--duration`/Ctrl+C are all testable with a fake clock. Always runs
+    at least one cycle; `once` beats `duration`; the deadline is checked after a
+    cycle and before the next sleep, so a `duration` run never sleeps after its
+    final cycle. Ctrl+C stops cleanly with `stopped_by='interrupt'`.
+    """
+    recovered = recover_interrupted(conn, login)
+    if recovered:
+        log.info("live: recovered %d interrupted command(s) at startup", recovered)
+
+    cycles = 0
+    deadline = monotonic() + duration if duration is not None else None
+
+    try:
+        while True:
+            r = live_cycle(client, conn, login, trading=trading)
+            cycles += 1
+            if on_cycle is not None:
+                on_cycle(r)
+            if once:
+                return LiveLoopReport(cycles=cycles, recovered=recovered, stopped_by="once")
+            if deadline is not None and monotonic() >= deadline:
+                return LiveLoopReport(
+                    cycles=cycles, recovered=recovered, stopped_by="duration"
+                )
+            interval = interval_busy if pending_count(conn, login) > 0 else interval_idle
+            sleep(interval)
+    except KeyboardInterrupt:
+        return LiveLoopReport(cycles=cycles, recovered=recovered, stopped_by="interrupt")

@@ -473,6 +473,76 @@ def poll(
     typer.echo(f"stopped by:     {r.stopped_by}")
 
 
+# ---------------------------------------------------------------------- live
+
+
+@app.command()
+def live(
+    interval: float = typer.Option(
+        5.0, help="Idle seconds between cycles (drops to 1s while a command is queued)."
+    ),
+    no_trading: bool = typer.Option(
+        False, "--no-trading", help="Ingest only — do NOT execute queued trade commands."
+    ),
+    once: bool = typer.Option(
+        False, help="Run a single cycle and exit (cron-friendly / smoke test)."
+    ),
+    duration: float = typer.Option(
+        None, help="Stop after this many seconds (default: run until Ctrl+C)."
+    ),
+    db: str = typer.Option(_DEFAULT_DB, help="SQLite DB path."),
+) -> None:
+    """The one process that owns the bridge (M9): mirror open positions, auto-
+    ingest a trade when its position closes, and execute queued trade commands.
+
+    Needs the live bridge and an account already known to the store (`journal
+    sync` first). Trading is ON BY DEFAULT — this loop WILL send real orders that
+    the web has queued; pass `--no-trading` for a pure-ingest run. A queued
+    command that may have reached the broker is NEVER auto-retried; the next
+    startup marks it failed and tells you to check MT5 by hand. Ctrl+C stops
+    cleanly.
+    """
+    from .adapter.live import LiveMT5Client
+    from .ingest.live import live_loop
+
+    trading = not no_trading
+
+    def _echo_cycle(r) -> None:
+        # Foreground command a human watches; log.info is invisible with no
+        # handler configured. Print only when something real happened.
+        parts = []
+        if r.closed_ids:
+            parts.append(f"closed {r.closed_ids}" + (" -> ingested" if r.ingest_ran else " (ingest FAILED)"))
+        if r.command_id is not None:
+            parts.append(f"cmd {r.command_id} -> {r.command_status}")
+        if parts:
+            when = datetime.fromtimestamp(r.observed_msc / 1000, tz=timezone.utc)
+            typer.echo(f"  [{when:%H:%M:%S} UTC] " + "; ".join(parts))
+
+    conn = connect(db)
+    try:
+        login = _one_account_login(conn)  # friendly exit if `sync` never ran
+        client = LiveMT5Client()
+        mode = "TRADING ON — will send real orders" if trading else "ingest only (--no-trading)"
+        typer.echo(
+            f"live: {mode}; idle interval {interval}s"
+            + ("" if once else " — Ctrl+C to stop" + (f", max {duration}s" if duration else ""))
+        )
+        r = live_loop(
+            client, conn, login,
+            interval_idle=interval, trading=trading,
+            once=once, duration=duration, on_cycle=_echo_cycle,
+        )
+    finally:
+        conn.close()
+
+    typer.echo("== live ==")
+    typer.echo(f"cycles:         {r.cycles}")
+    typer.echo(f"recovered:      {r.recovered} interrupted command(s) at startup")
+    typer.echo(f"trading:        {'on' if trading else 'off (--no-trading)'}")
+    typer.echo(f"stopped by:     {r.stopped_by}")
+
+
 # -------------------------------------------------------------------- report
 
 

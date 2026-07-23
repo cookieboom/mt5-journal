@@ -86,11 +86,25 @@ def _last_snapshot(conn: sqlite3.Connection, login: int, position_id: int) -> sq
     ).fetchone()
 
 
-def poll_once(client: MT5Client, conn: sqlite3.Connection, login: int) -> PollReport:
+def poll_once(
+    client: MT5Client,
+    conn: sqlite3.Connection,
+    login: int,
+    *,
+    positions: list[Position] | None = None,
+) -> PollReport:
     """One snapshot cycle: read every currently-open position, write a row for
     each one whose (sl, tp, volume) differs from its most recently stored state
-    (change-only logging). Commits before returning -- see module docstring."""
-    positions = client.positions_get()
+    (change-only logging). Commits before returning -- see module docstring.
+
+    `positions` lets a caller that has ALREADY fetched the open positions this
+    cycle pass the same list in, so `positions_get()` is called exactly once per
+    cycle rather than once per consumer. `journal live` (ingest/live.py) needs
+    the very same list for snapshots AND for close detection; fetching twice
+    would risk the two seeing different worlds a few ms apart. `None` (the
+    default) preserves the standalone `journal poll` behaviour -- fetch here."""
+    if positions is None:
+        positions = client.positions_get()
     ts = now_ms()
     written = 0
     skipped = 0
