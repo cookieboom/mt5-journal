@@ -308,6 +308,80 @@ def test_empty_account_has_all_buckets_present_and_suppressed(conn):
         assert b.win_rate is None and b.expectancy is None and b.avg_r is None
 
 
+# ------------------------------------------------------- M8 by_symbol breakdown
+
+
+def test_by_symbol_one_bucket_per_base_ordered_ascending(conn):
+    # Unlike by_session/by_source (fixed sets), symbols are data-driven, so the
+    # buckets are exactly the distinct symbol_base present, ordered ascending for
+    # a stable, gap-free table that grows when a new symbol appears.
+    _seed_account(conn)
+    _seed_trade(conn, 1, net_profit=5.0, symbol="EURUSDc")
+    _seed_trade(conn, 2, net_profit=5.0, symbol="XAUUSDc")
+    _seed_trade(conn, 3, net_profit=5.0, symbol="BTCUSDc")
+
+    r = build_report(conn)
+    assert tuple(b.label for b in r.by_symbol) == ("BTCUSD", "EURUSD", "XAUUSD")
+
+
+def test_by_symbol_groups_by_base_not_verbatim_symbol(conn):
+    # Rule 11 / trap 12: group by the normalised symbol_base ('XAUUSD'), never
+    # the verbatim broker symbol ('XAUUSDc').
+    _seed_account(conn)
+    _seed_trade(conn, 1, net_profit=5.0, symbol="XAUUSDc")
+    _seed_trade(conn, 2, net_profit=5.0, symbol="XAUUSDc")
+
+    r = build_report(conn)
+    assert tuple(b.label for b in r.by_symbol) == ("XAUUSD",)
+    assert _bucket(r.by_symbol, "XAUUSD").n == 2
+
+
+def test_by_symbol_partitions_closed_trades(conn):
+    _seed_account(conn)
+    _seed_trade(conn, 1, net_profit=5.0, symbol="XAUUSDc")
+    _seed_trade(conn, 2, net_profit=5.0, symbol="BTCUSDc")
+    _seed_trade(conn, 3, net_profit=5.0, symbol="BTCUSDc")
+    _seed_trade(conn, 4, status="open", net_profit=0.0, symbol="EURUSDc")
+
+    r = build_report(conn)
+    assert _bucket(r.by_symbol, "XAUUSD").n == 1
+    assert _bucket(r.by_symbol, "BTCUSD").n == 2
+    # open trade excluded -> EURUSD has no closed trade, so no bucket at all
+    assert "EURUSD" not in [b.label for b in r.by_symbol]
+    assert sum(b.n for b in r.by_symbol) == r.n_closed
+
+
+def test_by_symbol_gated_below_n20(conn):
+    _seed_account(conn)
+    for pid in range(1, 7):  # 6 XAUUSD trades -- below the n>=20 gate
+        _seed_trade(conn, pid, net_profit=10.0, r_multiple=1.5, symbol="XAUUSDc")
+
+    xau = _bucket(build_report(conn).by_symbol, "XAUUSD")
+    assert xau.n == 6            # raw count always shown
+    assert xau.n_with_r == 6     # raw diagnostic always shown
+    assert xau.win_rate is None  # averages withheld (docs §9)
+    assert xau.expectancy is None
+    assert xau.avg_r is None
+
+
+def test_by_symbol_shown_at_or_above_n20(conn):
+    _seed_account(conn)
+    for pid in range(1, 21):  # exactly 20 XAUUSD -- clears the gate
+        _seed_trade(conn, pid, net_profit=10.0, r_multiple=2.0, symbol="XAUUSDc")
+
+    xau = _bucket(build_report(conn).by_symbol, "XAUUSD")
+    assert xau.n == 20
+    assert xau.win_rate is not None and abs(xau.win_rate - 1.0) < _TOL
+    assert xau.expectancy is not None and abs(xau.expectancy - 10.0) < _TOL
+    assert xau.avg_r is not None and abs(xau.avg_r - 2.0) < _TOL
+
+
+def test_by_symbol_empty_account_is_empty_tuple(conn):
+    # No fixed set to fall back on -- zero closed trades means zero buckets.
+    _seed_account(conn)
+    assert build_report(conn).by_symbol == ()
+
+
 # --------------------------------------------------------------- integration
 
 
@@ -332,3 +406,9 @@ def test_report_against_real_fixture_does_not_crash(conn):
     assert _bucket(r.by_source, "EA").n == 6
     assert _bucket(r.by_source, "Discretionary").n == 62
     assert sum(b.n for b in r.by_session) == 68
+    # by_symbol partitions the same 68 closed trades; labels are the normalised
+    # bases actually traded on this account (docs "This account"), no verbatim
+    # 'c' suffix and no symbol absent from the data.
+    assert sum(b.n for b in r.by_symbol) == 68
+    assert set(b.label for b in r.by_symbol) <= {"XAUUSD", "BTCUSD", "EURUSD"}
+    assert all(not b.label.endswith("c") for b in r.by_symbol)

@@ -81,6 +81,13 @@ class ReportResult:
     by_session: tuple[BucketStat, ...]
     by_source: tuple[BucketStat, ...]
 
+    # M8 symbol breakdown (rule 11 / trap 12): grouped by symbol_base, NOT the
+    # verbatim symbol. Unlike the two above this set is DATA-DRIVEN — it is
+    # exactly the distinct symbol_base among closed trades, ordered ascending, so
+    # it is empty on a fresh account and grows a bucket when a new symbol trades.
+    # Do not "fix" this into a fixed tuple: there is no closed set of symbols.
+    by_symbol: tuple[BucketStat, ...]
+
 
 def bucket_stat(label: str, rows: list[sqlite3.Row]) -> BucketStat:
     """Aggregate one bucket's closed-trade rows into a `BucketStat`, reusing the
@@ -128,7 +135,8 @@ def build_report(conn: sqlite3.Connection) -> ReportResult:
     ).fetchone()
 
     rows = conn.execute(
-        "SELECT net_profit, r_multiple, mae, mae_r, mfe_r, open_time_msc, magic "
+        "SELECT net_profit, r_multiple, mae, mae_r, mfe_r, open_time_msc, magic, "
+        "symbol_base "
         "FROM trades WHERE account_login = ? AND status = 'closed'",
         (login,),
     ).fetchall()
@@ -189,6 +197,17 @@ def build_report(conn: sqlite3.Connection) -> ReportResult:
         bucket_stat("Discretionary", disc_rows),
     )
 
+    # Symbol breakdown — grouped by symbol_base (rule 11 / trap 12), NEVER the
+    # verbatim `symbol`. Unlike session/source this set is data-driven, so order
+    # it deterministically (symbol_base ascending) rather than from a fixed tuple;
+    # a fresh account has no closed trades and so an empty by_symbol.
+    symbol_groups: dict[str, list[sqlite3.Row]] = {}
+    for r in rows:
+        symbol_groups.setdefault(r["symbol_base"], []).append(r)
+    by_symbol = tuple(
+        bucket_stat(sb, symbol_groups[sb]) for sb in sorted(symbol_groups)
+    )
+
     return ReportResult(
         account_login=login,
         currency=currency,
@@ -211,4 +230,5 @@ def build_report(conn: sqlite3.Connection) -> ReportResult:
         avg_mfe_r=avg_mfe_r,
         by_session=by_session,
         by_source=by_source,
+        by_symbol=by_symbol,
     )

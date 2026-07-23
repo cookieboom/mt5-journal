@@ -524,6 +524,10 @@ def report(db: str = typer.Option(_DEFAULT_DB, help="SQLite DB path.")) -> None:
     typer.echo("-- by source (EA = magic≠0, docs §7; same per-bucket gating) --")
     for b in r.by_source:
         typer.echo(_bucket_line(b, r.currency))
+    typer.echo()
+    typer.echo("-- by symbol (grouped by symbol_base, rule 11; same per-bucket gating) --")
+    for b in r.by_symbol:
+        typer.echo(_bucket_line(b, r.currency))
     if r.n_with_r < 20 or r.n_with_mae_r < 20:
         typer.echo(
             "\nR-based sections are thin by design, not by bug: sl_initial only "
