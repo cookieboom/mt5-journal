@@ -129,6 +129,27 @@ def test_dashboard_context_agrees_with_build_report(conn):
     assert direct.n_closed == 2
 
 
+def test_report_context_agrees_with_build_report_and_carries_by_symbol(conn):
+    # /report shows exactly what `journal report` computes, including the M8
+    # per-symbol breakdown the dashboard cards summarise.
+    _seed_account(conn)
+    _seed_trade(conn, 1, net_profit=10.0, symbol="XAUUSDc")
+    _seed_trade(conn, 2, net_profit=-4.0, symbol="BTCUSDc")
+    ctx = views.report_context(conn)
+    direct = build_report(conn)
+    assert ctx["report"] == direct
+    # data-driven buckets: exactly the symbol_base actually traded, ascending.
+    assert tuple(b.label for b in ctx["report"].by_symbol) == ("BTCUSD", "XAUUSD")
+
+
+def test_dashboard_and_report_read_the_same_report_object(conn):
+    # The trim (deep tables → /report) must not desync the two pages: both read
+    # one build_report, so the dashboard cards and the /report tables agree.
+    _seed_account(conn)
+    _seed_trade(conn, 1, net_profit=7.0)
+    assert views.dashboard_context(conn)["report"] == views.report_context(conn)["report"]
+
+
 def test_account_header(conn):
     _seed_account(conn, currency="USC")
     h = views.account_header(conn)

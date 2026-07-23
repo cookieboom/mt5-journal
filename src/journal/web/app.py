@@ -77,6 +77,19 @@ def create_app(db_path: str | None = None) -> FastAPI:
             return error_page(request, str(e))
         return render(request, "dashboard.html", ctx)
 
+    # ------------------------------------------------------------------- report
+
+    @app.get("/report", response_class=HTMLResponse)
+    def report_page(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
+        """The full analytics tables (M8) the dashboard cards summarise: money,
+        MAE/MFE, and the by-session / by-source / by-symbol breakdowns."""
+        try:
+            ctx = views.report_context(conn)
+            ctx["header"] = views.account_header(conn)
+        except RuntimeError as e:
+            return error_page(request, str(e))
+        return render(request, "report.html", ctx)
+
     # ------------------------------------------------------------------- trades
 
     @app.get("/trades", response_class=HTMLResponse)

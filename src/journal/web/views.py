@@ -39,7 +39,16 @@ def account_header(conn: sqlite3.Connection) -> dict:
 
 def dashboard_context(conn: sqlite3.Connection) -> dict:
     """Account-wide report (M5). The dataclass already did §9 gating, so the
-    template only has to render `None` honestly."""
+    template only has to render `None` honestly. The dashboard shows the
+    at-a-glance cards; the full tables live at /report (`report_context`)."""
+    return {"report": build_report(conn)}
+
+
+def report_context(conn: sqlite3.Connection) -> dict:
+    """The deep analytics tables for /report (M8): money, MAE/MFE, and the
+    by-session / by-source / by-symbol breakdowns. Same ReportResult the
+    dashboard's cards read (build_report already did §9 gating) — the two pages
+    are two views of one object, so there is exactly one SQL read per request."""
     return {"report": build_report(conn)}
 
 

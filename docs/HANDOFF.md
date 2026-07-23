@@ -417,6 +417,7 @@ note what was measured.
 | M6 | Annotations + manual/auto tags (`journal annotate`/`tag`) | done (`24ce64b`) |
 | M6.1 | Weekly Markdown report (`journal weekly`) | done (`a989eac`) |
 | M7 | Web dashboard on localhost (`journal serve`) — read-mostly + annotation/tag writes | done |
+| M8 | Per-symbol breakdown (`by_symbol`) + dedicated `/report` web page | done |
 
 M0–M3 delivers the original ask: an automatic journal with charts. **Done.**
 M4 onward — poller, analytics, annotations — is what makes the journal worth
