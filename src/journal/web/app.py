@@ -17,7 +17,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Iterator
 
-from fastapi import Depends, FastAPI, Form, Request
+from fastapi import Body, Depends, FastAPI, Form, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -121,6 +121,49 @@ def create_app(db_path: str | None = None) -> FastAPI:
             return JSONResponse(api.commands_payload(conn))
         except RuntimeError as e:
             return JSONResponse({"error": str(e)}, status_code=400)
+
+    # --- two-step trade command (M9 safety: preview writes nothing; enqueue
+    # inserts ONE pending row; `journal live` executes. Validation lives in
+    # domain/commands via preview_command/enqueue and is re-run at enqueue.)
+    @app.post("/api/live/{position_id}/{action}/preview")
+    def api_preview(
+        position_id: int,
+        action: str,
+        sl: float | None = Body(None),
+        tp: float | None = Body(None),
+        volume: float | None = Body(None),
+        conn: sqlite3.Connection = Depends(get_conn),
+    ):
+        kind = _ACTIONS.get(action)
+        if kind is None:
+            return JSONResponse({"error": f"Aksi tidak dikenal: {action!r}."}, status_code=404)
+        try:
+            login = views.account_header(conn)["login"]
+            preview = views.preview_command(
+                conn, login, position_id, kind, sl=sl, tp=tp, volume=volume
+            )
+        except (RuntimeError, CommandError) as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        return JSONResponse(api.to_jsonable(preview))
+
+    @app.post("/api/live/{position_id}/{action}")
+    def api_enqueue(
+        position_id: int,
+        action: str,
+        sl: float | None = Body(None),
+        tp: float | None = Body(None),
+        volume: float | None = Body(None),
+        conn: sqlite3.Connection = Depends(get_conn),
+    ):
+        kind = _ACTIONS.get(action)
+        if kind is None:
+            return JSONResponse({"error": f"Aksi tidak dikenal: {action!r}."}, status_code=404)
+        try:
+            login = views.account_header(conn)["login"]
+            cmd_id = enqueue(conn, login, kind, position_id, sl=sl, tp=tp, volume=volume)
+        except (RuntimeError, CommandError) as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        return JSONResponse({"ok": True, "command_id": cmd_id})
 
     # ------------------------------------------------------------------- report
 
