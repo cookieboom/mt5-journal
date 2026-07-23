@@ -605,6 +605,13 @@ def serve(
     host: str = typer.Option("127.0.0.1", help="Bind address (localhost only by default)."),
     port: int = typer.Option(8000, help="Port to listen on."),
     db: str = typer.Option(_DEFAULT_DB, help="SQLite DB path."),
+    reload: bool = typer.Option(
+        False,
+        "--reload",
+        help="Dev auto-reload on source edits. Off by default — without it, "
+        "code/template changes need a manual restart to take effect. Watches .py "
+        "always; also .html only if `watchfiles` is installed (uvicorn[standard]).",
+    ),
 ) -> None:
     """Serve the web dashboard on localhost (M7). Pure DB, no bridge — a
     read-mostly HTML view over `journal report`/`weekly`/`chart` plus annotation
@@ -613,15 +620,43 @@ def serve(
 
     Uvicorn imports the app factory by string, so the DB path is passed through
     the `JOURNAL_DB` env var (mirrors how `create_app` resolves it).
+
+    `--reload` is a dev convenience: uvicorn watches the source tree and restarts
+    on edits. Its fallback reloader only watches .py; template-only edits reload
+    too, but ONLY if the optional `watchfiles` package is present (bundled with
+    `uvicorn[standard]`) — otherwise .html watching silently no-ops, so we don't
+    claim it. A .py edit still restarts the worker, which re-reads templates.
+    Leave --reload OFF for normal use.
     """
     # Lazy import (like LiveMT5Client): keeps the CLI importable without the web
     # stack installed, and off the hot path of every other command.
+    import importlib.util
+
     import uvicorn
+
+    # watchfiles is what makes uvicorn's --reload-include actually fire; without
+    # it the flag is a no-op that only prints a warning. Detect it so the .html
+    # promise is honest and we never emit that warning (no new hard dependency —
+    # rule 8: .py reload works regardless).
+    has_watchfiles = importlib.util.find_spec("watchfiles") is not None
 
     os.environ["JOURNAL_DB"] = db
     typer.echo(f"mt5-journal web dashboard → http://{host}:{port}  (db={db})")
+    if reload:
+        watched = ".py/.html" if has_watchfiles else ".py only (install `uvicorn[standard]` for .html)"
+        typer.echo(f"reload: ON — watching {watched} (dev only).")
     typer.echo("Ctrl+C to stop.")
-    uvicorn.run("journal.web.app:create_app", factory=True, host=host, port=port)
+    # Only pass reload_includes when watchfiles can honour it — otherwise uvicorn
+    # warns "no effect unless watchfiles is installed".
+    extra = {"reload_includes": ["*.py", "*.html"]} if (reload and has_watchfiles) else {}
+    uvicorn.run(
+        "journal.web.app:create_app",
+        factory=True,
+        host=host,
+        port=port,
+        reload=reload,
+        **extra,
+    )
 
 
 # -------------------------------------------------------------- reconcile
