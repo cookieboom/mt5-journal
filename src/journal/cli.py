@@ -527,6 +527,16 @@ def live(
             parts.append(f"cmd {r.command_id} -> {r.command_status}")
         typer.echo(f"  [{when:%H:%M:%S} UTC] " + " · ".join(parts))
 
+    def _echo_closing(closed_ids) -> None:
+        # Fires the moment a close is detected, BEFORE the ingest pipeline blocks
+        # the loop on a bridge round-trip (sync + candles) that can take several
+        # seconds. Without this the heartbeat just goes quiet and reads as a
+        # freeze — which is exactly how it was first misread when run live.
+        typer.echo(
+            f"  closed {closed_ids} — menjalankan ingest "
+            f"(sync → rebuild → candles → rebuild), tunggu beberapa detik…"
+        )
+
     conn = connect(db)
     try:
         login = _one_account_login(conn)  # friendly exit if `sync` never ran
@@ -539,7 +549,8 @@ def live(
         r = live_loop(
             client, conn, login,
             interval_idle=interval, trading=trading,
-            once=once, duration=duration, on_cycle=_echo_cycle,
+            once=once, duration=duration,
+            on_cycle=_echo_cycle, on_closing=_echo_closing,
         )
     except sqlite3.OperationalError as e:
         # WAL + busy_timeout (store/db.py) makes this rare, but two `journal live`

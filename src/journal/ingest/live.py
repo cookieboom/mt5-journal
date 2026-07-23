@@ -224,14 +224,18 @@ def live_cycle(
     login: int,
     *,
     trading: bool = True,
+    on_closing=None,
     on_close=None,
 ) -> LiveReport:
     """One live cycle: mirror open positions, ingest any that closed, and (if
     `trading`) execute one queued command. Timing-free — this is the unit surface.
 
-    `on_close`, if given, is called with the list of closed position_ids on a
-    cycle that had any (like `poll_loop`'s `on_cycle`): a test can spy without a
-    bridge and the CLI can print feedback.
+    `on_closing`, if given, is called with the closed position_ids the MOMENT a
+    close is detected, BEFORE the ingest pipeline runs. That pipeline is a
+    synchronous bridge round-trip (sync → candles) that can block the loop — and
+    therefore the heartbeat — for several seconds; announcing it first is what
+    stops that pause from reading as a freeze (reported the first time this ran
+    live). `on_close` fires AFTER the ingest, with the same ids.
     """
     positions = client.positions_get()
     observed_msc = now_ms()
@@ -250,6 +254,8 @@ def live_cycle(
     ingest_ran = False
     if closed_ids:
         log.info("live: %d position(s) closed: %s", len(closed_ids), closed_ids)
+        if on_closing is not None:
+            on_closing(closed_ids)   # BEFORE the blocking ingest — see docstring
         try:
             _run_ingest_pipeline(client, conn)   # ONCE, coalesced across closes
             ingest_ran = True
@@ -294,6 +300,7 @@ def live_loop(
     sleep=time.sleep,
     monotonic=time.monotonic,
     on_cycle=None,
+    on_closing=None,
 ) -> LiveLoopReport:
     """Repeatedly run `live_cycle`. `recover_interrupted` runs ONCE before the
     first cycle — a `claimed`/`sent` row on startup means a crash mid-command and
@@ -315,7 +322,7 @@ def live_loop(
 
     try:
         while True:
-            r = live_cycle(client, conn, login, trading=trading)
+            r = live_cycle(client, conn, login, trading=trading, on_closing=on_closing)
             cycles += 1
             if on_cycle is not None:
                 on_cycle(r)

@@ -217,6 +217,19 @@ def test_on_close_callback_receives_closed_ids(conn, monkeypatch):
     assert seen == [[111]]  # fired ONCE, only on the cycle with a close
 
 
+def test_on_closing_fires_before_the_ingest_pipeline(conn, monkeypatch):
+    # The CLI uses on_closing to warn the human BEFORE the (blocking) ingest, so
+    # the heartbeat pause never reads as a freeze. It must run before sync.
+    calls = _spy_pipeline(monkeypatch)
+    client = FakeLiveClient([[_pos(identifier=111)], []])
+    live_cycle(conn=conn, client=client, login=_LOGIN)  # cycle 1: position open
+    live_cycle(
+        conn=conn, client=client, login=_LOGIN,
+        on_closing=lambda ids: calls.append(f"closing{ids}"),
+    )  # cycle 2: it closed
+    assert calls == ["closing[111]", "sync", "rebuild", "candles", "rebuild"]
+
+
 def test_failed_ingest_does_not_kill_the_loop(conn, monkeypatch):
     # Losing the poller loop loses unrecoverable SL history; a broken sync must
     # be caught and logged, never propagated.
