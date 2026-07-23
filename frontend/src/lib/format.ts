@@ -39,3 +39,9 @@ export function wib(serverMsc: number | null, offsetS = 0): string {
 export function isGated(n: number, avg: number | null): boolean {
   return (avg === null || avg === undefined) && n < 20;
 }
+
+export function price(x: number | null): string {
+  // rule 4: null = unknown, never 0. A genuine 0.0 ("none set") shows as "0".
+  if (x === null || x === undefined) return "unknown";
+  return String(x);
+}

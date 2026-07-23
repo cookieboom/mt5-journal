@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { money, rmult, pct, wib, isGated } from "./format";
+import { money, rmult, pct, wib, isGated, price } from "./format";
 
 describe("format", () => {
   it("money carries currency, never a bare dollar, null is n/a not 0", () => {
@@ -28,5 +28,12 @@ describe("format", () => {
     expect(isGated(5, null)).toBe(true);
     expect(isGated(25, null)).toBe(false);
     expect(isGated(5, 1.2)).toBe(false);
+  });
+
+  it("price: null is unknown (never 0), real numbers show compactly", () => {
+    expect(price(null)).toBe("unknown");
+    expect(price(4010)).toBe("4010");
+    expect(price(4010.5)).toBe("4010.5");
+    expect(price(0)).toBe("0");
   });
 });
