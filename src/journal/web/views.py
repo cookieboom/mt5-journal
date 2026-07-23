@@ -67,13 +67,10 @@ def _opt_float(s: str | None) -> float | None:
 
 
 def _level_word(level: float | None) -> str:
-    """A modify-SL/TP level for the plain-language intent string: `None` = leave it
-    ('(tetap)'), `0.0` = clear it ('(hapus)'), else the price (rule 4)."""
-    if level is None:
-        return "(tetap)"
-    if abs(level) < 1e-9:
-        return "(hapus)"
-    return fmt.price(level)
+    """Thin alias kept for callers here; the definition now lives in `format.py`
+    so templates (the audit log) and this intent string render a modify level the
+    SAME way — `None`='(tetap)', not 'unknown'."""
+    return fmt.level_word(level)
 
 
 def _intent_text(

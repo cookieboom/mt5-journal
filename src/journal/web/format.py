@@ -93,6 +93,19 @@ def price(x: float | None) -> str:
     return f"{x:g}"
 
 
+def level_word(level: float | None) -> str:
+    """An SL/TP level ON A MODIFY COMMAND. Different rule-4 meaning from `price`:
+    here `None` = "leave unchanged" ('(tetap)'), NOT "unknown"; `0.0` = "clear"
+    ('(hapus)'); else the price. A modify carries an INTENT about a level, so a
+    blank field means the human chose not to touch it — showing "unknown" (as a
+    bare `price` filter does) would misreport that deliberate choice as ignorance."""
+    if level is None:
+        return "(tetap)"
+    if abs(level) < 1e-9:
+        return "(hapus)"
+    return price(level)
+
+
 def server_offset_s(conn: sqlite3.Connection, login: int) -> int:
     """The MEASURED server↔UTC offset from `sync_state` (Trap 7) — same read as
     `render/chart.py:_server_offset_s`. Falls back to 0 only when nothing was

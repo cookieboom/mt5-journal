@@ -20,7 +20,7 @@
     <td class="mono">#{{ c.position_id }}</td>
     <td>{{ c.kind }}</td>
     <td>
-      {% if c.kind == 'modify_sltp' %}SL {{ c.sl | price }} · TP {{ c.tp | price }}
+      {% if c.kind == 'modify_sltp' %}SL {{ c.sl | level_word }} · TP {{ c.tp | level_word }}
       {% elif c.kind == 'close' %}tutup penuh
       {% else %}{{ c.volume }} lot{% endif %}
     </td>

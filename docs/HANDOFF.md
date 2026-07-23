@@ -80,13 +80,25 @@ reconciliation intact.
   `on_closing` notice before the blocking ingest). **Footgun learned:** run
   `live` AND `serve` with the SAME absolute `--db`; `serve` without `--db` from
   the worktree makes a stray empty `data/journal.db` and `/live` looks empty.
-- **NOT yet measured:** Phase 7.6's ask 1 — one real `modify_sltp` (or close)
-  SENT from the UI with trading ON and confirmed in MT5 itself. This is the only
-  money-moving path still unexercised end to end. Also unmeasured: browser
+- **Order SEND path (ask 1) — REACHED THE BROKER, verdict recorded faithfully.**
+  A `modify_sltp` (SL 4090, TP left unchanged) typed in `/live` on a real 0.01-lot
+  XAUUSDc position went UI → `pending` → claimed → `order_check` → `order_send` →
+  **the broker answered**. The loop recorded it `failed`, retcode **10027
+  (`TRADE_RETCODE_CLIENT_DISABLES_AT` — "AutoTrading disabled by client")**, with
+  the broker comment, and did NOT retry. So the whole plumbing AND the failure
+  path are proven; the rejection is a TERMINAL SETTING (the container's MT5 has
+  Algo/AutoTrading turned OFF), not a code fault. This also surfaced and fixed a
+  real honesty bug: the audit log rendered a left-unchanged `TP` (NULL) as
+  "unknown"; it now reads "(tetap)" via a shared `format.level_word` — a modify's
+  NULL level is a deliberate "leave it", not ignorance (rule 4).
+- **STILL NOT measured:** a `done` order that actually LANDS — enable Algo Trading
+  in the container's MT5 terminal, resend one `modify_sltp` on the smallest
+  position, and confirm the SL changed in MT5 itself. Also unmeasured: browser
   visual/contrast check of the redesign in light and dark.
 
-M9 is now *live-verified for ingest + the read/observe surface; the order-SEND
-path is code-complete and offline-tested but not yet fired at the broker.*
+M9 is now *live-verified for ingest, the read/observe surface, and the full
+order-send plumbing up to the broker's verdict; a successful (accepted) order has
+not landed yet only because the terminal's AutoTrading is off.*
 
 **Done:** M0 (adapter + store + doctor) · M0.1 (Candle→ms, enums probed from the
 bridge) · M0.2 (fixtures re-recorded with `comment` preserved, `a15cc5e`) ·

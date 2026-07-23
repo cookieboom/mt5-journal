@@ -101,6 +101,15 @@ def test_price_unknown_vs_zero():
     assert fmt.price(3987.5) == "3987.5"
 
 
+def test_level_word_on_a_modify_is_leave_not_unknown():
+    # A modify carries INTENT about a level, so a blank field is a deliberate
+    # "leave it", not ignorance — it must NOT read "unknown" (the audit log did).
+    assert fmt.level_word(None) == "(tetap)"     # leave unchanged
+    assert fmt.level_word(0.0) == "(hapus)"      # clear it
+    assert fmt.level_word(4085.0) == "4085"      # set it
+    assert fmt.level_word(None) != fmt.price(None)  # the whole point of the fix
+
+
 def test_wib_converts_and_handles_none():
     # 2026-01-15 02:00 UTC + WIB(UTC+7) = 09:00 WIB, offset 0.
     ms = _ms(2)

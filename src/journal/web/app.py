@@ -56,6 +56,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
     templates.env.filters.update(
         money=fmt.money, pct=fmt.pct, rmult=fmt.rmult, num=fmt.num,
         gated=fmt.gated, wib=fmt.wib, dur=fmt.dur, price=fmt.price,
+        level_word=fmt.level_word,
     )
     # `gated` and `is_gated` are called as functions inside templates/macros
     # (they take two args — n and the pre-gated average), so they're globals,
