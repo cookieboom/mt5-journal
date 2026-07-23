@@ -116,11 +116,127 @@ def account_header(conn: sqlite3.Connection) -> dict:
     }
 
 
+# --- equity / cumulative-R tape (M9) --------------------------------------
+#
+# The dashboard had NO time dimension. `equity_curve` adds one as a PURE,
+# tested function: cumulative net_profit (USC) and, separately, cumulative
+# r_multiple over only the trades where R is known. It returns both the point
+# series AND ready-to-drop inline-SVG geometry so the template stays dumb (no
+# arithmetic in Jinja) and the maths is unit-testable. All money stays USC; the
+# trace is drawn neutral-INK by the CSS, never money-green (see app.css).
+
+# viewBox units — unitless; the <svg> scales to 100% width via CSS.
+_VB_W = 720.0
+_VB_H = 160.0
+_PAD_X = 6.0
+_PAD_Y = 10.0
+
+
+def _svg_geometry(pts: list[tuple[int, float]]) -> dict:
+    """Turn a (time_msc, value) series into inline-SVG geometry. Handles the
+    degenerate cases the plan calls out WITHOUT dividing by zero:
+      * empty  → `empty=True`, a flat baseline, no points (template shows a note);
+      * one point → single dot, flat baseline, no span division;
+      * a flat series (all equal, e.g. all-zero) → a synthetic ±1 range so the
+        baseline sits centred instead of NaN.
+    The value range is forced to include 0 so the dashed zero-line is always in
+    view and the curve's relationship to breakeven reads honestly."""
+    vb = f"0 0 {_VB_W:g} {_VB_H:g}"
+    if not pts:
+        return {
+            "empty": True, "viewbox": vb, "points": "", "area": "",
+            "baseline_y": round(_VB_H / 2, 2),
+            "first_msc": None, "last_msc": None, "last_value": None,
+            "last_x": None, "last_y": None, "vmin": None, "vmax": None,
+        }
+
+    values = [v for _, v in pts]
+    vmin = min(0.0, min(values))
+    vmax = max(0.0, max(values))
+    span = vmax - vmin
+    if span < 1e-9:  # flat/degenerate series — avoid /0, centre the baseline
+        vmin, vmax, span = -1.0, 1.0, 2.0
+
+    n = len(pts)
+
+    def x_of(i: int) -> float:
+        if n == 1:
+            return _VB_W / 2
+        return _PAD_X + (_VB_W - 2 * _PAD_X) * i / (n - 1)
+
+    def y_of(v: float) -> float:
+        return _VB_H - _PAD_Y - (_VB_H - 2 * _PAD_Y) * (v - vmin) / span
+
+    coords = [(x_of(i), y_of(v)) for i, (_, v) in enumerate(pts)]
+    points = " ".join(f"{x:.2f},{y:.2f}" for x, y in coords)
+    baseline_y = y_of(0.0)
+    x0, xl = coords[0][0], coords[-1][0]
+    # area polygon: baseline-left → the trace → baseline-right, filled faintly.
+    area = f"{x0:.2f},{baseline_y:.2f} {points} {xl:.2f},{baseline_y:.2f}"
+    return {
+        "empty": False, "viewbox": vb, "points": points, "area": area,
+        "baseline_y": round(baseline_y, 2),
+        "first_msc": pts[0][0], "last_msc": pts[-1][0], "last_value": pts[-1][1],
+        "last_x": round(xl, 2), "last_y": round(coords[-1][1], 2),
+        "vmin": vmin, "vmax": vmax,
+    }
+
+
+def equity_curve(conn: sqlite3.Connection) -> dict:
+    """Cumulative equity (net_profit, USC) and cumulative-R over CLOSED trades,
+    ordered by realized close time. Pure DB read; no writes, no adapter.
+
+    Two honest, separate series:
+      * equity — running sum of `net_profit` over every closed trade (USC);
+      * r-curve — running sum of `r_multiple` over ONLY the trades where R is
+        known (`r_multiple IS NOT NULL`), with `n_with_r` exposed so the template
+        can say how many trades it covers. R is unit-free (a ratio), so the two
+        curves are never mixed.
+    Returns the point series plus inline-SVG geometry for each. Zero and one-trade
+    cases are handled by `_svg_geometry` without a ZeroDivisionError."""
+    login = one_account_login(conn)
+    rows = conn.execute(
+        "SELECT close_time_msc, net_profit, r_multiple FROM trades "
+        "WHERE account_login = ? AND status = 'closed' AND close_time_msc IS NOT NULL "
+        "ORDER BY close_time_msc ASC",
+        (login,),
+    ).fetchall()
+
+    equity_pts: list[tuple[int, float]] = []
+    cum = 0.0
+    for r in rows:
+        cum += r["net_profit"] or 0.0  # a closed trade should have net; guard anyway
+        equity_pts.append((r["close_time_msc"], cum))
+
+    r_pts: list[tuple[int, float]] = []
+    cum_r = 0.0
+    for r in rows:
+        if r["r_multiple"] is not None:
+            cum_r += r["r_multiple"]
+            r_pts.append((r["close_time_msc"], cum_r))
+
+    return {
+        "n": len(equity_pts),
+        "n_with_r": len(r_pts),
+        "series": [{"close_time_msc": t, "equity": e} for t, e in equity_pts],
+        "equity_last": equity_pts[-1][1] if equity_pts else None,
+        "r_last": r_pts[-1][1] if r_pts else None,
+        "equity_svg": _svg_geometry(equity_pts),
+        "r_svg": _svg_geometry(r_pts),
+    }
+
+
 def dashboard_context(conn: sqlite3.Connection) -> dict:
-    """Account-wide report (M5). The dataclass already did §9 gating, so the
-    template only has to render `None` honestly. The dashboard shows the
-    at-a-glance cards; the full tables live at /report (`report_context`)."""
-    return {"report": build_report(conn)}
+    """Account-wide report (M5) + a live strip + the equity/R tape (M9). The
+    ReportResult dataclass already did §9 gating, so the template only renders
+    `None` honestly. The full analytics tables live at /report; the live strip
+    reuses `live_context` (floating P&L, never realized) and the tape reuses
+    `equity_curve`."""
+    return {
+        "report": build_report(conn),
+        "live": live_context(conn),
+        "equity": equity_curve(conn),
+    }
 
 
 def report_context(conn: sqlite3.Connection) -> dict:
@@ -172,10 +288,15 @@ def trades_context(
 
     rows = conn.execute(
         "SELECT position_id, symbol_base, direction, status, open_time_msc, "
-        "close_time_msc, net_profit, r_multiple, magic "
+        "close_time_msc, duration_s, net_profit, r_multiple, magic "
         "FROM trades WHERE " + " AND ".join(where) + " ORDER BY open_time_msc DESC",
         params,
     ).fetchall()
+
+    # Largest |net| in the visible set — the sparkbar scales each row's bar to
+    # this so the per-row win/loss mark is honest RELATIVE to the page. The USC
+    # figure itself always sits in its own cell; the bar is only a glance cue.
+    max_abs_net = max((abs(r["net_profit"]) for r in rows if r["net_profit"] is not None), default=0.0)
 
     tags = _tags_by_position(conn, login)
     symbols = [
@@ -191,6 +312,7 @@ def trades_context(
         "trades": rows,
         "tags": tags,
         "symbols": symbols,
+        "max_abs_net": max_abs_net,
         "filters": {"symbol": symbol or "", "status": status or "", "source": source or ""},
     }
 
@@ -293,9 +415,16 @@ def live_context(conn: sqlite3.Connection) -> dict:
         stale = False
         empty = True
 
+    # Exposure = total open volume in lots (a plain sum; notional in USC would
+    # need per-symbol contract maths we don't do here). Labelled "lot" so it is
+    # never mistaken for a money figure.
+    total_volume = sum((r["volume"] or 0.0) for r in rows)
+
     return {
         "positions": rows,
+        "count": len(rows),
         "total_floating": total_floating,
+        "total_volume": total_volume,
         "age_s": age_s,
         "stale": stale,
         "empty": empty,

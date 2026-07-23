@@ -357,6 +357,155 @@ def test_commands_context_maps_retcode_name_and_shows_error(conn):
     assert by_pos[3]["retcode_name"] == "retcode 99999"  # honest fallback
 
 
+# --------------------------------------------------- equity / R tape (M9)
+
+
+def test_equity_curve_cumulative_last_equals_sum_and_r_sums_known(conn):
+    _seed_account(conn)
+    _seed_trade(conn, 1, status="closed", close_time_msc=_ms(10, day=15), net_profit=5.0, r_multiple=1.2)
+    _seed_trade(conn, 2, status="closed", close_time_msc=_ms(11, day=16), net_profit=-2.0)  # r unknown
+    _seed_trade(conn, 3, status="closed", close_time_msc=_ms(12, day=17), net_profit=3.0, r_multiple=-0.5)
+    eq = views.equity_curve(conn)
+    assert eq["n"] == 3
+    # monotonic in count: one point per closed trade, ordered by close time
+    assert len(eq["series"]) == 3
+    times = [p["close_time_msc"] for p in eq["series"]]
+    assert times == sorted(times)
+    # last equity == sum(net_profit) over ALL closed trades
+    assert eq["equity_last"] == pytest.approx(6.0)
+    assert eq["series"][-1]["equity"] == pytest.approx(6.0)
+    # cumulative equity is a running sum, not per-trade
+    assert [p["equity"] for p in eq["series"]] == pytest.approx([5.0, 3.0, 6.0])
+    # R curve sums ONLY the known r_multiple (1.2 + -0.5), over exactly 2 trades
+    assert eq["n_with_r"] == 2
+    assert eq["r_last"] == pytest.approx(0.7)
+    assert eq["equity_svg"]["empty"] is False and eq["r_svg"]["empty"] is False
+
+
+def test_equity_curve_zero_trades_is_safe(conn):
+    _seed_account(conn)  # account but no trades — must not divide by zero
+    eq = views.equity_curve(conn)
+    assert eq["n"] == 0 and eq["series"] == []
+    assert eq["equity_last"] is None and eq["r_last"] is None
+    assert eq["equity_svg"]["empty"] is True and eq["r_svg"]["empty"] is True
+    # a flat baseline exists so the template can still draw something safely
+    assert eq["equity_svg"]["baseline_y"] > 0
+
+
+def test_equity_curve_one_trade_no_crash(conn):
+    _seed_account(conn)
+    _seed_trade(conn, 1, status="closed", close_time_msc=_ms(10), net_profit=4.0)
+    eq = views.equity_curve(conn)
+    assert eq["n"] == 1
+    assert eq["equity_last"] == pytest.approx(4.0)
+    s = eq["equity_svg"]
+    assert s["empty"] is False and s["points"]  # single-point geometry, no crash
+    assert eq["r_svg"]["empty"] is True          # no r_multiple → empty R curve, still safe
+
+
+def test_dashboard_context_carries_live_and_equity(conn):
+    _seed_account(conn)
+    _seed_trade(conn, 1, status="closed", close_time_msc=_ms(10), net_profit=8.0)
+    ctx = views.dashboard_context(conn)
+    assert "live" in ctx and "equity" in ctx
+    assert ctx["equity"]["equity_last"] == pytest.approx(8.0)
+    assert ctx["live"]["empty"] is True  # no open positions seeded
+
+
+# --------------------------------------------------- template rendering
+
+
+def _env():
+    """The SAME Jinja env `web/app.py` configures — built here so templates can
+    be rendered against a seeded DB with no HTTP layer (matches this file's
+    no-TestClient discipline)."""
+    from pathlib import Path
+
+    from fastapi.templating import Jinja2Templates
+
+    here = Path(views.__file__).resolve().parent
+    t = Jinja2Templates(directory=str(here / "templates"))
+    t.env.filters.update(
+        money=fmt.money, pct=fmt.pct, rmult=fmt.rmult, num=fmt.num,
+        gated=fmt.gated, wib=fmt.wib, dur=fmt.dur, price=fmt.price,
+    )
+    t.env.globals["gated"] = fmt.gated
+    t.env.globals["is_gated"] = fmt.is_gated
+    return t.env
+
+
+def _render(name, ctx):
+    html = _env().get_template(name).render(ctx)
+    assert isinstance(html, str) and html.strip()  # non-empty, did not raise
+    return html
+
+
+def _seed_a_bit(conn):
+    _seed_account(conn)
+    _seed_trade(conn, 1, status="closed", close_time_msc=_ms(10, day=15),
+                net_profit=10.0, r_multiple=1.3, symbol="XAUUSDc")
+    _seed_trade(conn, 2, status="closed", close_time_msc=_ms(11, day=16),
+                net_profit=-4.0, symbol="BTCUSDc")
+
+
+def test_all_pages_render_with_seeded_db(conn):
+    _seed_a_bit(conn)
+    d = views.dashboard_context(conn); d["header"] = views.account_header(conn)
+    _render("dashboard.html", d)
+    rp = views.report_context(conn); rp["header"] = views.account_header(conn)
+    _render("report.html", rp)
+    _render("trades.html", views.trades_context(conn))
+    _render("trade_detail.html", views.trade_detail_context(conn, 1))
+    _render("weekly.html", views.weekly_context(conn, 2026, 3))
+    lv = views.live_context(conn); lv["header"] = views.account_header(conn)
+    _render("live.html", lv)
+    cm = views.commands_context(conn); cm["header"] = views.account_header(conn)
+    _render("commands.html", cm)
+    _render("error.html", {"message": "contoh pesan error"})
+
+
+def test_all_pages_render_with_empty_db(conn):
+    # Account but ZERO trades / positions — the explicit plan verification.
+    _seed_account(conn)
+    d = views.dashboard_context(conn); d["header"] = views.account_header(conn)
+    _render("dashboard.html", d)
+    rp = views.report_context(conn); rp["header"] = views.account_header(conn)
+    _render("report.html", rp)
+    _render("trades.html", views.trades_context(conn))
+    lv = views.live_context(conn); lv["header"] = views.account_header(conn)
+    _render("live.html", lv)
+    cm = views.commands_context(conn); cm["header"] = views.account_header(conn)
+    _render("commands.html", cm)
+    # trade_detail has no trade to show on an empty DB — the route returns None → 404.
+    assert views.trade_detail_context(conn, 1) is None
+
+
+def test_report_gated_cell_explains_itself_in_html(conn):
+    # A thin bucket (n<20) must render its WHY, not a bare "n/a".
+    _seed_a_bit(conn)
+    rp = views.report_context(conn); rp["header"] = views.account_header(conn)
+    html = _render("report.html", rp)
+    assert "perlu ≥20" in html
+    assert "n=" in html
+
+
+def test_rendered_money_carries_currency_no_bare_dollar(conn):
+    _seed_a_bit(conn)
+    d = views.dashboard_context(conn); d["header"] = views.account_header(conn)
+    html = _render("dashboard.html", d)
+    assert "USC" in html          # money figures carry the currency code
+    assert "$" not in html        # never a bare dollar (Trap 13)
+
+
+def test_live_strip_labels_floating_not_realized(conn):
+    _seed_account(conn)
+    _seed_position(conn, 1, profit=12.0, observed_msc=now_ms())
+    d = views.dashboard_context(conn); d["header"] = views.account_header(conn)
+    html = _render("dashboard.html", d)
+    assert "floating" in html.lower()  # floating P&L is labelled, never realized
+    assert "USC" in html
+
+
 def test_is_loopback():
     from journal.cli import _is_loopback
 
