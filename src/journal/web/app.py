@@ -28,6 +28,8 @@ from ..render.chart import NoCandlesError, TradeNotFoundError, render_trade
 from ..store.db import connect
 from . import format as fmt
 from . import views
+from fastapi.responses import JSONResponse
+from . import api
 
 # URL path segment → command kind. The URL uses hyphens; the kind uses
 # underscores (matching trade_commands.kind and domain/commands.KINDS).
@@ -41,6 +43,10 @@ _ACTIONS = {
 _HERE = Path(__file__).resolve().parent
 _DEFAULT_DB = "data/journal.db"
 _CACHE_DIR = "cache"
+
+# The built SPA (Vite → frontend/dist). Served at /app during the Jinja→React
+# transition; absent until `npm --prefix frontend run build` has run.
+_FRONTEND_DIST = _HERE.parent.parent.parent / "frontend" / "dist"
 
 
 def create_app(db_path: str | None = None) -> FastAPI:
@@ -87,6 +93,14 @@ def create_app(db_path: str | None = None) -> FastAPI:
         except RuntimeError as e:
             return error_page(request, str(e))
         return render(request, "dashboard.html", ctx)
+
+    # ------------------------------------------------------------------- api
+    @app.get("/api/account")
+    def api_account(conn: sqlite3.Connection = Depends(get_conn)):
+        try:
+            return JSONResponse(api.account_payload(conn))
+        except RuntimeError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
 
     # ------------------------------------------------------------------- report
 
@@ -323,5 +337,21 @@ def create_app(db_path: str | None = None) -> FastAPI:
         # makes deleting an auto tag a no-op, so no guard needed here.
         remove_tag(conn, position_id, tag)
         return _back(position_id)
+
+    # --------------------------------------------------------------- SPA (/app)
+    # React build served here during the transition; Jinja stays at its routes.
+    if _FRONTEND_DIST.is_dir():
+        app.mount(
+            "/app/assets",
+            StaticFiles(directory=_FRONTEND_DIST / "assets"),
+            name="spa-assets",
+        )
+        _index = (_FRONTEND_DIST / "index.html").read_text(encoding="utf-8")
+
+        @app.get("/app", response_class=HTMLResponse)
+        @app.get("/app/{full_path:path}", response_class=HTMLResponse)
+        def spa(full_path: str = ""):
+            # Any /app/* path returns index.html; React Router resolves the route.
+            return HTMLResponse(_index)
 
     return app
