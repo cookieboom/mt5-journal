@@ -31,7 +31,45 @@ home each, and a second copy is a future lie. Point, never duplicate.
 
 ## CURRENT STATE — update this section every session
 
-**Last updated:** 2026-07-18
+**Last updated:** 2026-07-23
+
+**M9 in one line (`claude/trading-system-plan-2959b7`, NOT yet merged):** the
+journal became able to *act*, not just describe. Six phases: (1) a real
+migration runner in `store/db.py` + `migrations/002_live_trading.sql` (bumps
+`SCHEMA_VERSION=2`, applied automatically by `connect()`); (2) trade ops at the
+adapter boundary (`order_check`/`order_send` on the Protocol, new `TradeAction`/
+`OrderType`/`OrderFilling`/`TradeRetcode` enums, a scriptable `FakeMT5Client`
+write side); (3) a pure command layer (`domain/commands.py` validate/
+build_request/classify + `execute.py` enqueue/claim/record) with the human's
+1.00-lot hard cap unit-tested; (4) `journal live` — the single process that owns
+the bridge: mirrors `open_positions`, **auto-ingests on close** (sync→rebuild→
+candles→rebuild, ask 2), and executes queued commands, never auto-retrying a
+`sent` order; (5) the web live view + a mandatory two-step confirm before any
+order (`/live`, `/live/commands`), with `serve` refusing any non-loopback
+`--host`; (6) a frontend redesign — live strip, an inline-SVG equity/cumulative-R
+tape, design tokens with light+dark, self-explaining `n/a` cells.
+
+**M9 decisions (human, 2026-07-23):** execution is GO; trading is **ON BY
+DEFAULT** (`--no-trading` opts out of command execution; the UI confirm step and
+the loopback bind-check are the primary guards, not a flag); **1.00-lot hard cap**
+per command, enforced in `domain/commands.py`; a real account is acceptable (no
+demo gate). Rule 9 still binds: the human types every number; the system only
+validates, sends, and reports the broker's verbatim answer — no suggested SL, no
+auto-breakeven, no sizing.
+
+**M9 verification — MEASURED so far:** `uv run pytest` **375 green** (was 202 at
+M8's baseline; +173 across the six phases). Boundary greps clean: no
+`import MetaTrader5` and no `TRADE_*`/`ORDER_*` value outside `adapter/`; `web/`
+imports no adapter. Migration replay test passes (fresh-v2 == migrated-v1→v2).
+On a **copy** of the live DB (original untouched, per the Phase-1 rule):
+`migrate`→v2, `rebuild`→**72 trades / 72 mae-mfe computable** (unchanged),
+`verify`→**both balance identities PASS**, residual +0.00, the 14.50 USC archived
+reconciliation intact. **NOT yet measured (human-run, needs the live bridge):**
+Phase 7.6 live smoke — `journal live --once`, a real position opening/closing to
+prove auto-ingest end to end, and one `modify_sltp` from the UI confirmed in MT5
+itself. Until that is pasted here, M9 is *code-complete and offline-verified*, not
+*proven against real money.* Also unmeasured: browser visual/contrast check of
+the redesign in light and dark.
 
 **Done:** M0 (adapter + store + doctor) · M0.1 (Candle→ms, enums probed from the
 bridge) · M0.2 (fixtures re-recorded with `comment` preserved, `a15cc5e`) ·
@@ -418,6 +456,7 @@ note what was measured.
 | M6.1 | Weekly Markdown report (`journal weekly`) | done (`a989eac`) |
 | M7 | Web dashboard on localhost (`journal serve`) — read-mostly + annotation/tag writes | done |
 | M8 | Per-symbol breakdown (`by_symbol`) + dedicated `/report` web page | done |
+| M9 | Live positions + trade interaction + auto-ingest on close + UI redesign (`journal live`, `/live`) | code-complete, offline-verified; live smoke pending human (`claude/trading-system-plan-2959b7`) |
 
 M0–M3 delivers the original ask: an automatic journal with charts. **Done.**
 M4 onward — poller, analytics, annotations — is what makes the journal worth
