@@ -1,12 +1,17 @@
 """FakeMT5Client must satisfy the MT5Client Protocol and return the declared
-types against the (empty) placeholder fixtures — with no bridge running."""
+types against the recorded fixtures — with no bridge running. Some tests point at
+an empty dir to assert the missing/empty-fixture contract in isolation."""
 
+import json
+import re
 from datetime import datetime
+from pathlib import Path
 
 from journal.adapter.base import (
     Account,
     Candle,
     Deal,
+    DealType,
     MT5Client,
     Order,
     Position,
@@ -14,6 +19,8 @@ from journal.adapter.base import (
     Tick,
 )
 from journal.adapter.fake import FakeMT5Client
+
+_FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 
 def test_fake_conforms_to_protocol():
@@ -125,3 +132,33 @@ def test_candle_time_is_milliseconds(tmp_path):
     (candle,) = c.copy_rates_range("XAUUSDc", "M15", None, None)
     assert candle.time_msc == 1752624000000
     assert candle.time_msc >= 10**12  # below this = seconds leaked (Trap 15)
+
+
+# The payment-provider deposit/withdrawal reference on a funding deal (`D-…`/
+# `W-…`) is a real transaction id — Rule 10 says it must never land in a
+# committed fixture. record_fixtures.redact_funding_comment() scrubs it at
+# capture; this guards the committed artifact so a re-record can't reintroduce it.
+_FUNDING_TYPES = {
+    DealType.BALANCE, DealType.CREDIT, DealType.CHARGE, DealType.BONUS,
+    DealType.COMMISSION, DealType.COMMISSION_DAILY, DealType.COMMISSION_MONTHLY,
+    DealType.COMMISSION_AGENT_DAILY, DealType.COMMISSION_AGENT_MONTHLY,
+    DealType.INTEREST,
+}
+# A provider funding reference: leading D-/W- (deposit/withdrawal) or any run of
+# 6+ digits (the transaction number). Trade tags like "[sl 4030.000]" don't match.
+_FUNDING_REF = re.compile(r"^[DW]-|\d{6,}")
+
+
+def test_no_funding_reference_leaks_into_committed_deals_fixture():
+    deals = json.loads((_FIXTURES / "deals.json").read_text())
+    offenders = [
+        d["comment"]
+        for d in deals
+        if d.get("type") in _FUNDING_TYPES
+        and d.get("comment")
+        and _FUNDING_REF.search(d["comment"])
+    ]
+    assert offenders == [], (
+        "raw funding reference(s) leaked into tests/fixtures/deals.json: "
+        f"{offenders} — re-run scripts/record_fixtures.py (it now redacts these)"
+    )

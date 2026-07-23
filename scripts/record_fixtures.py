@@ -13,9 +13,13 @@ the one module allowed to import it (Rule 1). We read `.raw` off each dataclass.
 Sanitisation (what lands in git):
     login   -> 0
     server  -> "REDACTED"     company -> "REDACTED"     account name -> "REDACTED"
+    comment -> "FUNDING-REDACTED"  ON FUNDING-CLASS DEALS ONLY (BALANCE/CREDIT/
+        CHARGE/BONUS/COMMISSION*/INTEREST). Their comment is the payment
+        provider's deposit/withdrawal reference (`D-…`/`W-…`), which identifies a
+        real funding transaction — scrub it. See Rule 10.
 NEVER touched: ticket, order, position_id  (reconstruction keys on them);
-    comment, external_id  (execution metadata, not PII — the "Archived deals"
-    marker and [sl]/[tp] tags live here; see Trap 16). Symbol `name` is the
+    comment/external_id on TRADE deals (BUY/SELL — the [sl]/[tp] tags) and on the
+    CORRECTION "Archived deals" marker (Trap 16). Symbol `name` is the
     instrument, not PII, so it survives too. `rates` (candles) carry no PII at
     all — no sanitisation needed.
 
@@ -32,6 +36,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from journal.adapter.base import DealType
 from journal.adapter.fake import FakeMT5Client
 from journal.adapter.live import LiveMT5Client
 from journal.domain.reconstruct import SymbolSpec, reconstruct
@@ -40,6 +45,30 @@ from journal.render.chart import choose_timeframe, window_for
 
 FIXTURES = Path(__file__).resolve().parents[1] / "tests" / "fixtures"
 EPOCH_START = datetime(2000, 1, 1)  # full backfill; take everything (Trap 8)
+
+# Money-operation deal types whose `comment` is a payment-provider funding
+# reference (deposit/withdrawal transaction id), not execution metadata. BUY/SELL
+# carry [sl]/[tp] tags and CORRECTION carries the "Archived deals" marker — those
+# comments stay; these do not.
+_FUNDING_DEAL_TYPES = frozenset(
+    {
+        DealType.BALANCE, DealType.CREDIT, DealType.CHARGE, DealType.BONUS,
+        DealType.COMMISSION, DealType.COMMISSION_DAILY, DealType.COMMISSION_MONTHLY,
+        DealType.COMMISSION_AGENT_DAILY, DealType.COMMISSION_AGENT_MONTHLY,
+        DealType.INTEREST,
+    }
+)
+FUNDING_COMMENT_REDACTED = "FUNDING-REDACTED"
+
+
+def redact_funding_comment(d: dict[str, Any]) -> dict[str, Any]:
+    """Scrub the payment-provider reference off a funding-class deal's `comment`.
+    A no-op on trade deals and the CORRECTION marker, so [sl]/[tp] tags and the
+    "Archived deals" evidence (Trap 16) survive untouched."""
+    if d.get("type") in _FUNDING_DEAL_TYPES and d.get("comment"):
+        d = dict(d)
+        d["comment"] = FUNDING_COMMENT_REDACTED
+    return d
 
 
 def sanitise(d: dict[str, Any]) -> dict[str, Any]:
@@ -115,7 +144,7 @@ def main() -> None:
     orders = client.history_orders_get(EPOCH_START, now)
     positions = client.positions_get()
 
-    write("deals", [sanitise(d.raw) for d in deals])
+    write("deals", [redact_funding_comment(sanitise(d.raw)) for d in deals])
     write("orders", [sanitise(o.raw) for o in orders])
     write("positions", [sanitise(p.raw) for p in positions])
 
