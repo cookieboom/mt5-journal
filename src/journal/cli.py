@@ -303,6 +303,42 @@ def rebuild(db: str = typer.Option(_DEFAULT_DB, help="SQLite DB path.")) -> None
     typer.echo("\nNext: `journal verify` — check identity 2 (trades partition the deals).")
 
 
+# ------------------------------------------------------------------ migrate
+
+
+@app.command()
+def migrate(db: str = typer.Option(_DEFAULT_DB, help="SQLite DB path.")) -> None:
+    """Bring an existing database's schema up to date (M9). Pure DB, no bridge.
+
+    Every other command already calls this via `connect()`, so you rarely need to
+    run it by hand — it exists so a schema upgrade can be done, and SEEN, as a
+    deliberate step rather than as a side effect of the next command.
+
+    Idempotent: running it twice reports nothing to do. Migrations are additive
+    only — no table is dropped and no row is rewritten.
+    """
+    from .store.db import SCHEMA_VERSION, current_version
+
+    conn = connect(db)   # connect() itself applies anything pending
+    try:
+        version = current_version(conn)
+    finally:
+        conn.close()
+
+    typer.echo("== migrate ==")
+    typer.echo(f"db:      {db}")
+    typer.echo(f"version: {version} (latest is {SCHEMA_VERSION})")
+    if version == SCHEMA_VERSION:
+        typer.echo("status:  up to date — nothing to apply.")
+    else:
+        # Unreachable in normal operation; a loud line beats a silent wrong state.
+        typer.echo(
+            f"status:  STILL BEHIND after migrating — expected {SCHEMA_VERSION}. "
+            f"Do not run other commands against this DB; investigate first."
+        )
+        raise typer.Exit(code=1)
+
+
 # ------------------------------------------------------------------ candles
 
 

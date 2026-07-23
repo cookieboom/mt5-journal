@@ -458,16 +458,38 @@ with no explanation of why.
 
 ---
 
-## Open questions for the human — answer before Phase 2
+## Decisions — ANSWERED by the human on 2026-07-23
 
-1. **Go/no-go on execution.** Do you want the journal to be able to send orders
-   at all? This plan is built so Phases 1, 4 (ingest half), 5 (read half) and 6
-   deliver asks (2) and (3) **with no execution capability whatsoever** if you
-   say no.
-2. **Default for trading**: opt-in (`--trading`) or on by default? Recommended
-   opt-in.
-3. **Hard caps**: max lot per command, max commands per hour, and whether
-   `add_volume` should exist at all (it is the one that can grow risk without
-   bound).
-4. **Demo first?** `accounts.is_demo` is stored. Recommended: refuse to execute
-   on a live account until one full session has run clean on demo.
+These override the recommendations that were offered alongside each question.
+They are binding on every phase below.
+
+1. **Go/no-go on execution: GO.** The journal may send orders. Phase 2 is
+   unblocked; §0.3's "explicit written go-ahead" condition is satisfied by this
+   line.
+2. **Trading is ON BY DEFAULT.** No `--trading` opt-in flag. Consequences the
+   implementation must therefore carry instead:
+   - `journal live` executes pending commands unless `--no-trading` is passed;
+     the opt-**out** flag still exists for a pure-ingest run.
+   - `journal serve` exposes the trading routes by default. Because the safety
+     is no longer a flag, the **confirm step in the UI is not optional** — every
+     destructive action shows the exact parsed intent and requires a second
+     POST. This is now the primary guard, not a secondary one.
+   - `--host` other than a loopback address **must be refused** while trading is
+     enabled. On by default plus LAN-exposed is an unauthenticated order-entry
+     endpoint; the bind check replaces the flag as the thing standing between a
+     stray request and a real order.
+3. **Hard cap: 1.00 lot maximum per command.** A single constant, enforced in
+   `domain/commands.py` validation (so it is unit-tested, not a UI nicety), and
+   applied to `close_partial` and `add_volume` alike. `add_volume` **does
+   exist**, bounded by this cap and by `volume_max` from `symbol_specs`. No
+   commands-per-hour cap was requested — do not invent one.
+4. **Real account is acceptable.** No demo-first gate, no `is_demo` check that
+   blocks execution. Note for the record: this account trades `XAUUSDc` where
+   1 lot = 1 oz, so the 1.00-lot cap is a meaningful ceiling, not a formality.
+
+**Unchanged by these answers:** everything in §0.3 that is not about
+permission — rules 1, 2, 3, 4, 5, 7, 8, 10, 12 all still bind, a `sent` command
+is still never auto-retried (Phase 4.5), and rule 9 still forbids the system
+generating a suggested SL, an auto-breakeven, a trailing stop, or any sizing
+recommendation. The human types the number; the system validates it, sends it,
+and reports verbatim what the broker said.
