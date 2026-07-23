@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Iterator
 
 from fastapi import Depends, FastAPI, Form, Request
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -28,7 +28,6 @@ from ..render.chart import NoCandlesError, TradeNotFoundError, render_trade
 from ..store.db import connect
 from . import format as fmt
 from . import views
-from fastapi.responses import JSONResponse
 from . import api
 
 # URL path segment → command kind. The URL uses hyphens; the kind uses
@@ -347,7 +346,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
 
     # --------------------------------------------------------------- SPA (/app)
     # React build served here during the transition; Jinja stays at its routes.
-    if _FRONTEND_DIST.is_dir():
+    if _FRONTEND_DIST.is_dir() and (_FRONTEND_DIST / "assets").is_dir():
         app.mount(
             "/app/assets",
             StaticFiles(directory=_FRONTEND_DIST / "assets"),

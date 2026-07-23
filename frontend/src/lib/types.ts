@@ -8,7 +8,7 @@ export interface Report {
   win_rate: number | null;
   expectancy: number | null;
   avg_r: number | null; n_with_r: number;
-  by_symbol: { label: string; n: number; win_rate: number | null; avg_r: number | null }[];
+  by_symbol: { label: string; n: number; n_with_r: number; win_rate: number | null; avg_r: number | null }[];
 }
 
 export interface EquitySvg {

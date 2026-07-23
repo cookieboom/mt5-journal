@@ -17,8 +17,8 @@ export default function RecentTrades({
         </tr>
       </thead>
       <tbody>
-        {rows.map((r) => (
-          <tr key={r.close_time_msc} className="border-t border-white/5">
+        {rows.map((r, i) => (
+          <tr key={i} className="border-t border-white/5">
             <td className="py-2 num">{wib(r.close_time_msc, offsetS)}</td>
             <td className="py-2 num text-right">{money(r.equity, currency)}</td>
           </tr>
