@@ -61,15 +61,32 @@ auto-breakeven, no sizing.
 M8's baseline; +173 across the six phases). Boundary greps clean: no
 `import MetaTrader5` and no `TRADE_*`/`ORDER_*` value outside `adapter/`; `web/`
 imports no adapter. Migration replay test passes (fresh-v2 == migrated-v1→v2).
-On a **copy** of the live DB (original untouched, per the Phase-1 rule):
-`migrate`→v2, `rebuild`→**72 trades / 72 mae-mfe computable** (unchanged),
-`verify`→**both balance identities PASS**, residual +0.00, the 14.50 USC archived
-reconciliation intact. **NOT yet measured (human-run, needs the live bridge):**
-Phase 7.6 live smoke — `journal live --once`, a real position opening/closing to
-prove auto-ingest end to end, and one `modify_sltp` from the UI confirmed in MT5
-itself. Until that is pasted here, M9 is *code-complete and offline-verified*, not
-*proven against real money.* Also unmeasured: browser visual/contrast check of
-the redesign in light and dark.
+On the live DB (migrated in place, backup kept): `migrate`→v2, `rebuild`→72/72
+mae-mfe, `verify`→**both identities PASS**, residual +0.00, the 14.50 USC archived
+reconciliation intact.
+
+**Live smoke — MEASURED 2026-07-23 (real account, real bridge):**
+- **Auto-ingest on close (ask 2) — PROVEN.** `journal live --no-trading` running,
+  a real XAUUSDc position (#1582918124, 0.01 lot) opened → heartbeat went
+  `0 open` → `1 open · 1 SL/TP snapshot(s)`; closed → `closed [1582918124] —
+  menjalankan ingest… -> ingested`. `trades` grew 72→82 and `verify` still PASSED
+  both identities afterward — the close-triggered pipeline ran and left the DB
+  consistent, with no manual command.
+- **Web live view — PROVEN.** `/live` rendered the open position live (floating
+  P&L −0.90 USC labelled floating, SL/TP shown as `0`=none-set, "data 3s ago").
+- **Two real bugs found and fixed by running it live** (regression-tested):
+  `database is locked` (connect() now WAL + busy_timeout so live+serve coexist),
+  and a silent heartbeat that read as a freeze (per-cycle heartbeat + an
+  `on_closing` notice before the blocking ingest). **Footgun learned:** run
+  `live` AND `serve` with the SAME absolute `--db`; `serve` without `--db` from
+  the worktree makes a stray empty `data/journal.db` and `/live` looks empty.
+- **NOT yet measured:** Phase 7.6's ask 1 — one real `modify_sltp` (or close)
+  SENT from the UI with trading ON and confirmed in MT5 itself. This is the only
+  money-moving path still unexercised end to end. Also unmeasured: browser
+  visual/contrast check of the redesign in light and dark.
+
+M9 is now *live-verified for ingest + the read/observe surface; the order-SEND
+path is code-complete and offline-tested but not yet fired at the broker.*
 
 **Done:** M0 (adapter + store + doctor) · M0.1 (Candle→ms, enums probed from the
 bridge) · M0.2 (fixtures re-recorded with `comment` preserved, `a15cc5e`) ·
