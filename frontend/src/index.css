@@ -1,0 +1,25 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { color-scheme: dark; }
+
+body {
+  margin: 0;
+  background:
+    radial-gradient(130% 120% at 100% -10%, #1a1740 0%, #0b0a1a 52%) fixed;
+  color: theme(colors.ink);
+  font-family: theme(fontFamily.sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* data numerals: solid, high-contrast, tabular (never gradient) */
+.num { font-variant-numeric: tabular-nums; }
+
+/* glass panel */
+.glass {
+  background: theme(colors.panel);
+  border: 1px solid theme(colors.panel-border);
+  border-radius: 14px;
+  backdrop-filter: blur(8px);
+}
