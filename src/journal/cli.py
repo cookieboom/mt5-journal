@@ -508,16 +508,24 @@ def live(
     trading = not no_trading
 
     def _echo_cycle(r) -> None:
-        # Foreground command a human watches; log.info is invisible with no
-        # handler configured. Print only when something real happened.
-        parts = []
+        # `journal live` is a foreground command a human WATCHES — unlike the M4
+        # poller it must show a heartbeat every cycle, not stay silent on idle.
+        # A silent terminal here reads as "hung / nothing happening" even while
+        # the loop is correctly mirroring positions (the exact confusion reported
+        # the first time this ran live). So print one line per cycle: at minimum
+        # the open-position count, plus anything real that happened.
+        when = datetime.fromtimestamp(r.observed_msc / 1000, tz=timezone.utc)
+        parts = [f"{r.positions_seen} open"]
+        if r.snapshots_written:
+            parts.append(f"{r.snapshots_written} SL/TP snapshot(s)")
         if r.closed_ids:
-            parts.append(f"closed {r.closed_ids}" + (" -> ingested" if r.ingest_ran else " (ingest FAILED)"))
+            parts.append(
+                f"closed {r.closed_ids}"
+                + (" -> ingested" if r.ingest_ran else " (ingest FAILED — see log)")
+            )
         if r.command_id is not None:
             parts.append(f"cmd {r.command_id} -> {r.command_status}")
-        if parts:
-            when = datetime.fromtimestamp(r.observed_msc / 1000, tz=timezone.utc)
-            typer.echo(f"  [{when:%H:%M:%S} UTC] " + "; ".join(parts))
+        typer.echo(f"  [{when:%H:%M:%S} UTC] " + " · ".join(parts))
 
     conn = connect(db)
     try:
@@ -533,6 +541,19 @@ def live(
             interval_idle=interval, trading=trading,
             once=once, duration=duration, on_cycle=_echo_cycle,
         )
+    except sqlite3.OperationalError as e:
+        # WAL + busy_timeout (store/db.py) makes this rare, but two `journal live`
+        # processes on one DB still contend past the timeout. Only ONE live loop
+        # may own the bridge (plan §0.4) — say so plainly instead of a traceback.
+        if "locked" in str(e).lower():
+            typer.echo(
+                "live: database TERKUNCI — kemungkinan ada `journal live` lain yang "
+                "sedang menulis DB ini. Jalankan HANYA SATU `journal live` sekaligus "
+                "(satu proses saja yang boleh memegang bridge). `journal serve` boleh "
+                "jalan bersamaan."
+            )
+            raise typer.Exit(1)
+        raise
     finally:
         conn.close()
 

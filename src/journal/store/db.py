@@ -132,6 +132,21 @@ def connect(path: str | Path) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
 
+    # M9 made this a MULTI-PROCESS database: `journal live` holds one long-lived
+    # writer connection for the whole poll loop, while `journal serve` opens its
+    # own connections to read `open_positions` and to write a `pending` command.
+    # SQLite's defaults (rollback journal + busy_timeout 0) fail such a collision
+    # INSTANTLY with "database is locked" — which is exactly what a live loop and
+    # a dashboard running side by side produce. WAL lets one writer and any number
+    # of readers proceed without blocking each other, and a busy_timeout makes the
+    # rare writer-vs-writer overlap (live's per-cycle write vs serve's enqueue)
+    # wait-and-retry instead of erroring. Both are the standard shape for a
+    # long-running-writer + web-reader SQLite app; neither weakens any invariant.
+    # (On an in-memory DB, WAL silently stays 'memory' — harmless.)
+    conn.execute("PRAGMA busy_timeout = 5000")   # ms; wait, don't fail instantly
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA synchronous = NORMAL")  # safe under WAL, no fsync/commit
+
     if _is_fresh(conn):
         conn.executescript(_SCHEMA_PATH.read_text())
         conn.execute(

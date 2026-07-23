@@ -279,3 +279,46 @@ def test_migration_files_are_numbered_contiguously_from_2():
     files = sorted(dbmod.migration_files())
     numbers = [int(p.name.split("_", 1)[0]) for p in files]
     assert numbers == list(range(2, SCHEMA_VERSION + 1))
+
+
+# -------------------------------------------------- M9 concurrency (WAL + busy)
+# `journal live` (one long-lived writer) and `journal serve` (readers + enqueue
+# writer) run against the same file at the same time. Without WAL + a busy_timeout
+# that collision is an instant "database is locked" — reported the first time M9
+# ran live. These pin the fix.
+
+
+def test_connect_enables_wal_and_busy_timeout(tmp_path):
+    """A FILE-backed DB comes back in WAL mode with a non-zero busy_timeout — the
+    two settings that let a live writer and a web reader coexist."""
+    conn = connect(tmp_path / "wal.db")
+    try:
+        assert conn.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
+        assert conn.execute("PRAGMA busy_timeout").fetchone()[0] > 0
+    finally:
+        conn.close()
+
+
+def test_two_connections_reader_and_writer_do_not_lock(tmp_path):
+    """Under WAL a reader connection and a writer connection to the SAME file both
+    proceed — the live-loop-plus-dashboard shape. Before the fix, the reader's open
+    transaction made the writer raise OperationalError('database is locked')."""
+    p = tmp_path / "shared.db"
+    writer = connect(p)
+    reader = connect(p)
+    try:
+        # reader holds an open read transaction (what a serve request does mid-render)
+        reader.execute("BEGIN")
+        reader.execute("SELECT count(*) FROM open_positions").fetchone()
+        # writer writes concurrently — must NOT raise under WAL
+        writer.execute(
+            "INSERT INTO open_positions "
+            "(account_login, position_id, symbol, symbol_base, observed_msc) "
+            "VALUES (1, 1, 'XAUUSDc', 'XAUUSD', 1)"
+        )
+        writer.commit()
+        reader.commit()
+        assert writer.execute("SELECT count(*) FROM open_positions").fetchone()[0] == 1
+    finally:
+        writer.close()
+        reader.close()
