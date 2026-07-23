@@ -204,8 +204,9 @@ M6 decisions worth knowing:
 - **Weekly output is a reproducible `cache/` artifact** (rule 6) — verified
   byte-identical on regeneration; `cache/` is gitignored.
 
-**Next: roadmap complete through M6.** The original ask (M0–M3) plus the
-poller, analytics, and human layer are all shipped. No milestone is currently
+**Next: roadmap complete through M7.** The original ask (M0–M3) plus the
+poller, analytics, the human layer, and the M7 web dashboard (`journal serve`,
+`cec87d9`) are all shipped. No milestone is currently
 scheduled; natural follow-ups if the tool earns daily use: auto-tag rule
 expansion (the `source='auto'` pipeline is built), a multi-week/trend view
 (the weekly builder generalises), and richer annotation querying/filtering.

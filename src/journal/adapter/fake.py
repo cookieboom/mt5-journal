@@ -4,8 +4,8 @@ This is what makes CLAUDE.md Hard rule 1 real: every test and every non-adapter
 module can run against `FakeMT5Client` with nothing installed and nothing
 listening on :8001.
 
-Fixture layout (all valid empty placeholders for M0; populated in later
-milestones):
+Fixture layout (real recorded data, sanitised — see scripts/record_fixtures.py;
+a missing or empty fixture degrades to None/[], which the tests also exercise):
     account.json    -> object            -> Account
     symbols.json    -> [object]          -> list[SymbolInfo]
     ticks.json      -> {symbol: object}  -> Tick, keyed by symbol
