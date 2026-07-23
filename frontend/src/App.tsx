@@ -1,13 +1,14 @@
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import AppShell from "./components/AppShell";
 import Placeholder from "./pages/Placeholder";
+import Dashboard from "./pages/Dashboard";
 
 export default function App() {
   return (
     <BrowserRouter basename="/app">
       <AppShell>
         <Routes>
-          <Route path="/" element={<Placeholder name="Dashboard" />} />
+          <Route path="/" element={<Dashboard />} />
           <Route path="/live" element={<Placeholder name="Live" />} />
           <Route path="/trades" element={<Placeholder name="Trades" />} />
           <Route path="/trades/:id" element={<Placeholder name="Trade detail" />} />

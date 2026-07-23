@@ -102,6 +102,13 @@ def create_app(db_path: str | None = None) -> FastAPI:
         except RuntimeError as e:
             return JSONResponse({"error": str(e)}, status_code=400)
 
+    @app.get("/api/dashboard")
+    def api_dashboard(conn: sqlite3.Connection = Depends(get_conn)):
+        try:
+            return JSONResponse(api.dashboard_payload(conn))
+        except RuntimeError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+
     # ------------------------------------------------------------------- report
 
     @app.get("/report", response_class=HTMLResponse)
