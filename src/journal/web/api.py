@@ -53,6 +53,27 @@ def dashboard_payload(conn: sqlite3.Connection) -> dict:
     })
 
 
+def report_payload(conn: sqlite3.Connection) -> dict:
+    """Header + the M8 analytics report + the raw per-trade chart series for
+    /api/report. Composes `views.report_context` and `views.analytics_series_context`
+    (like `dashboard_payload` composes its pieces); adds no logic. The §9 gate and
+    NULLs arrive as JSON null and pass through untouched (rule 4). Money stays raw USC."""
+    return to_jsonable({
+        "header": views.account_header(conn),
+        "report": views.report_context(conn)["report"],
+        "series": views.analytics_series_context(conn)["series"],
+    })
+
+
+def weekly_payload(conn: sqlite3.Connection, iso_year: int, iso_week: int) -> dict:
+    """Header + one ISO week's `WeeklyResult` + the week-navigation list for
+    /api/weekly. Wraps `views.weekly_context`; adds no logic. `net_total` is a
+    realized sum (always shown); rate/average fields arrive `null` when §9-gated
+    (a single week rarely clears n≥20) — never 0 (rule 4). Money raw USC; the
+    route resolves which (year, week) to pass."""
+    return to_jsonable(views.weekly_context(conn, iso_year, iso_week))
+
+
 def live_payload(conn: sqlite3.Connection) -> dict:
     """Header + the open-positions strip (floating P&L, staleness) for /api/live.
     Wraps `views.live_context`; adds no logic. `profit` is FLOATING (USC);

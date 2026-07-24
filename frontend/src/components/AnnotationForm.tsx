@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Annotation } from "../lib/types";
 import { postJson } from "../lib/api";
 
@@ -19,11 +19,31 @@ export default function AnnotationForm({
   const [err, setErr] = useState<string | null>(null);
   const [ok, setOk] = useState(false);
 
+  // Resync fields only when the trade (positionId) changes, NOT on same-trade
+  // refetches — a TagEditor reload must not clobber unsaved edits.
+  useEffect(() => {
+    setSetup(a?.setup ?? "");
+    setConfidence(a?.confidence != null ? String(a.confidence) : "");
+    setEmotion(a?.emotion ?? "");
+    setFp(a?.followed_plan === 1 ? "yes" : a?.followed_plan === 0 ? "no" : "");
+    setNotes(a?.notes ?? "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [positionId]);
+
   const submit = async () => {
     setSaving(true); setErr(null); setOk(false);
+    const confRaw = confidence.trim();
+    if (confRaw !== "") {
+      const c = Number(confRaw);
+      if (!Number.isInteger(c) || c < 1 || c > 5) {
+        setSaving(false);
+        setErr("confidence harus bilangan bulat 1–5 (kosongkan bila belum dicatat)");
+        return;
+      }
+    }
     const body = {
       setup: setup.trim() === "" ? null : setup.trim(),
-      confidence: confidence.trim() === "" ? null : Number(confidence),
+      confidence: confRaw === "" ? null : Number(confRaw),
       emotion: emotion.trim() === "" ? null : emotion.trim(),
       followed_plan: fp === "yes" ? true : fp === "no" ? false : null,
       notes: notes.trim() === "" ? null : notes,

@@ -244,6 +244,24 @@ def report_context(conn: sqlite3.Connection) -> dict:
     return {"report": build_report(conn)}
 
 
+def analytics_series_context(conn: sqlite3.Connection) -> dict:
+    """Raw per-trade rows for the /report charts (R-histogram, MAE/MFE scatter,
+    daily-P&L calendar). Every CLOSED trade with a realized `close_time_msc`,
+    ordered by close time. Same tier as `equity_curve`: a plain DB read, no
+    averaging and no §9 gating — the client bins/buckets and applies gating.
+    `r_multiple`/`mae_r`/`mfe_r` stay NULL when unknown (rule 4); such trades are
+    dropped per-chart on the client, never plotted as 0. Money is raw USC."""
+    login = one_account_login(conn)
+    rows = conn.execute(
+        "SELECT position_id, symbol_base, close_time_msc, net_profit, "
+        "r_multiple, mae_r, mfe_r FROM trades "
+        "WHERE account_login = ? AND status = 'closed' AND close_time_msc IS NOT NULL "
+        "ORDER BY close_time_msc ASC",
+        (login,),
+    ).fetchall()
+    return {"series": rows}
+
+
 def _tags_by_position(conn: sqlite3.Connection, login: int) -> dict[int, list[tuple[str, str]]]:
     """Every tag for the account, grouped by position_id — one query instead of
     N. Ordered source-first like `list_tags`."""
