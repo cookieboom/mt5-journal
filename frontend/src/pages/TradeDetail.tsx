@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useParams } from "react-router-dom";
 import { useApi } from "../lib/api";
 import { TradeDetailData } from "../lib/types";
@@ -19,6 +20,7 @@ const na = <span className="text-muted" title="perlu SL awal diketahui untuk men
 export default function TradeDetail() {
   const { id } = useParams();
   const { data, error, loading, reload } = useApi<TradeDetailData>(`/api/trades/${id}`);
+  const [chartFailed, setChartFailed] = useState(false);
   if (loading) return <div className="text-muted p-6">Memuat…</div>;
   if (error) return <div className="glass p-6 text-neg">Gagal memuat: {error}</div>;
   if (!data) return null;
@@ -59,14 +61,12 @@ export default function TradeDetail() {
         <div className="glass p-4">
           <h2 className="text-[13px] font-semibold uppercase tracking-wider text-muted mb-2">Chart</h2>
           {chartable ? (
-            <img className="w-full rounded" src={`/trades/${trade.position_id}/chart.png`}
-              alt={`chart trade ${trade.position_id}`}
-              onError={(e) => {
-                const el = e.currentTarget;
-                el.insertAdjacentHTML("afterend",
-                  '<p class="text-[12px] text-muted">Chart belum tersedia — jalankan <code>uv run journal candles</code> lalu buka lagi.</p>');
-                el.remove();
-              }} />
+            chartFailed ? (
+              <p className="text-[12px] text-muted">Chart belum tersedia — jalankan <code>uv run journal candles</code> lalu buka lagi.</p>
+            ) : (
+              <img className="w-full rounded" src={`/trades/${trade.position_id}/chart.png`}
+                alt={`chart trade ${trade.position_id}`} onError={() => setChartFailed(true)} />
+            )
           ) : (
             <p className="text-[12px] text-muted">Hanya trade closed yang bisa di-chart.</p>
           )}

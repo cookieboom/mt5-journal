@@ -10,17 +10,21 @@ export default function TagEditor({
 }) {
   const [newTag, setNewTag] = useState("");
   const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
 
   const add = async () => {
-    if (newTag.trim() === "") return;
-    setErr(null);
+    if (busy || newTag.trim() === "") return;
+    setBusy(true); setErr(null);
     const r = await postJson(`/api/trades/${positionId}/tags`, { tag: newTag.trim() });
+    setBusy(false);
     if (!r.ok) { setErr(r.error ?? "gagal"); return; }
     setNewTag(""); onChanged();
   };
   const del = async (tag: string) => {
-    setErr(null);
+    if (busy) return;
+    setBusy(true); setErr(null);
     const r = await postJson(`/api/trades/${positionId}/tags/delete`, { tag });
+    setBusy(false);
     if (!r.ok) { setErr(r.error ?? "gagal"); return; }
     onChanged();
   };
@@ -44,7 +48,7 @@ export default function TagEditor({
         <input className="bg-white/5 rounded px-2 py-1 text-ink flex-1" value={newTag}
           onChange={(e) => setNewTag(e.target.value)} placeholder="tag manual, mis. revenge-trade"
           onKeyDown={(e) => { if (e.key === "Enter") add(); }} />
-        <button className="px-3 py-1.5 rounded bg-violet/20 ring-1 ring-violet/40 text-ink" onClick={add}>Tambah</button>
+        <button className="px-3 py-1.5 rounded bg-violet/20 ring-1 ring-violet/40 text-ink" onClick={add} disabled={busy}>Tambah</button>
       </div>
       {err && <div className="text-neg text-[12px] mt-2">Ditolak: {err}</div>}
       <p className="text-[11px] text-muted mt-2">Tag <span className="px-1 rounded bg-white/6">auto</span> di-set oleh <code>rebuild</code> dan tak bisa dihapus di sini.</p>
