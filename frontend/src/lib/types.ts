@@ -1,14 +1,44 @@
 // Shapes mirror web/api.py payloads. Money numbers are raw USC; null = unknown.
 export interface Header { login: number; currency: string; offset_s: number; }
 
+export interface Bucket {
+  label: string;
+  n: number;
+  win_rate: number | null;
+  expectancy: number | null;
+  n_with_r: number;
+  avg_r: number | null;
+}
 export interface Report {
   currency: string;
   n_total: number; n_closed: number;
   n_wins: number; n_losses: number; n_breakeven: number;
   win_rate: number | null;
+  avg_win: number | null;
+  avg_loss: number | null;
+  profit_factor: number | null;
   expectancy: number | null;
   avg_r: number | null; n_with_r: number;
-  by_symbol: { label: string; n: number; n_with_r: number; win_rate: number | null; avg_r: number | null }[];
+  n_with_mae: number;
+  n_with_mae_r: number; avg_mae_r: number | null;
+  n_with_mfe_r: number; avg_mfe_r: number | null;
+  by_session: Bucket[];
+  by_source: Bucket[];
+  by_symbol: Bucket[];
+}
+export interface ChartTrade {
+  position_id: number;
+  symbol_base: string;
+  close_time_msc: number;
+  net_profit: number;
+  r_multiple: number | null;
+  mae_r: number | null;
+  mfe_r: number | null;
+}
+export interface ReportData {
+  header: Header;
+  report: Report;
+  series: ChartTrade[];
 }
 
 export interface EquitySvg {
