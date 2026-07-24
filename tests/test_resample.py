@@ -47,3 +47,13 @@ def test_resample_guard_emits_fully_covered_bucket():
     covered = [(0, 4*M1)]  # covers every M1 open in the 0..5m bucket
     out = resample_m1(bars, "M5", covered=covered)
     assert len(out) == 1 and out[0].time_msc == 0
+
+def test_resample_preserves_genuine_zero_volume():
+    # Hard Rule 4: a computed sum of 0 is a KNOWN zero, not unknown/None.
+    # This account's symbols routinely report real_volume=0.
+    bars = [Candle(time_msc=i*M1, open=1, high=1, low=1, close=1,
+                   tick_volume=0, spread=0, real_volume=0) for i in range(5)]
+    out = resample_m1(bars, "M5")
+    assert len(out) == 1
+    assert out[0].tick_volume == 0
+    assert out[0].real_volume == 0

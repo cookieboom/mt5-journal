@@ -7,13 +7,14 @@ UTC midnight and H4 to 00/04/08/12/16/20:00. Never assume the offset elsewhere.
 """
 from __future__ import annotations
 
-from ..adapter.base import Candle
+from ..adapter.base import Candle, TIMEFRAMES
 
 _M1 = 60_000
 _TF_MS = {
     "M1": _M1, "M5": 300_000, "M15": 900_000,
     "H1": 3_600_000, "H4": 14_400_000, "D1": 86_400_000,
 }
+assert set(_TF_MS) == set(TIMEFRAMES), "resample timeframes drifted from adapter.base.TIMEFRAMES"
 
 
 def bucket_start(time_msc: int, timeframe: str) -> int:
@@ -66,9 +67,9 @@ def resample_m1(
                 high=max(b.high for b in bars),
                 low=min(b.low for b in bars),
                 close=bars[-1].close,
-                tick_volume=tv or None,
+                tick_volume=tv,
                 spread=None,          # charts don't need it; not meaningful post-merge
-                real_volume=rv or None,
+                real_volume=rv,
             )
         )
     return out
