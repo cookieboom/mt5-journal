@@ -88,3 +88,39 @@ export interface TradesData {
   max_abs_net: number;
   filters: { symbol: string; status: string; source: string };
 }
+
+export interface Annotation {
+  setup: string | null;
+  confidence: number | null;
+  emotion: string | null;
+  followed_plan: number | null;  // 0 | 1 | null
+  notes: string | null;
+}
+export interface TradeFull {
+  position_id: number;
+  symbol_base: string;
+  direction: "buy" | "sell";
+  status: "closed" | "open" | "partially_open";
+  open_time_msc: number;
+  close_time_msc: number | null;
+  duration_s: number | null;
+  volume: number;
+  open_price: number | null;
+  close_price: number | null;
+  sl_initial: number | null;
+  tp_initial: number | null;
+  net_profit: number | null;
+  r_multiple: number | null;
+  mae_r: number | null;
+  mfe_r: number | null;
+  magic: number | null;
+}
+export interface TradeDetailData {
+  header: Header;
+  trade: TradeFull;
+  annotation: Annotation | null;
+  tags: [string, string][];
+  session: string;
+  is_ea: boolean;
+  chartable: boolean;
+}
