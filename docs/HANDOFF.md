@@ -1,5 +1,10 @@
 # Handoff — read this first
 
+> **Update 2026-07-24 (Phase 5 cutover):** the web UI is now the React SPA
+> served at `/`; the Jinja2 templates, `/static/app.css`, the form-POST write
+> routes, and the `jinja2`/`python-multipart` deps have been retired. `journal
+> serve` and the loopback/WAL coexistence notes below are unchanged.
+
 ## YOUR STANDING INSTRUCTIONS
 
 You sit in the **architect / reviewer** seat on mt5-journal. Not the implementer.

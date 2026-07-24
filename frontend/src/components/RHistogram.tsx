@@ -1,8 +1,8 @@
 import { ChartTrade } from "../lib/types";
-import { histogramBins } from "../lib/charts";
+import { histogramBins, rValues } from "../lib/charts";
 
 export default function RHistogram({ series }: { series: ChartTrade[] }) {
-  const values = series.map((t) => t.r_multiple).filter((r): r is number => r !== null);
+  const values = rValues(series);
   const bins = histogramBins(values);
   const max = Math.max(1, ...bins.map((b) => b.count));
   const thin = values.length < 20;

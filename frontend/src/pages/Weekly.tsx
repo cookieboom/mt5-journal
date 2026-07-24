@@ -25,7 +25,7 @@ export default function Weekly() {
 
   return (
     <div>
-      <h1 className="text-[18px] font-bold tracking-tight mb-1">Weekly · {wk(r.iso_year, r.iso_week)}</h1>
+      <h1 className="text-[18px] font-bold tracking-tight mb-1">Weekly review · {wk(r.iso_year, r.iso_week)}</h1>
       <div className="text-[12px] text-muted mb-4">Mon–Sun UTC · trade diatribusikan ke minggu saat ditutup (realized).</div>
 
       {weeks.length > 0 && (

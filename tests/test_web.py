@@ -421,100 +421,6 @@ def test_dashboard_context_carries_live_and_equity(conn):
     assert ctx["live"]["empty"] is True  # no open positions seeded
 
 
-# --------------------------------------------------- template rendering
-
-
-def _env():
-    """The SAME Jinja env `web/app.py` configures — built here so templates can
-    be rendered against a seeded DB with no HTTP layer (matches this file's
-    no-TestClient discipline)."""
-    from pathlib import Path
-
-    from fastapi.templating import Jinja2Templates
-
-    here = Path(views.__file__).resolve().parent
-    t = Jinja2Templates(directory=str(here / "templates"))
-    t.env.filters.update(
-        money=fmt.money, pct=fmt.pct, rmult=fmt.rmult, num=fmt.num,
-        gated=fmt.gated, wib=fmt.wib, dur=fmt.dur, price=fmt.price,
-    )
-    t.env.globals["gated"] = fmt.gated
-    t.env.globals["is_gated"] = fmt.is_gated
-    return t.env
-
-
-def _render(name, ctx):
-    html = _env().get_template(name).render(ctx)
-    assert isinstance(html, str) and html.strip()  # non-empty, did not raise
-    return html
-
-
-def _seed_a_bit(conn):
-    _seed_account(conn)
-    _seed_trade(conn, 1, status="closed", close_time_msc=_ms(10, day=15),
-                net_profit=10.0, r_multiple=1.3, symbol="XAUUSDc")
-    _seed_trade(conn, 2, status="closed", close_time_msc=_ms(11, day=16),
-                net_profit=-4.0, symbol="BTCUSDc")
-
-
-def test_all_pages_render_with_seeded_db(conn):
-    _seed_a_bit(conn)
-    d = views.dashboard_context(conn); d["header"] = views.account_header(conn)
-    _render("dashboard.html", d)
-    rp = views.report_context(conn); rp["header"] = views.account_header(conn)
-    _render("report.html", rp)
-    _render("trades.html", views.trades_context(conn))
-    _render("trade_detail.html", views.trade_detail_context(conn, 1))
-    _render("weekly.html", views.weekly_context(conn, 2026, 3))
-    lv = views.live_context(conn); lv["header"] = views.account_header(conn)
-    _render("live.html", lv)
-    cm = views.commands_context(conn); cm["header"] = views.account_header(conn)
-    _render("commands.html", cm)
-    _render("error.html", {"message": "contoh pesan error"})
-
-
-def test_all_pages_render_with_empty_db(conn):
-    # Account but ZERO trades / positions — the explicit plan verification.
-    _seed_account(conn)
-    d = views.dashboard_context(conn); d["header"] = views.account_header(conn)
-    _render("dashboard.html", d)
-    rp = views.report_context(conn); rp["header"] = views.account_header(conn)
-    _render("report.html", rp)
-    _render("trades.html", views.trades_context(conn))
-    lv = views.live_context(conn); lv["header"] = views.account_header(conn)
-    _render("live.html", lv)
-    cm = views.commands_context(conn); cm["header"] = views.account_header(conn)
-    _render("commands.html", cm)
-    # trade_detail has no trade to show on an empty DB — the route returns None → 404.
-    assert views.trade_detail_context(conn, 1) is None
-
-
-def test_report_gated_cell_explains_itself_in_html(conn):
-    # A thin bucket (n<20) must render its WHY, not a bare "n/a".
-    _seed_a_bit(conn)
-    rp = views.report_context(conn); rp["header"] = views.account_header(conn)
-    html = _render("report.html", rp)
-    assert "perlu ≥20" in html
-    assert "n=" in html
-
-
-def test_rendered_money_carries_currency_no_bare_dollar(conn):
-    _seed_a_bit(conn)
-    d = views.dashboard_context(conn); d["header"] = views.account_header(conn)
-    html = _render("dashboard.html", d)
-    assert "USC" in html          # money figures carry the currency code
-    assert "$" not in html        # never a bare dollar (Trap 13)
-
-
-def test_live_strip_labels_floating_not_realized(conn):
-    _seed_account(conn)
-    _seed_position(conn, 1, profit=12.0, observed_msc=now_ms())
-    d = views.dashboard_context(conn); d["header"] = views.account_header(conn)
-    html = _render("dashboard.html", d)
-    assert "floating" in html.lower()  # floating P&L is labelled, never realized
-    assert "USC" in html
-
-
 def test_is_loopback():
     from journal.cli import _is_loopback
 
@@ -541,3 +447,49 @@ def test_analytics_series_context_raw_closed_trades_nulls_preserved(conn):
     assert series[1]["r_multiple"] is None               # rule 4: unknown stays null
     # mae_r/mfe_r default null when the poller/candles haven't filled them
     assert series[0]["mae_r"] is None and series[0]["mfe_r"] is None
+
+
+# --------------------------------------------------- route wiring (no httpx)
+from starlette.routing import Match
+from journal.web.app import create_app
+
+
+def _resolve(app, method, path):
+    """The FIRST route to fully-match (method, path), via Starlette's own matcher.
+    Lets us assert route PRECEDENCE without an HTTP client (no httpx dependency)."""
+    scope = {"type": "http", "method": method, "path": path}
+    for route in app.router.routes:
+        match, _ = route.matches(scope)
+        if match == Match.FULL:
+            return getattr(route, "name", None)
+    return None
+
+
+def test_api_and_chart_routes_beat_spa_catchall():
+    app = create_app(":memory:")
+    assert _resolve(app, "GET", "/api/dashboard") == "api_dashboard"
+    assert _resolve(app, "GET", "/api/trades/1") == "api_trade_detail"
+    assert _resolve(app, "GET", "/api/weekly/2026-W28") == "api_weekly"
+    assert _resolve(app, "GET", "/trades/1/chart.png") == "trade_chart"
+
+
+def test_root_and_client_routes_serve_the_spa():
+    app = create_app(":memory:")
+    for path in ("/", "/report", "/live", "/trades", "/trades/1", "/weekly/2026-W28", "/commands"):
+        assert _resolve(app, "GET", path) == "spa", path
+
+
+def test_legacy_app_prefix_is_just_a_client_path_now():
+    app = create_app(":memory:")
+    # /app was the transition mount; after cutover it is an ordinary client path
+    # served by the SPA shell, NOT a dedicated route.
+    assert _resolve(app, "GET", "/app") == "spa"
+    assert _resolve(app, "GET", "/app/trades") == "spa"
+
+
+def test_jinja_write_routes_are_gone():
+    app = create_app(":memory:")
+    # The Jinja form-POST write path is retired; the JSON /api/* twins remain.
+    assert _resolve(app, "POST", "/trades/1/annotate") is None
+    assert _resolve(app, "POST", "/live/1/close") is None
+    assert _resolve(app, "POST", "/api/trades/1/annotate") == "api_annotate"

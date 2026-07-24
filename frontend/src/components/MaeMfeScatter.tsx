@@ -1,10 +1,8 @@
 import { ChartTrade } from "../lib/types";
+import { maeMfePoints } from "../lib/charts";
 
 export default function MaeMfeScatter({ series }: { series: ChartTrade[] }) {
-  const pts = series.filter(
-    (t): t is ChartTrade & { mae_r: number; mfe_r: number } =>
-      t.mae_r !== null && t.mfe_r !== null,
-  );
+  const pts = maeMfePoints(series);
   const W = 320, H = 200, pad = 28;
   const xs = pts.map((p) => p.mae_r);
   const ys = pts.map((p) => p.mfe_r);
