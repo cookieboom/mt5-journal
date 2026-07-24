@@ -2,6 +2,8 @@ import { useParams } from "react-router-dom";
 import { useApi } from "../lib/api";
 import { TradeDetailData } from "../lib/types";
 import { money, rmult, price, wib, dur } from "../lib/format";
+import AnnotationForm from "../components/AnnotationForm";
+import TagEditor from "../components/TagEditor";
 
 function Fact({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -16,11 +18,11 @@ const na = <span className="text-muted" title="perlu SL awal diketahui untuk men
 
 export default function TradeDetail() {
   const { id } = useParams();
-  const { data, error, loading } = useApi<TradeDetailData>(`/api/trades/${id}`);
+  const { data, error, loading, reload } = useApi<TradeDetailData>(`/api/trades/${id}`);
   if (loading) return <div className="text-muted p-6">Memuat…</div>;
   if (error) return <div className="glass p-6 text-neg">Gagal memuat: {error}</div>;
   if (!data) return null;
-  const { header, trade, session, is_ea, chartable } = data;
+  const { header, trade, annotation, tags, session, is_ea, chartable } = data;
   const pnl = trade.net_profit ?? 0;
 
   return (
@@ -69,6 +71,11 @@ export default function TradeDetail() {
             <p className="text-[12px] text-muted">Hanya trade closed yang bisa di-chart.</p>
           )}
         </div>
+      </div>
+
+      <div className="grid md:grid-cols-2 gap-4 mt-4">
+        <AnnotationForm positionId={trade.position_id} annotation={annotation} onSaved={reload} />
+        <TagEditor positionId={trade.position_id} tags={tags} onChanged={reload} />
       </div>
 
       <p className="mt-4 text-[12px]"><a className="text-cyan hover:underline" href="/app/trades">← kembali ke daftar</a></p>
