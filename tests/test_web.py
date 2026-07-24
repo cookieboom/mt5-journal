@@ -492,4 +492,37 @@ def test_jinja_write_routes_are_gone():
     # The Jinja form-POST write path is retired; the JSON /api/* twins remain.
     assert _resolve(app, "POST", "/trades/1/annotate") is None
     assert _resolve(app, "POST", "/live/1/close") is None
+
+
+# -------------------------------------------------- /api/candles (no httpx)
+# This file deliberately has no TestClient (see module docstring): FastAPI's
+# TestClient needs httpx, which isn't a project dependency (CLAUDE.md rule 8).
+# `_endpoint` finds the plain route function the same way `_resolve` finds its
+# name, then calls it directly with an explicit `conn` — bypassing FastAPI's
+# `Depends` wiring entirely, exactly like calling a `views`/`api` builder above.
+
+import json
+
+
+def _endpoint(app, name):
+    for route in app.router.routes:
+        if getattr(route, "name", None) == name:
+            return route.endpoint
+    raise AssertionError(f"no route named {name!r}")
+
+
+def test_api_candles_route_returns_200_with_missing(conn):
+    app = create_app(":memory:")
+    fn = _endpoint(app, "api_candles")
+    resp = fn(symbol="XAUUSDc", timeframe="M1", from_ms=0, to_ms=180000, conn=conn)
+    assert resp.status_code == 200
+    body = json.loads(resp.body)
+    assert body["symbol"] == "XAUUSDc" and "candles" in body and body["pending"] is True
+
+
+def test_api_candles_route_400_on_bad_timeframe(conn):
+    app = create_app(":memory:")
+    fn = _endpoint(app, "api_candles")
+    resp = fn(symbol="XAUUSDc", timeframe="M3", from_ms=0, to_ms=180000, conn=conn)
+    assert resp.status_code == 400
     assert _resolve(app, "POST", "/api/trades/1/annotate") == "api_annotate"

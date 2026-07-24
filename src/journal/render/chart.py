@@ -30,6 +30,7 @@ import mplfinance as mpf  # noqa: E402 -- must follow matplotlib.use("Agg")
 import pandas as pd  # noqa: E402
 
 from ..adapter.base import TIMEFRAMES
+from ..store import candles_store
 from ..store.db import one_account_login
 
 # --------------------------------------------------------------- TF ladder
@@ -213,12 +214,7 @@ def render_trade(
         trade["open_time_msc"], trade["close_time_msc"], chosen_tf
     )
 
-    rows = conn.execute(
-        "SELECT time_msc, open, high, low, close, tick_volume FROM candles "
-        "WHERE symbol = ? AND timeframe = ? AND time_msc BETWEEN ? AND ? "
-        "ORDER BY time_msc",
-        (trade["symbol"], chosen_tf, from_msc, to_msc),
-    ).fetchall()
+    rows = candles_store.read_candles(conn, trade["symbol"], chosen_tf, from_msc, to_msc)
 
     if not rows:
         raise NoCandlesError(

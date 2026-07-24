@@ -159,6 +159,37 @@ CREATE TABLE IF NOT EXISTS symbol_specs (
     filling_mode      INTEGER             -- broker's allowed fill modes, bitmask
 );
 
+-- Which [from_msc, to_msc] ranges have actually been FETCHED, per (symbol,
+-- timeframe). This is how "empty because market closed" (fetched, no bars) is
+-- told apart from "empty because never fetched" (must fetch). Ranges are merged
+-- on insert into a minimal disjoint set. Bar-open ms, server time. Inclusive.
+-- Kept byte-identical with migrations/003_candle_store.sql (Phase A).
+CREATE TABLE IF NOT EXISTS candle_coverage (
+    symbol     TEXT NOT NULL,
+    timeframe  TEXT NOT NULL,
+    from_msc   INTEGER NOT NULL,
+    to_msc     INTEGER NOT NULL,
+    PRIMARY KEY (symbol, timeframe, from_msc)
+);
+
+-- The on-demand fill queue. The web INSERTs a 'pending' row and never talks to
+-- the bridge; `journal live` claims and fulfils it. UNLIKE trade_commands this
+-- is idempotent and retry-safe: an orphaned 'claimed' row is re-queued, never
+-- failed. No money, no position — refetching candles is always safe.
+CREATE TABLE IF NOT EXISTS candle_requests (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    symbol        TEXT NOT NULL,
+    timeframe     TEXT NOT NULL,
+    from_msc      INTEGER NOT NULL,
+    to_msc        INTEGER NOT NULL,
+    status        TEXT NOT NULL DEFAULT 'pending',  -- pending|claimed|done|failed
+    requested_msc INTEGER NOT NULL,
+    claimed_msc   INTEGER,
+    completed_msc INTEGER,
+    bars_written  INTEGER,
+    error         TEXT
+);
+
 -- ---------------------------------------------------------------- derived (rebuildable)
 
 CREATE TABLE IF NOT EXISTS trades (

@@ -92,6 +92,19 @@ def _pos(
     )
 
 
+class FakeLiveClientWithRates(FakeLiveClient):
+    """Extends `FakeLiveClient` (rather than adding a second parallel fake) so
+    `copy_rates_range` returns one scripted bar regardless of the range asked —
+    just enough for a candle-fulfilment cycle to write a real row."""
+
+    def __init__(self, batches, bar):
+        super().__init__(batches)
+        self._bar = bar
+
+    def copy_rates_range(self, symbol, timeframe, date_from, date_to):
+        return [self._bar]
+
+
 def _spy_pipeline(monkeypatch):
     """Record the pipeline order without touching real ingest. Returns the list
     the four stages append their names to as they run."""
@@ -409,3 +422,29 @@ def test_loop_once_takes_priority_over_duration(conn):
     r = live_loop(client, conn, _LOGIN, once=True, duration=100.0, sleep=exploding_sleep)
     assert r.cycles == 1
     assert r.stopped_by == "once"
+
+
+# ---------------------------------------------------------------- candle requests
+
+
+def test_live_cycle_fulfils_one_candle_request(conn):
+    from journal.store import candle_queue as q
+    from journal.adapter.base import Candle
+
+    BASE = 1_700_000_000_000
+    M1 = 60_000
+    bar = Candle(
+        time_msc=BASE + M1, open=1, high=2, low=0.5, close=1.5,
+        tick_volume=1, spread=1, real_volume=1,
+    )
+    client = FakeLiveClientWithRates([[]], bar)
+    q.request_candles(conn, "XAUUSDc", "M1", 0, 3 * M1)
+
+    r = live_cycle(client, conn, _LOGIN, trading=True)
+
+    assert r.candle_request_id is not None
+    assert r.candle_bars_written == 1
+    row = conn.execute(
+        "SELECT status FROM candle_requests WHERE id = ?", (r.candle_request_id,)
+    ).fetchone()
+    assert row["status"] == "done"

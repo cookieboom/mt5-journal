@@ -5,7 +5,7 @@ it. The web never talks to MT5; it INSERTs a `pending` row into `trade_commands`
 and this loop claims, sends, and records it. That split is what keeps CLAUDE.md
 rules 1 and 12 literally true everywhere else in the codebase.
 
-One cycle does three jobs, in this order and for a reason:
+One cycle does four jobs, in this order and for a reason:
 
   1. **Mirror.** Fetch `positions_get()` ONCE and use that single list for
      everything downstream — the SL/TP snapshots (via the reused `poll_once`),
@@ -25,6 +25,15 @@ One cycle does three jobs, in this order and for a reason:
      and run it through the same gate the web used at enqueue time — the world
      moves between enqueue and claim, so we re-validate. One command per cycle
      keeps the sequence serial and auditable.
+
+  4. **Fulfil one candle request.** Claim the OLDEST pending row in
+     `candle_requests` (queued by the web, never sent there directly — see
+     CLAUDE.md rules 1/12) and run it through `candle_fill.fulfill_request`.
+     Same one-per-cycle discipline as commands, so a large backfill can never
+     starve the position heartbeat. A failed fetch is marked `failed` and
+     logged, never re-raised past this loop — unlike a command, a candle fetch
+     is idempotent and safe to just re-request, so it does not need the
+     command queue's stricter "never auto-retry" refusal.
 
 The single most important refusal (shared with `execute.recover_interrupted`):
 an order that MAY have reached the broker is NEVER re-sent by a machine. If
@@ -62,7 +71,9 @@ from ..execute import (
     recover_interrupted,
     reject,
 )
+from ..store.candle_queue import claim_next_request, requeue_orphaned
 from ..store.db import now_ms
+from .candle_fill import fulfill_request
 from .poller import poll_once
 
 log = logging.getLogger(__name__)
@@ -78,6 +89,8 @@ class LiveReport:
     ingest_ran: bool = False              # pipeline attempted AND succeeded
     command_id: int | None = None         # the command this cycle acted on, if any
     command_status: str | None = None     # its resulting status ('done'/'failed'/…)
+    candle_request_id: int | None = None
+    candle_bars_written: int | None = None
 
 
 @dataclass(frozen=True)
@@ -275,6 +288,22 @@ def live_cycle(
     if trading:
         command_id, command_status = _execute_one_command(client, conn, login)
 
+    # (4) one candle request per cycle — same one-per-cycle discipline as
+    # commands, so a big backfill can never starve the position heartbeat. This
+    # is the ONLY place a browser-triggered candle fetch reaches the bridge.
+    candle_request_id: int | None = None
+    candle_bars_written: int | None = None
+    req = claim_next_request(conn)
+    if req is not None:
+        candle_request_id = int(req["id"])
+        try:
+            candle_bars_written = fulfill_request(client, conn, req)
+        except Exception:
+            log.exception(
+                "live: candle request %d failed — marked failed, will not auto-retry "
+                "this exact row (a new request re-queues)", candle_request_id
+            )
+
     return LiveReport(
         account_login=login,
         observed_msc=observed_msc,
@@ -284,6 +313,8 @@ def live_cycle(
         ingest_ran=ingest_ran,
         command_id=command_id,
         command_status=command_status,
+        candle_request_id=candle_request_id,
+        candle_bars_written=candle_bars_written,
     )
 
 
@@ -316,6 +347,9 @@ def live_loop(
     recovered = recover_interrupted(conn, login)
     if recovered:
         log.info("live: recovered %d interrupted command(s) at startup", recovered)
+    requeued = requeue_orphaned(conn)
+    if requeued:
+        log.info("live: requeued %d orphaned candle request(s) at startup", requeued)
 
     cycles = 0
     deadline = monotonic() + duration if duration is not None else None
