@@ -65,6 +65,15 @@ def report_payload(conn: sqlite3.Connection) -> dict:
     })
 
 
+def weekly_payload(conn: sqlite3.Connection, iso_year: int, iso_week: int) -> dict:
+    """Header + one ISO week's `WeeklyResult` + the week-navigation list for
+    /api/weekly. Wraps `views.weekly_context`; adds no logic. `net_total` is a
+    realized sum (always shown); rate/average fields arrive `null` when §9-gated
+    (a single week rarely clears n≥20) — never 0 (rule 4). Money raw USC; the
+    route resolves which (year, week) to pass."""
+    return to_jsonable(views.weekly_context(conn, iso_year, iso_week))
+
+
 def live_payload(conn: sqlite3.Connection) -> dict:
     """Header + the open-positions strip (floating P&L, staleness) for /api/live.
     Wraps `views.live_context`; adds no logic. `profit` is FLOATING (USC);

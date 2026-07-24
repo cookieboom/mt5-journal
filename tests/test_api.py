@@ -263,3 +263,35 @@ def test_report_payload_composes_report_and_series(conn):
     by_pos = {s["position_id"]: s for s in p["series"]}
     assert by_pos[1]["mfe_r"] == 2.1
     assert by_pos[2]["r_multiple"] is None
+
+
+def test_weekly_payload_shape_gating_and_notes(conn):
+    _seed_account(conn)
+    # two closed trades in ISO 2026-W03 (Jan 15 = Thu of week 3); one annotated
+    _seed_trade(conn, 1, net_profit=250.0, close_time_msc=_ms(10, day=15))
+    _seed_trade(conn, 2, net_profit=-80.0, close_time_msc=_ms(11, day=15))
+    _seed_annotation(conn, 1, setup="breakout", confidence=4, followed_plan=1)
+    _seed_tag(conn, 1, "revenge", source="manual")
+
+    p = api.weekly_payload(conn, 2026, 3)
+    json.dumps(p)  # must not raise
+    assert set(p.keys()) == {"header", "result", "weeks", "start_ms"}
+    r = p["result"]
+    assert r["iso_year"] == 2026 and r["iso_week"] == 3
+    assert r["n_closed"] == 2
+    assert r["net_total"] == 170.0           # 250 + (-80); a sum, always shown
+    assert r["win_rate"] is None             # §9: 2 < 20 → gated to null, not 0
+    # notes surfaces the annotated/manually-tagged trade
+    assert [n["position_id"] for n in r["notes"]] == [1]
+    assert r["notes"][0]["setup"] == "breakout"
+    # weeks nav lists (year, week) tuples as JSON arrays
+    assert [2026, 3] in p["weeks"]
+
+
+def test_weekly_payload_empty_week_is_honest(conn):
+    _seed_account(conn)
+    p = api.weekly_payload(conn, 2026, 3)
+    assert p["result"]["n_closed"] == 0
+    assert p["result"]["net_total"] == 0
+    assert p["result"]["notes"] == []
+    assert p["weeks"] == []                   # no closed trades → empty nav
