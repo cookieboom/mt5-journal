@@ -86,7 +86,7 @@ export default function Report() {
       <div className="grid md:grid-cols-3 gap-4">
         <BucketTable title="Per session (UTC)" rows={r.by_session} ccy={ccy} />
         <BucketTable title="Per source (EA = magic≠0)" rows={r.by_source} ccy={ccy} />
-        <BucketTable title="Per symbol" rows={r.by_symbol} ccy={ccy} />
+        <BucketTable title="Per symbol (symbol_base)" rows={r.by_symbol} ccy={ccy} />
       </div>
 
       <div className="grid lg:grid-cols-2 gap-4 mt-4">
