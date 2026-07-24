@@ -653,9 +653,10 @@ Expected: succeeds (trades rebuilt from raw).
 
 - [ ] **Step 6: Live smoke — SPA at `/`, data routes intact**
 
-Start the server (background), then probe:
+Start the server (background), then probe. NOTE: `journal serve` ignores the
+`JOURNAL_DB` env var — pass `--db` explicitly (carried from the Phase 4 ledger):
 ```bash
-JOURNAL_DB=data/journal.db uv run journal serve &
+uv run journal serve --db data/journal.db &
 sleep 2
 curl -s -o /dev/null -w "GET / -> %{http_code} %{content_type}\n" http://127.0.0.1:8000/
 curl -s -o /dev/null -w "GET /report -> %{http_code} %{content_type}\n" http://127.0.0.1:8000/report
