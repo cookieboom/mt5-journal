@@ -202,3 +202,59 @@ def test_record_coverage_ignores_a_reversed_range(tmp_path):
         assert cs.read_coverage(conn, "XAUUSDc", "M5") == [(1000, 2000)]
     finally:
         conn.close()
+
+
+def test_sync_candles_populates_coverage(conn, tmp_path):
+    """Cross-producer contract: the legacy per-trade ingest path must record
+    candle_coverage too, so the store can tell 'fetched, empty' from 'never
+    fetched' regardless of which producer filled it. Previously only true by
+    inspection (candles.py:77 calls record_coverage)."""
+    open_msc = 1_700_000_000_000
+    close_msc = open_msc + 373_000
+    _insert_trade(conn, position_id=555, open_msc=open_msc, close_msc=close_msc,
+                   duration_s=373)
+    fx = tmp_path / "fixtures"
+    _write_rates(fx, "XAUUSDc:M1", open_msc)
+    client = FakeMT5Client(fixtures_dir=fx)
+
+    report = sync_candles(client, conn)
+    assert report.trades_seen == 1
+    for sym in report.symbols:
+        # every symbol a window was fetched for now has coverage recorded
+        has_any = any(
+            cs.read_coverage(conn, sym, tf)
+            for tf in ("M1", "M5", "M15", "H1", "H4", "D1")
+        )
+        assert has_any, f"no coverage recorded for {sym}"
+
+
+# ------------------------------------------------------------- candles_payload
+
+
+def test_candles_payload_truncates_to_max_bars(tmp_path):
+    """When more native bars are cached than max_bars, the payload returns the
+    LAST max_bars (most recent), never the head. (The bucket-boundary
+    aggregation bug is already fixed in Phase A — do not re-test it here.)"""
+    from journal.web import api
+
+    db_conn = connect(tmp_path / "j.db")
+    try:
+        base = 1_700_000_000_000
+        step = 5 * 60_000
+        n = 12
+        for i in range(n):
+            t = base + i * step
+            cs.insert_candle(
+                db_conn, "XAUUSDc", "M5",
+                Candle(time_msc=t, open=1.0, high=2.0, low=0.5, close=1.5, tick_volume=10),
+            )
+        cs.record_coverage(db_conn, "XAUUSDc", "M5", base, base + (n - 1) * step)
+        db_conn.commit()
+
+        out = api.candles_payload(db_conn, "XAUUSDc", "M5", base, base + (n - 1) * step, max_bars=5)
+        assert len(out["candles"]) == 5
+        # kept the most recent 5 (tail), so first kept bar is the 8th (index 7)
+        assert out["candles"][0]["time_msc"] == base + 7 * step
+        assert out["candles"][-1]["time_msc"] == base + (n - 1) * step
+    finally:
+        db_conn.close()

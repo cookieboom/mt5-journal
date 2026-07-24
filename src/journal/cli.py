@@ -389,7 +389,7 @@ def candles_warm(
         n = fill_range(client, conn, symbol, timeframe, from_ms, to_ms)
     finally:
         conn.close()
-    typer.echo(f"== candles-warm ==")
+    typer.echo("== candles-warm ==")
     typer.echo(f"{symbol} {timeframe} [{from_ms}, {to_ms}]: {n} new bars")
 
 
