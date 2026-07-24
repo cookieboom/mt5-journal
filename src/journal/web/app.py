@@ -122,6 +122,35 @@ def create_app(db_path: str | None = None) -> FastAPI:
         except RuntimeError as e:
             return JSONResponse({"error": str(e)}, status_code=400)
 
+    @app.get("/api/trades")
+    def api_trades(
+        symbol: str | None = None,
+        status: str | None = None,
+        source: str | None = None,
+        conn: sqlite3.Connection = Depends(get_conn),
+    ):
+        try:
+            return JSONResponse(
+                api.trades_payload(conn, symbol=symbol, status=status, source=source)
+            )
+        except RuntimeError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+
+    @app.get("/api/trades/{position_id}")
+    def api_trade_detail(
+        position_id: int, conn: sqlite3.Connection = Depends(get_conn)
+    ):
+        try:
+            payload = api.trade_detail_payload(conn, position_id)
+        except RuntimeError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        if payload is None:
+            return JSONResponse(
+                {"error": f"Tidak ada trade dengan position_id {position_id}."},
+                status_code=404,
+            )
+        return JSONResponse(payload)
+
     # --- two-step trade command (M9 safety: preview writes nothing; enqueue
     # inserts ONE pending row; `journal live` executes. Validation lives in
     # domain/commands via preview_command/enqueue and is re-run at enqueue.)
