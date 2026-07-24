@@ -370,6 +370,56 @@ def candles(db: str = typer.Option(_DEFAULT_DB, help="SQLite DB path.")) -> None
     typer.echo(f"symbols:        {', '.join(r.symbols) or '(none)'}")
 
 
+@app.command("candles-warm")
+def candles_warm(
+    symbol: str = typer.Argument(..., help="Exact MT5 symbol, e.g. XAUUSDc."),
+    timeframe: str = typer.Argument(..., help="One of M1,M5,M15,H1,H4,D1."),
+    from_ms: int = typer.Option(..., "--from", help="Range start, epoch ms (server time)."),
+    to_ms: int = typer.Option(..., "--to", help="Range end, epoch ms (server time)."),
+    db: str = typer.Option(_DEFAULT_DB, help="SQLite DB path."),
+) -> None:
+    """Eagerly fill a candle range from the bridge into the store (pre-warm before
+    an offline session). Needs the live bridge. Idempotent."""
+    from .adapter.live import LiveMT5Client
+    from .ingest.candle_fill import fill_range
+
+    client = LiveMT5Client()
+    conn = connect(db)
+    try:
+        n = fill_range(client, conn, symbol, timeframe, from_ms, to_ms)
+    finally:
+        conn.close()
+    typer.echo(f"== candles-warm ==")
+    typer.echo(f"{symbol} {timeframe} [{from_ms}, {to_ms}]: {n} new bars")
+
+
+@app.command("candles-coverage")
+def candles_coverage(
+    symbol: str = typer.Option(None, help="Filter to one symbol."),
+    db: str = typer.Option(_DEFAULT_DB, help="SQLite DB path."),
+) -> None:
+    """Print stored candle coverage ranges per (symbol, timeframe). No bridge."""
+    from .store import candles_store as cs
+
+    conn = connect(db)
+    try:
+        rows = conn.execute(
+            "SELECT DISTINCT symbol, timeframe FROM candle_coverage "
+            + ("WHERE symbol = ? " if symbol else "")
+            + "ORDER BY symbol, timeframe",
+            (symbol,) if symbol else (),
+        ).fetchall()
+        typer.echo("== candles-coverage ==")
+        if not rows:
+            typer.echo("(none)")
+        for r in rows:
+            ranges = cs.read_coverage(conn, r["symbol"], r["timeframe"])
+            spans = ", ".join(f"[{a}, {b}]" for a, b in ranges)
+            typer.echo(f"{r['symbol']:10} {r['timeframe']:4} {spans}")
+    finally:
+        conn.close()
+
+
 # --------------------------------------------------------------------- chart
 
 
