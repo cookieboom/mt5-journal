@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 
 from ..adapter.base import MT5Client
 from ..store import candles_store as cs
+from ..store import candle_queue as _queue
 
 
 def _ms_to_dt(ms: int) -> datetime:
@@ -30,3 +31,16 @@ def fill_range(client: MT5Client, conn: sqlite3.Connection, symbol: str,
         cs.record_coverage(conn, symbol, timeframe, lo, hi)
     conn.commit()
     return bars_new
+
+
+def fulfill_request(client: MT5Client, conn: sqlite3.Connection, req: sqlite3.Row) -> int:
+    """Run a claimed request through fill_range; mark done (or failed + re-raise).
+    Returns bars_new."""
+    try:
+        bars = fill_range(client, conn, req["symbol"], req["timeframe"],
+                          req["from_msc"], req["to_msc"])
+    except Exception as e:
+        _queue.mark_failed(conn, int(req["id"]), str(e))
+        raise
+    _queue.mark_done(conn, int(req["id"]), bars)
+    return bars
