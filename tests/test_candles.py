@@ -16,6 +16,7 @@ from journal.adapter.base import Candle
 from journal.adapter.fake import FakeMT5Client
 from journal.ingest.candles import sync_candles
 from journal.render.chart import PAD_BARS, choose_timeframe, window_for
+from journal.store import candles_store as cs
 from journal.store.db import connect
 
 _LOGIN = 0
@@ -184,3 +185,20 @@ def test_sync_candles_rejects_seconds_leaked_as_msc(conn, tmp_path):
 
     with pytest.raises(ValueError, match="Trap 15"):
         sync_candles(BadTimeClient(), conn)
+
+
+# --------------------------------------------------- record_coverage
+
+
+def test_record_coverage_ignores_a_reversed_range(tmp_path):
+    """from_ms > to_ms is nonsense; it must not enter the coverage set (mirror
+    missing_ranges' lo>hi guard). A reversed call is a no-op."""
+    conn = connect(tmp_path / "j.db")
+    try:
+        cs.record_coverage(conn, "XAUUSDc", "M5", 2000, 1000)  # reversed
+        assert cs.read_coverage(conn, "XAUUSDc", "M5") == []
+        # a valid range still records normally
+        cs.record_coverage(conn, "XAUUSDc", "M5", 1000, 2000)
+        assert cs.read_coverage(conn, "XAUUSDc", "M5") == [(1000, 2000)]
+    finally:
+        conn.close()

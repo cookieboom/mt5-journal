@@ -78,6 +78,8 @@ def record_coverage(conn: sqlite3.Connection, symbol: str, timeframe: str,
                     from_ms: int, to_ms: int) -> None:
     """Merge [from_ms, to_ms] into stored coverage and rewrite the disjoint set.
     Caller commits (fill_range / ingest do one commit)."""
+    if from_ms > to_ms:
+        return                                       # reversed range: no-op (mirror missing_ranges)
     merged = _merge(read_coverage(conn, symbol, timeframe) + [(from_ms, to_ms)])
     conn.execute("DELETE FROM candle_coverage WHERE symbol = ? AND timeframe = ?", (symbol, timeframe))
     conn.executemany(
