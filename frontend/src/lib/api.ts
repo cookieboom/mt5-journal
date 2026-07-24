@@ -4,6 +4,7 @@ export function useApi<T>(path: string, intervalMs?: number) {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [tick, setTick] = useState(0);
 
   useEffect(() => {
     let alive = true;
@@ -23,9 +24,9 @@ export function useApi<T>(path: string, intervalMs?: number) {
     load();
     const id = intervalMs ? setInterval(load, intervalMs) : undefined;
     return () => { alive = false; if (id) clearInterval(id); };
-  }, [path, intervalMs]);
+  }, [path, intervalMs, tick]);
 
-  return { data, error, loading };
+  return { data, error, loading, reload: () => setTick((t) => t + 1) };
 }
 
 export async function postJson<T>(

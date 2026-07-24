@@ -71,3 +71,30 @@ def commands_payload(conn: sqlite3.Connection) -> dict:
         "header": views.account_header(conn),
         "commands": views.commands_context(conn)["commands"],
     })
+
+
+def trades_payload(
+    conn: sqlite3.Connection,
+    *,
+    symbol: str | None = None,
+    status: str | None = None,
+    source: str | None = None,
+) -> dict:
+    """The /api/trades list: trade rows (newest-open first) with optional
+    symbol/status/source filters, the per-page `max_abs_net` the sparkbar scales
+    to, tags grouped by position_id, and the distinct symbol list for the filter
+    chips. Wraps `views.trades_context`; adds no logic. Money stays raw USC;
+    a trade's unknown `r_multiple` stays null (rule 4)."""
+    return to_jsonable(
+        views.trades_context(conn, symbol=symbol, status=status, source=source)
+    )
+
+
+def trade_detail_payload(conn: sqlite3.Connection, position_id: int) -> dict | None:
+    """Full facts + human layer for one trade, or `None` if there is no such
+    trade (route → 404). Wraps `views.trade_detail_context`; adds no logic.
+    `sl_initial`/`tp_initial`/`r_multiple` may be null = unknown (rule 4, never
+    0); `annotation` is null until one is written; `chartable` says whether the
+    reused `/trades/{id}/chart.png` will render."""
+    ctx = views.trade_detail_context(conn, position_id)
+    return None if ctx is None else to_jsonable(ctx)

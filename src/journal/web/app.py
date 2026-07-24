@@ -22,7 +22,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from ..annotate import AnnotateError, add_tag, remove_tag, set_annotation
+from ..annotate import AnnotateError, add_tag, list_tags, remove_tag, set_annotation
 from ..execute import CommandError, enqueue
 from ..render.chart import NoCandlesError, TradeNotFoundError, render_trade
 from ..store.db import connect
@@ -122,6 +122,35 @@ def create_app(db_path: str | None = None) -> FastAPI:
         except RuntimeError as e:
             return JSONResponse({"error": str(e)}, status_code=400)
 
+    @app.get("/api/trades")
+    def api_trades(
+        symbol: str | None = None,
+        status: str | None = None,
+        source: str | None = None,
+        conn: sqlite3.Connection = Depends(get_conn),
+    ):
+        try:
+            return JSONResponse(
+                api.trades_payload(conn, symbol=symbol, status=status, source=source)
+            )
+        except RuntimeError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+
+    @app.get("/api/trades/{position_id}")
+    def api_trade_detail(
+        position_id: int, conn: sqlite3.Connection = Depends(get_conn)
+    ):
+        try:
+            payload = api.trade_detail_payload(conn, position_id)
+        except RuntimeError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        if payload is None:
+            return JSONResponse(
+                {"error": f"Tidak ada trade dengan position_id {position_id}."},
+                status_code=404,
+            )
+        return JSONResponse(payload)
+
     # --- two-step trade command (M9 safety: preview writes nothing; enqueue
     # inserts ONE pending row; `journal live` executes. Validation lives in
     # domain/commands via preview_command/enqueue and is re-run at enqueue.)
@@ -164,6 +193,57 @@ def create_app(db_path: str | None = None) -> FastAPI:
         except (RuntimeError, CommandError) as e:
             return JSONResponse({"error": str(e)}, status_code=400)
         return JSONResponse({"ok": True, "command_id": cmd_id})
+
+    # --- trade human layer (M6 writes over JSON). Thin over annotate.py; all
+    # validation (confidence 1-5, orphan-guard, manual-only delete) lives there.
+    # rule 4: an absent field is null = "not recorded" → stored NULL, never 0.
+    @app.post("/api/trades/{position_id}/annotate")
+    def api_annotate(
+        position_id: int,
+        setup: str | None = Body(None),
+        confidence: int | None = Body(None),
+        emotion: str | None = Body(None),
+        followed_plan: bool | None = Body(None),
+        notes: str | None = Body(None),
+        conn: sqlite3.Connection = Depends(get_conn),
+    ):
+        try:
+            ann = set_annotation(
+                conn, position_id, setup=setup, confidence=confidence,
+                emotion=emotion, followed_plan=followed_plan, notes=notes,
+            )
+        except (AnnotateError, RuntimeError) as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        return JSONResponse({"ok": True, "annotation": api.to_jsonable(ann)})
+
+    @app.post("/api/trades/{position_id}/tags")
+    def api_add_tag(
+        position_id: int,
+        tag: str = Body(..., embed=True),
+        conn: sqlite3.Connection = Depends(get_conn),
+    ):
+        try:
+            tags = add_tag(conn, position_id, tag)
+        except (AnnotateError, RuntimeError) as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        return JSONResponse({"ok": True, "tags": api.to_jsonable(tags)})
+
+    @app.post("/api/trades/{position_id}/tags/delete")
+    def api_remove_tag(
+        position_id: int,
+        tag: str = Body(..., embed=True),
+        conn: sqlite3.Connection = Depends(get_conn),
+    ):
+        # Only manual tags are removable; remove_tag's source='manual' filter makes
+        # deleting an auto tag a no-op (removed=0), so no guard is needed here.
+        try:
+            removed = remove_tag(conn, position_id, tag)
+            tags = list_tags(conn, position_id)
+        except RuntimeError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        return JSONResponse(
+            {"ok": True, "removed": removed, "tags": api.to_jsonable(tags)}
+        )
 
     # ------------------------------------------------------------------- report
 

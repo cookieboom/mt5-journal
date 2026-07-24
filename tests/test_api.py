@@ -35,16 +35,18 @@ def _ms(hour: int, day: int = 15) -> int:
     return int(datetime(2026, 1, day, hour, tzinfo=timezone.utc).timestamp() * 1000)
 
 
-def _seed_trade(conn, position_id, *, net_profit=0.0, r_multiple=None,
-                 close_time_msc=None):
+def _seed_trade(conn, position_id, *, symbol_base="XAUUSD", direction="buy",
+                status="closed", net_profit=0.0, r_multiple=None,
+                sl_initial=None, magic=None, close_time_msc=None):
+    symbol = symbol_base + "c"
     conn.execute(
         "INSERT INTO trades (account_login, position_id, symbol, symbol_base, "
-        "direction, status, open_time_msc, close_time_msc, volume, open_price, "
-        "close_price, sl_initial, net_profit, r_multiple, magic, deal_count, rebuilt_at) "
-        "VALUES (?, ?, 'XAUUSDc', 'XAUUSD', 'buy', 'closed', ?, ?, 0.1, 4000.0, "
-        "4001.0, NULL, ?, ?, NULL, 2, 1)",
-        (_LOGIN, position_id, _ms(9), close_time_msc or _ms(10),
-         net_profit, r_multiple),
+        "direction, status, open_time_msc, close_time_msc, duration_s, volume, "
+        "open_price, close_price, sl_initial, net_profit, r_multiple, magic, "
+        "deal_count, rebuilt_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0.1, 4000.0, 4001.0, ?, ?, ?, ?, 2, 1)",
+        (_LOGIN, position_id, symbol, symbol_base, direction, status, _ms(9),
+         close_time_msc or _ms(10), 3600, sl_initial, net_profit, r_multiple, magic),
     )
     conn.commit()
 
@@ -173,3 +175,81 @@ def test_commands_payload_maps_retcode_name(conn):
     assert by_pos[1]["retcode_name"] == "DONE"      # name, not the int
     assert by_pos[2]["retcode_name"] is None         # nothing said yet
     assert by_pos[2]["error"] == "proses berhenti di tengah perintah"
+
+
+# --- annotation / tag seed helpers (mirror tests/test_web.py) ---------------
+
+def _seed_annotation(conn, position_id, *, setup=None, confidence=None,
+                     emotion=None, followed_plan=None, notes=None):
+    conn.execute(
+        "INSERT INTO annotations (account_login, position_id, segment, setup, "
+        "confidence, emotion, followed_plan, notes, created_at, updated_at) "
+        "VALUES (?, ?, 0, ?, ?, ?, ?, ?, 1, 1)",
+        (_LOGIN, position_id, setup, confidence, emotion, followed_plan, notes),
+    )
+    conn.commit()
+
+
+def _seed_tag(conn, position_id, tag, source="manual"):
+    conn.execute(
+        "INSERT INTO tags (account_login, position_id, segment, tag, source) "
+        "VALUES (?, ?, 0, ?, ?)",
+        (_LOGIN, position_id, tag, source),
+    )
+    conn.commit()
+
+
+def test_trades_payload_shape_filters_and_nulls(conn):
+    _seed_account(conn)
+    _seed_trade(conn, 1, symbol_base="XAUUSD", net_profit=250.0, r_multiple=1.5, magic=None)
+    _seed_trade(conn, 2, symbol_base="BTCUSD", net_profit=-80.0, r_multiple=None, magic=777)
+    _seed_tag(conn, 1, "breakout", source="manual")
+    p = api.trades_payload(conn)
+    json.dumps(p)
+    assert p["header"]["currency"] == "USC"
+    assert {t["position_id"] for t in p["trades"]} == {1, 2}
+    assert p["max_abs_net"] == 250.0
+    assert "BTCUSD" in p["symbols"] and "XAUUSD" in p["symbols"]
+    # rule 4: unknown R stays null, never 0
+    by_pos = {t["position_id"]: t for t in p["trades"]}
+    assert by_pos[2]["r_multiple"] is None
+    # tags survive as [tag, source] pairs (json stringifies the int key)
+    tags = json.loads(json.dumps(p))["tags"]
+    assert tags["1"] == [["breakout", "manual"]]
+    # source filter (ea = magic truthy) narrows to the EA trade
+    ea = api.trades_payload(conn, source="ea")
+    assert [t["position_id"] for t in ea["trades"]] == [2]
+    assert ea["filters"]["source"] == "ea"
+    # symbol filter narrows and is echoed back
+    xau = api.trades_payload(conn, symbol="XAUUSD")
+    assert [t["position_id"] for t in xau["trades"]] == [1]
+
+
+def test_trade_detail_payload_facts_annotation_tags(conn):
+    _seed_account(conn)
+    _seed_trade(conn, 5, net_profit=100.0, r_multiple=None, sl_initial=None, magic=42)
+    _seed_annotation(conn, 5, setup="breakout", confidence=4, followed_plan=1)
+    _seed_tag(conn, 5, "auto-win", source="auto")
+    p = api.trade_detail_payload(conn, 5)
+    json.dumps(p)
+    assert p["trade"]["position_id"] == 5
+    assert p["trade"]["sl_initial"] is None      # rule 4: unknown, not 0
+    assert p["trade"]["r_multiple"] is None
+    assert p["is_ea"] is True                      # magic truthy
+    assert p["chartable"] is True                  # closed + close_time set
+    assert p["annotation"]["setup"] == "breakout"
+    assert p["annotation"]["confidence"] == 4
+    assert p["tags"] == [["auto-win", "auto"]]
+
+
+def test_trade_detail_payload_missing_is_none(conn):
+    _seed_account(conn)
+    assert api.trade_detail_payload(conn, 999) is None
+
+
+def test_trade_detail_payload_null_annotation(conn):
+    _seed_account(conn)
+    _seed_trade(conn, 7, net_profit=0.0)
+    p = api.trade_detail_payload(conn, 7)
+    assert p["annotation"] is None                 # no note yet → null, not {}
+    assert p["tags"] == []
