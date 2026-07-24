@@ -1,6 +1,9 @@
 import { useApi } from "../lib/api";
 import { ReportData, Bucket } from "../lib/types";
 import { money, pct, rmult, isGated } from "../lib/format";
+import RHistogram from "../components/RHistogram";
+import MaeMfeScatter from "../components/MaeMfeScatter";
+import CalendarHeatmap from "../components/CalendarHeatmap";
 
 function BucketTable({ title, rows, ccy }: { title: string; rows: Bucket[]; ccy: string }) {
   return (
@@ -41,7 +44,7 @@ export default function Report() {
   if (loading) return <div className="text-muted p-6">Memuat…</div>;
   if (error) return <div className="glass p-6 text-neg">Gagal memuat: {error}</div>;
   if (!data) return null;
-  const { report: r } = data;
+  const { header, report: r, series } = data;
   const ccy = r.currency;
 
   const Kv = ({ label, children }: { label: string; children: React.ReactNode }) => (
@@ -86,6 +89,14 @@ export default function Report() {
         <BucketTable title="Per session (UTC)" rows={r.by_session} ccy={ccy} />
         <BucketTable title="Per source (EA = magic≠0)" rows={r.by_source} ccy={ccy} />
         <BucketTable title="Per symbol" rows={r.by_symbol} ccy={ccy} />
+      </div>
+
+      <div className="grid lg:grid-cols-2 gap-4 mt-4">
+        <RHistogram series={series} />
+        <MaeMfeScatter series={series} />
+      </div>
+      <div className="mt-4">
+        <CalendarHeatmap series={series} currency={r.currency} offsetS={header.offset_s} />
       </div>
     </div>
   );
