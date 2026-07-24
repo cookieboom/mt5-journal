@@ -68,9 +68,9 @@ def _make_v1(path) -> None:
 # ------------------------------------------------------------------ version
 
 
-def test_schema_version_is_3():
-    """Phase A adds candle_coverage + candle_requests."""
-    assert SCHEMA_VERSION == 3
+def test_schema_version_is_4():
+    """Phase B adds the candle_requests.status CHECK (migration 004)."""
+    assert SCHEMA_VERSION == 4
 
 
 def test_fresh_db_has_candle_store_tables(tmp_path):
@@ -162,7 +162,7 @@ def test_migrate_reports_what_it_applied(tmp_path):
     conn.row_factory = sqlite3.Row
     try:
         applied = migrate(conn)
-        assert applied == [2, 3]
+        assert applied == [2, 3, 4]
     finally:
         conn.close()
 
@@ -280,6 +280,49 @@ def test_trade_commands_defaults_to_pending(tmp_path):
         assert row["status"] == "pending"
         # Rule 4: no broker verdict yet is UNKNOWN, not 0.
         assert row["retcode"] is None
+    finally:
+        conn.close()
+
+
+def test_candle_requests_rejects_an_unknown_status(tmp_path):
+    """The CHECK is the guard that a typo'd status can't become a queue row
+    journal live never recognises. Valid: pending|claimed|done|failed."""
+    conn = connect(tmp_path / "j.db")
+    try:
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "INSERT INTO candle_requests "
+                "(symbol, timeframe, from_msc, to_msc, status, requested_msc) "
+                "VALUES ('XAUUSDc', 'M5', 1, 2, 'nonsense', 3)"
+            )
+    finally:
+        conn.close()
+
+
+def test_candle_requests_accepts_each_valid_status(tmp_path):
+    conn = connect(tmp_path / "j.db")
+    try:
+        for st in ("pending", "claimed", "done", "failed"):
+            conn.execute(
+                "INSERT INTO candle_requests "
+                "(symbol, timeframe, from_msc, to_msc, status, requested_msc) "
+                "VALUES ('XAUUSDc', 'M5', 1, 2, ?, 3)",
+                (st,),
+            )
+        assert conn.execute("SELECT count(*) FROM candle_requests").fetchone()[0] == 4
+    finally:
+        conn.close()
+
+
+def test_candle_requests_defaults_to_pending(tmp_path):
+    conn = connect(tmp_path / "j.db")
+    try:
+        conn.execute(
+            "INSERT INTO candle_requests "
+            "(symbol, timeframe, from_msc, to_msc, requested_msc) "
+            "VALUES ('XAUUSDc', 'M5', 1, 2, 3)"
+        )
+        assert conn.execute("SELECT status FROM candle_requests").fetchone()[0] == "pending"
     finally:
         conn.close()
 

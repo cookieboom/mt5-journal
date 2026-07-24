@@ -182,7 +182,8 @@ CREATE TABLE IF NOT EXISTS candle_requests (
     timeframe     TEXT NOT NULL,
     from_msc      INTEGER NOT NULL,
     to_msc        INTEGER NOT NULL,
-    status        TEXT NOT NULL DEFAULT 'pending',  -- pending|claimed|done|failed
+    status        TEXT NOT NULL DEFAULT 'pending' CHECK (status IN
+                      ('pending','claimed','done','failed')),
     requested_msc INTEGER NOT NULL,
     claimed_msc   INTEGER,
     completed_msc INTEGER,
