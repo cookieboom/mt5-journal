@@ -111,10 +111,12 @@ M0 doctor · M1 ingest deals · M2 reconstruct trades · M3 candles + renderer
 · M7 web dashboard (`journal serve`) · M8 by_symbol + `/report` page · M9 live
 positions + trade interaction + auto-ingest on close + UI redesign (`journal
 live`, `/live`; trading ON by default, 1.00-lot cap)
+· **Frontend rework** (Jinja→React SPA, served at `/`; Jinja UI retired at
+Phase 5 cutover)
 
-Currently on: **M9 code-complete + offline-verified (branch
-`claude/trading-system-plan-2959b7`); live-bridge smoke pending human run —
-see docs/HANDOFF.md**
+Currently on: **Frontend React rework COMPLETE — the SPA is the sole UI, served
+at `/` (Jinja retired, Phase 5 cutover). M9 live-bridge smoke still pending a
+human run — see docs/HANDOFF.md**
 
 ## graphify
 
