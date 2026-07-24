@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { money, rmult, pct, wib, isGated, price } from "./format";
+import { money, rmult, pct, wib, isGated, price, dur } from "./format";
 
 describe("format", () => {
   it("money carries currency, never a bare dollar, null is n/a not 0", () => {
@@ -37,5 +37,13 @@ describe("format", () => {
     expect(price(0)).toBe("0");
     expect(price(4010.123)).toBe("4010.123");   // full precision, not %g's 4010.12
     expect(price(100000.5)).toBe("100000.5");   // not %g's 100000
+  });
+
+  it("dur: mirrors web/format.py (null=—, s/m/h ladder with zero-pad)", () => {
+    expect(dur(null)).toBe("—");
+    expect(dur(45)).toBe("45s");
+    expect(dur(720)).toBe("12m");        // 12m exactly, seconds 0 → no s
+    expect(dur(185)).toBe("3m05s");      // seconds zero-padded
+    expect(dur(7620)).toBe("2h07m");     // minutes zero-padded
   });
 });
