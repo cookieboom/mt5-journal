@@ -76,6 +76,20 @@ journal serve  →  FastAPI :8000  (loopback-only bind, as today)
   denser bucket tables) must re-evaluate whether to surface an explicit
   server-computed `gated` flag per bucket rather than relying on the client
   heuristic — decided there, not inherited silently.
+  **Decided (Phase 4):** gating STAYS client-side. `build_report`/`build_weekly`
+  already encode gating as `avg = None`, and the proven `isGated(n, avg)` mirror
+  covers the denser Report/Weekly bucket tables exactly as it does the Dashboard;
+  no server `gated` flag is added. Every stat still ships with its `n`, and the
+  client greys/suppresses any bucket with `n < 20`.
+- **Analytics charts render client-side from raw arrays (decided Phase 4).** The
+  three Phase-4 charts (R-histogram, MAE/MFE scatter, daily-P&L calendar heatmap)
+  follow the `SymbolBars`/`TradeSparkbar` pattern, NOT the server-SVG
+  `_svg_geometry` pattern (which stays scoped to the equity/R line curves): a thin
+  new read-only builder `views.analytics_series_context` ships the raw closed-trade
+  columns (`close_time_msc, net_profit, r_multiple, mae_r, mfe_r`, nulls preserved),
+  and the client does ALL binning / day-bucketing / mark layout. Recharts (present
+  in `package.json` but imported nowhere) is deliberately NOT used — it would be a
+  third, inconsistent chart pattern.
 - **Timestamps** are epoch-ms UTC (rule 3); the client converts to WIB for
   display only.
 - **NULL vs 0** distinction (rule 4, esp. `sl_initial`/`tp_initial`) is preserved
