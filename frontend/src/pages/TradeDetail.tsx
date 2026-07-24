@@ -79,7 +79,7 @@ export default function TradeDetail() {
         <TagEditor positionId={trade.position_id} tags={tags} onChanged={reload} />
       </div>
 
-      <p className="mt-4 text-[12px]"><a className="text-cyan hover:underline" href="/app/trades">← kembali ke daftar</a></p>
+      <p className="mt-4 text-[12px]"><a className="text-cyan hover:underline" href="/trades">← kembali ke daftar</a></p>
     </div>
   );
 }

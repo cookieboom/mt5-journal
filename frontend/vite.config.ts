@@ -1,9 +1,9 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
-// Served by FastAPI under /app during the transition, so assets resolve there.
+// Served by FastAPI at the site root (Phase 5 cutover; Jinja retired).
 export default defineConfig({
-  base: "/app/",
+  base: "/",
   plugins: [react()],
   server: {
     port: 5173,

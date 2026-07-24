@@ -10,7 +10,7 @@ import Weekly from "./pages/Weekly";
 
 export default function App() {
   return (
-    <BrowserRouter basename="/app">
+    <BrowserRouter>
       <AppShell>
         <Routes>
           <Route path="/" element={<Dashboard />} />
