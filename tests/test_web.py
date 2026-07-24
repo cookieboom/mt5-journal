@@ -541,3 +541,49 @@ def test_analytics_series_context_raw_closed_trades_nulls_preserved(conn):
     assert series[1]["r_multiple"] is None               # rule 4: unknown stays null
     # mae_r/mfe_r default null when the poller/candles haven't filled them
     assert series[0]["mae_r"] is None and series[0]["mfe_r"] is None
+
+
+# --------------------------------------------------- route wiring (no httpx)
+from starlette.routing import Match
+from journal.web.app import create_app
+
+
+def _resolve(app, method, path):
+    """The FIRST route to fully-match (method, path), via Starlette's own matcher.
+    Lets us assert route PRECEDENCE without an HTTP client (no httpx dependency)."""
+    scope = {"type": "http", "method": method, "path": path}
+    for route in app.router.routes:
+        match, _ = route.matches(scope)
+        if match == Match.FULL:
+            return getattr(route, "name", None)
+    return None
+
+
+def test_api_and_chart_routes_beat_spa_catchall():
+    app = create_app(":memory:")
+    assert _resolve(app, "GET", "/api/dashboard") == "api_dashboard"
+    assert _resolve(app, "GET", "/api/trades/1") == "api_trade_detail"
+    assert _resolve(app, "GET", "/api/weekly/2026-W28") == "api_weekly"
+    assert _resolve(app, "GET", "/trades/1/chart.png") == "trade_chart"
+
+
+def test_root_and_client_routes_serve_the_spa():
+    app = create_app(":memory:")
+    for path in ("/", "/report", "/live", "/trades", "/trades/1", "/weekly/2026-W28", "/commands"):
+        assert _resolve(app, "GET", path) == "spa", path
+
+
+def test_legacy_app_prefix_is_just_a_client_path_now():
+    app = create_app(":memory:")
+    # /app was the transition mount; after cutover it is an ordinary client path
+    # served by the SPA shell, NOT a dedicated route.
+    assert _resolve(app, "GET", "/app") == "spa"
+    assert _resolve(app, "GET", "/app/trades") == "spa"
+
+
+def test_jinja_write_routes_are_gone():
+    app = create_app(":memory:")
+    # The Jinja form-POST write path is retired; the JSON /api/* twins remain.
+    assert _resolve(app, "POST", "/trades/1/annotate") is None
+    assert _resolve(app, "POST", "/live/1/close") is None
+    assert _resolve(app, "POST", "/api/trades/1/annotate") == "api_annotate"
