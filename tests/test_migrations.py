@@ -68,9 +68,20 @@ def _make_v1(path) -> None:
 # ------------------------------------------------------------------ version
 
 
-def test_schema_version_is_2():
-    """M9 adds open_positions / trade_commands / symbol_specs columns."""
-    assert SCHEMA_VERSION == 2
+def test_schema_version_is_3():
+    """Phase A adds candle_coverage + candle_requests."""
+    assert SCHEMA_VERSION == 3
+
+
+def test_fresh_db_has_candle_store_tables(tmp_path):
+    conn = connect(tmp_path / "fresh.db")
+    try:
+        names = {r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()}
+        assert {"candle_coverage", "candle_requests"} <= names
+    finally:
+        conn.close()
 
 
 def test_fresh_db_is_stamped_at_current_version(tmp_path):
@@ -151,7 +162,7 @@ def test_migrate_reports_what_it_applied(tmp_path):
     conn.row_factory = sqlite3.Row
     try:
         applied = migrate(conn)
-        assert applied == [2]
+        assert applied == [2, 3]
     finally:
         conn.close()
 
