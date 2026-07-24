@@ -151,6 +151,40 @@ def create_app(db_path: str | None = None) -> FastAPI:
             )
         return JSONResponse(payload)
 
+    @app.get("/api/report")
+    def api_report(conn: sqlite3.Connection = Depends(get_conn)):
+        try:
+            return JSONResponse(api.report_payload(conn))
+        except RuntimeError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+
+    @app.get("/api/weekly")
+    def api_weekly_latest(conn: sqlite3.Connection = Depends(get_conn)):
+        from ..analytics.weekly import last_complete_iso_week
+
+        y, w = last_complete_iso_week()
+        try:
+            return JSONResponse(api.weekly_payload(conn, y, w))
+        except RuntimeError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+
+    @app.get("/api/weekly/{week}")
+    def api_weekly(week: str, conn: sqlite3.Connection = Depends(get_conn)):
+        # 'YYYY-Www' → (iso_year, iso_week), validated via strptime's ISO
+        # directives exactly like the legacy `_parse_week` / `cli._parse_iso_week`.
+        try:
+            dt = datetime.strptime(f"{week}-1", "%G-W%V-%u")
+            y, w, _ = dt.isocalendar()
+        except ValueError:
+            return JSONResponse(
+                {"error": f"Minggu harus format ISO 'YYYY-Www' (mis. 2026-W28), got {week!r}."},
+                status_code=400,
+            )
+        try:
+            return JSONResponse(api.weekly_payload(conn, y, w))
+        except RuntimeError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+
     # --- two-step trade command (M9 safety: preview writes nothing; enqueue
     # inserts ONE pending row; `journal live` executes. Validation lives in
     # domain/commands via preview_command/enqueue and is re-run at enqueue.)
