@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import AppShell from "./components/AppShell";
 import Dashboard from "./pages/Dashboard";
 import Live from "./pages/Live";
+import Chart from "./pages/Chart";
 import Commands from "./pages/Commands";
 import Trades from "./pages/Trades";
 import TradeDetail from "./pages/TradeDetail";
@@ -15,6 +16,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/live" element={<Live />} />
+          <Route path="/chart" element={<Chart />} />
           <Route path="/trades" element={<Trades />} />
           <Route path="/trades/:id" element={<TradeDetail />} />
           <Route path="/report" element={<Report />} />

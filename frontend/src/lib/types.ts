@@ -207,3 +207,7 @@ export interface CandlesResponse {
   missing: [number, number][];  // [lo_ms, hi_ms] ranges NOT yet cached
   pending: boolean;             // a fill was enqueued for journal live to drain
 }
+
+// A candle the crosshair is hovering (or the latest bar when idle). Same shape
+// as Candle; named separately so the info panel's intent reads clearly.
+export type HoverBar = Candle;
