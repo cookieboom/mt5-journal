@@ -13,16 +13,19 @@ export default function MaeMfeScatter({ series }: { series: ChartTrade[] }) {
   const xspan = xmax - xmin || 1, yspan = ymax - ymin || 1;
   const X = (v: number) => pad + (W - 2 * pad) * (v - xmin) / xspan;
   const Y = (v: number) => H - pad - (H - 2 * pad) * (v - ymin) / yspan;
+  const thin = pts.length < 20;
   return (
     <div className="glass p-4">
       <div className="flex items-baseline justify-between mb-3">
         <h2 className="text-[13px] font-semibold uppercase tracking-wider text-muted">MAE vs MFE (R)</h2>
-        <span className="text-[11px] text-muted">n={pts.length}</span>
+        <span className={"text-[11px] " + (thin ? "text-muted/60" : "text-muted")}>
+          n={pts.length}{thin ? " (perlu ≥20)" : ""}
+        </span>
       </div>
       {pts.length === 0 ? (
         <div className="text-muted text-sm py-8 text-center">Belum ada trade dengan MAE &amp; MFE (perlu candle + SL).</div>
       ) : (
-        <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-[200px]">
+        <svg viewBox={`0 0 ${W} ${H}`} className={"w-full h-[200px] " + (thin ? "opacity-60" : "")}>
           <line x1={X(0)} y1={pad} x2={X(0)} y2={H - pad} stroke="rgba(255,255,255,0.15)" strokeWidth="1" />
           <line x1={pad} y1={Y(0)} x2={W - pad} y2={Y(0)} stroke="rgba(255,255,255,0.15)" strokeWidth="1" />
           {pts.map((p) => (
