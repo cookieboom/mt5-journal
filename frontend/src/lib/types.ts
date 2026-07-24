@@ -193,3 +193,17 @@ export interface WeeklyData {
   weeks: [number, number][];
   start_ms: number;
 }
+
+// Phase B chart feed — mirrors web/api.candles_payload. time_msc is epoch ms,
+// broker SERVER time (UTC). Divide by 1000 for lightweight-charts (UNIX seconds).
+export interface Candle {
+  time_msc: number;
+  o: number; h: number; l: number; c: number; v: number;
+}
+export interface CandlesResponse {
+  symbol: string;
+  timeframe: string;
+  candles: Candle[];
+  missing: [number, number][];  // [lo_ms, hi_ms] ranges NOT yet cached
+  pending: boolean;             // a fill was enqueued for journal live to drain
+}
