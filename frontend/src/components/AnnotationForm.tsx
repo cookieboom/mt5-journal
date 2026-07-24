@@ -19,13 +19,16 @@ export default function AnnotationForm({
   const [err, setErr] = useState<string | null>(null);
   const [ok, setOk] = useState(false);
 
+  // Resync fields only when the trade (positionId) changes, NOT on same-trade
+  // refetches — a TagEditor reload must not clobber unsaved edits.
   useEffect(() => {
     setSetup(a?.setup ?? "");
     setConfidence(a?.confidence != null ? String(a.confidence) : "");
     setEmotion(a?.emotion ?? "");
     setFp(a?.followed_plan === 1 ? "yes" : a?.followed_plan === 0 ? "no" : "");
     setNotes(a?.notes ?? "");
-  }, [a]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [positionId]);
 
   const submit = async () => {
     setSaving(true); setErr(null); setOk(false);

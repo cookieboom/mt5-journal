@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useParams } from "react-router-dom";
 import { useApi } from "../lib/api";
 import { TradeDetailData } from "../lib/types";
@@ -21,6 +21,7 @@ export default function TradeDetail() {
   const { id } = useParams();
   const { data, error, loading, reload } = useApi<TradeDetailData>(`/api/trades/${id}`);
   const [chartFailed, setChartFailed] = useState(false);
+  useEffect(() => setChartFailed(false), [id]);
   if (loading) return <div className="text-muted p-6">Memuat…</div>;
   if (error) return <div className="glass p-6 text-neg">Gagal memuat: {error}</div>;
   if (!data) return null;
