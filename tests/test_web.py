@@ -524,3 +524,20 @@ def test_is_loopback():
     assert _is_loopback("0.0.0.0") is False
     assert _is_loopback("192.168.1.5") is False
     assert _is_loopback("example.com") is False
+
+
+def test_analytics_series_context_raw_closed_trades_nulls_preserved(conn):
+    _seed_account(conn)
+    # a fully-known trade, an R-unknown trade, and an OPEN trade (excluded)
+    _seed_trade(conn, 1, net_profit=250.0, r_multiple=1.5,
+                close_time_msc=_ms(10), sl_initial=3990.0)
+    _seed_trade(conn, 2, net_profit=-80.0, r_multiple=None,
+                close_time_msc=_ms(11))
+    _seed_trade(conn, 3, status="open", net_profit=0.0, close_time_msc=None)
+    ctx = views.analytics_series_context(conn)
+    series = ctx["series"]
+    assert [s["position_id"] for s in series] == [1, 2]  # open one excluded, time-ordered
+    assert series[0]["net_profit"] == 250.0
+    assert series[1]["r_multiple"] is None               # rule 4: unknown stays null
+    # mae_r/mfe_r default null when the poller/candles haven't filled them
+    assert series[0]["mae_r"] is None and series[0]["mfe_r"] is None

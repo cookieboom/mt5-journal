@@ -37,16 +37,18 @@ def _ms(hour: int, day: int = 15) -> int:
 
 def _seed_trade(conn, position_id, *, symbol_base="XAUUSD", direction="buy",
                 status="closed", net_profit=0.0, r_multiple=None,
-                sl_initial=None, magic=None, close_time_msc=None):
+                sl_initial=None, magic=None, close_time_msc=None,
+                mae_r=None, mfe_r=None):
     symbol = symbol_base + "c"
     conn.execute(
         "INSERT INTO trades (account_login, position_id, symbol, symbol_base, "
         "direction, status, open_time_msc, close_time_msc, duration_s, volume, "
-        "open_price, close_price, sl_initial, net_profit, r_multiple, magic, "
-        "deal_count, rebuilt_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0.1, 4000.0, 4001.0, ?, ?, ?, ?, 2, 1)",
+        "open_price, close_price, sl_initial, net_profit, r_multiple, mae_r, mfe_r, "
+        "magic, deal_count, rebuilt_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0.1, 4000.0, 4001.0, ?, ?, ?, ?, ?, ?, 2, 1)",
         (_LOGIN, position_id, symbol, symbol_base, direction, status, _ms(9),
-         close_time_msc or _ms(10), 3600, sl_initial, net_profit, r_multiple, magic),
+         close_time_msc or _ms(10), 3600, sl_initial, net_profit, r_multiple,
+         mae_r, mfe_r, magic),
     )
     conn.commit()
 
@@ -104,16 +106,6 @@ def test_dashboard_payload_is_jsonable_and_honest(conn):
 
 
 # --- live / commands seed helpers (mirror tests/test_web.py) ---------------
-
-def _seed_spec(conn, symbol="XAUUSDc", *, trade_mode=4,
-               volume_min=0.01, volume_max=100.0, volume_step=0.01):
-    conn.execute(
-        "INSERT INTO symbol_specs (symbol, symbol_base, fetched_at, "
-        "volume_min, volume_max, volume_step, trade_mode) VALUES (?, ?, 1, ?, ?, ?, ?)",
-        (symbol, symbol[:-1], volume_min, volume_max, volume_step, trade_mode),
-    )
-    conn.commit()
-
 
 def _seed_position(conn, position_id, *, symbol="XAUUSDc", direction="buy",
                    volume=0.10, open_price=4000.0, price_current=4010.0,
@@ -253,3 +245,21 @@ def test_trade_detail_payload_null_annotation(conn):
     p = api.trade_detail_payload(conn, 7)
     assert p["annotation"] is None                 # no note yet → null, not {}
     assert p["tags"] == []
+
+
+def test_report_payload_composes_report_and_series(conn):
+    _seed_account(conn)
+    _seed_trade(conn, 1, net_profit=250.0, r_multiple=1.5, mae_r=-0.4, mfe_r=2.1,
+                close_time_msc=_ms(10))
+    _seed_trade(conn, 2, net_profit=-80.0, r_multiple=None, close_time_msc=_ms(11))
+    p = api.report_payload(conn)
+    json.dumps(p)  # must not raise
+    assert set(p.keys()) == {"header", "report", "series"}
+    assert p["header"]["currency"] == "USC"
+    assert p["report"]["n_closed"] == 2
+    # §9 gate: only 2 R-known trades → avg_r withheld as null, never 0
+    assert p["report"]["avg_r"] is None
+    # series carries the raw per-trade chart source; nulls preserved (rule 4)
+    by_pos = {s["position_id"]: s for s in p["series"]}
+    assert by_pos[1]["mfe_r"] == 2.1
+    assert by_pos[2]["r_multiple"] is None

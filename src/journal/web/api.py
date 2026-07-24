@@ -53,6 +53,18 @@ def dashboard_payload(conn: sqlite3.Connection) -> dict:
     })
 
 
+def report_payload(conn: sqlite3.Connection) -> dict:
+    """Header + the M8 analytics report + the raw per-trade chart series for
+    /api/report. Composes `views.report_context` and `views.analytics_series_context`
+    (like `dashboard_payload` composes its pieces); adds no logic. The §9 gate and
+    NULLs arrive as JSON null and pass through untouched (rule 4). Money stays raw USC."""
+    return to_jsonable({
+        "header": views.account_header(conn),
+        "report": views.report_context(conn)["report"],
+        "series": views.analytics_series_context(conn)["series"],
+    })
+
+
 def live_payload(conn: sqlite3.Connection) -> dict:
     """Header + the open-positions strip (floating P&L, staleness) for /api/live.
     Wraps `views.live_context`; adds no logic. `profit` is FLOATING (USC);
