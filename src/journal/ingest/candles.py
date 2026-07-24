@@ -13,11 +13,11 @@ symbol/day").
 
 RANJAU 1 (docs/mt5-deal-model.md Trap 15): the seconds->ms x1000 conversion
 ALREADY happened at the adapter boundary (`live.py` / `fake.py` both do
-`int(r["time"]) * 1000`). `candle.time_msc` is written HERE with NO arithmetic --
-the magnitude check below is a TRIPWIRE against a regression (a second x1000
-landing in this file), never a conversion. A second x1000 turns
-1752624000000 into 1752624000000000; the render window query then matches zero
-rows and the chart comes back empty with no error.
+`int(r["time"]) * 1000`). `candle.time_msc` reaches `candles_store.insert_candle`
+with NO further arithmetic -- that store's magnitude check is a TRIPWIRE against
+a regression (a second x1000 landing before storage), never a conversion. A
+second x1000 turns 1752624000000 into 1752624000000000; the render window query
+then matches zero rows and the chart comes back empty with no error.
 """
 
 from __future__ import annotations
@@ -26,13 +26,10 @@ import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from ..adapter.base import Candle, MT5Client
+from ..adapter.base import MT5Client
 from ..render.chart import choose_timeframe, window_for
+from ..store import candles_store
 from ..store.db import one_account_login
-
-# A bar timestamp below this is SECONDS that leaked through (Trap 15), never a
-# value to convert. See `_insert_candle`.
-_MSC_FLOOR = 10**12
 
 
 @dataclass(frozen=True)
@@ -76,7 +73,8 @@ def sync_candles(client: MT5Client, conn: sqlite3.Connection) -> CandlesReport:
         symbols_touched.add(r["symbol"])
         for c in candles:
             bars_seen += 1
-            bars_new += _insert_candle(conn, r["symbol"], tf, c)
+            bars_new += candles_store.insert_candle(conn, r["symbol"], tf, c)
+        candles_store.record_coverage(conn, r["symbol"], tf, from_msc, to_msc)
 
     conn.commit()
 
@@ -88,33 +86,3 @@ def sync_candles(client: MT5Client, conn: sqlite3.Connection) -> CandlesReport:
         bars_new=bars_new,
         symbols=sorted(symbols_touched),
     )
-
-
-def _insert_candle(
-    conn: sqlite3.Connection, symbol: str, timeframe: str, c: Candle
-) -> int:
-    """Write `c.time_msc` STRAIGHT THROUGH -- see Trap 15 in the module
-    docstring. The magnitude check is a regression tripwire, not a unit
-    conversion: it must never fire on correct input, because the adapter
-    boundary already did the x1000. Returns 1 if the row was newly inserted, 0
-    if it already existed (PK dedupe)."""
-    if c.time_msc is None or c.time_msc < _MSC_FLOOR:
-        raise ValueError(
-            f"candle time_msc={c.time_msc!r} for {symbol} {timeframe} is below "
-            f"{_MSC_FLOOR} -- looks like SECONDS leaked through (Trap 15). Fix "
-            "the adapter boundary (live.py/fake.py), not this module -- it must "
-            "never do its own x1000."
-        )
-    cur = conn.execute(
-        """
-        INSERT OR IGNORE INTO candles
-            (symbol, timeframe, time_msc, open, high, low, close, tick_volume,
-             spread, real_volume)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            symbol, timeframe, c.time_msc, c.open, c.high, c.low, c.close,
-            c.tick_volume, c.spread, c.real_volume,
-        ),
-    )
-    return cur.rowcount
