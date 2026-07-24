@@ -67,3 +67,24 @@ export interface PreviewResult {
 // A trade action: the URL segment and the command body it carries.
 export type ActionKind = "sltp" | "close" | "close-partial" | "add-volume";
 export interface CommandBody { sl?: number | null; tp?: number | null; volume?: number | null; }
+
+export interface TradeRow {
+  position_id: number;
+  symbol_base: string;
+  direction: "buy" | "sell";
+  status: "closed" | "open" | "partially_open";
+  open_time_msc: number;
+  close_time_msc: number | null;
+  duration_s: number | null;
+  net_profit: number | null;
+  r_multiple: number | null;
+  magic: number | null;
+}
+export interface TradesData {
+  header: Header;
+  trades: TradeRow[];
+  tags: Record<string, [string, string][]>;  // keyed by String(position_id)
+  symbols: string[];
+  max_abs_net: number;
+  filters: { symbol: string; status: string; source: string };
+}
