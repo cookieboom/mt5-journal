@@ -61,3 +61,10 @@ export function dur(seconds: number | null): string {
   const mm = m % 60;
   return `${h}h${String(mm).padStart(2, "0")}m`;
 }
+
+export function gatedR(n: number, avg: number | null): string {
+  // §9 sample-size honesty for an R statistic: when the average was withheld
+  // (null under n<20) say why with the count; otherwise the R value. The one
+  // R-gating formatter — mirrors web/format.py:gated for R. rule 4 / docs §9.
+  return isGated(n, avg) ? `n=${n} (perlu ≥20)` : rmult(avg);
+}

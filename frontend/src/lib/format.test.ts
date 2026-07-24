@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { money, rmult, pct, wib, isGated, price, dur } from "./format";
+import { money, rmult, pct, wib, isGated, price, dur, gatedR } from "./format";
 
 describe("format", () => {
   it("money carries currency, never a bare dollar, null is n/a not 0", () => {
@@ -45,5 +45,13 @@ describe("format", () => {
     expect(dur(720)).toBe("12m");        // 12m exactly, seconds 0 → no s
     expect(dur(185)).toBe("3m05s");      // seconds zero-padded
     expect(dur(7620)).toBe("2h07m");     // minutes zero-padded
+  });
+
+  it("gatedR withheld (avg null under n<20) says why with the count", () => {
+    expect(gatedR(6, null)).toBe("n=6 (perlu ≥20)");
+  });
+
+  it("gatedR shows the R value when present", () => {
+    expect(gatedR(25, 1.2)).toBe("1.20R");
   });
 });

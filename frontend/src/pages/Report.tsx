@@ -1,6 +1,6 @@
 import { useApi } from "../lib/api";
 import { ReportData, Bucket } from "../lib/types";
-import { money, pct, rmult, isGated } from "../lib/format";
+import { money, pct, isGated, gatedR } from "../lib/format";
 import RHistogram from "../components/RHistogram";
 import MaeMfeScatter from "../components/MaeMfeScatter";
 import CalendarHeatmap from "../components/CalendarHeatmap";
@@ -21,14 +21,13 @@ function BucketTable({ title, rows, ccy }: { title: string; rows: Bucket[]; ccy:
           <tbody>
             {rows.map((b) => {
               const rowGated = isGated(b.n, b.expectancy);
-              const rGated = isGated(b.n_with_r, b.avg_r);
               return (
                 <tr key={b.label} className={"border-t border-white/5 " + (rowGated ? "text-muted/60" : "")}>
                   <td className="py-2">{b.label}</td>
                   <td className="py-2 num">{b.n}</td>
                   <td className="py-2 num">{pct(b.win_rate)}</td>
                   <td className="py-2 num">{money(b.expectancy, ccy, { sign: true })}</td>
-                  <td className="py-2 num">{rGated ? `n=${b.n_with_r} (≥20)` : rmult(b.avg_r)}</td>
+                  <td className="py-2 num">{gatedR(b.n_with_r, b.avg_r)}</td>
                 </tr>
               );
             })}
@@ -52,7 +51,6 @@ export default function Report() {
       <span className="text-muted">{label}</span><span className="num text-right">{children}</span>
     </div>
   );
-  const rGate = (n: number, avg: number | null) => (isGated(n, avg) ? `n=${n} (perlu ≥20)` : rmult(avg));
 
   return (
     <div>
@@ -79,9 +77,9 @@ export default function Report() {
             MAE / MFE (§9: perlu n≥20, butuh candle + SL)
           </h2>
           <Kv label="Candle coverage">{r.n_with_mae} / {r.n_closed} closed</Kv>
-          <Kv label="Avg MAE (R)">{rGate(r.n_with_mae_r, r.avg_mae_r)}</Kv>
-          <Kv label="Avg MFE (R)">{rGate(r.n_with_mfe_r, r.avg_mfe_r)}</Kv>
-          <Kv label="Avg R (akun)">{rGate(r.n_with_r, r.avg_r)}</Kv>
+          <Kv label="Avg MAE (R)">{gatedR(r.n_with_mae_r, r.avg_mae_r)}</Kv>
+          <Kv label="Avg MFE (R)">{gatedR(r.n_with_mfe_r, r.avg_mfe_r)}</Kv>
+          <Kv label="Avg R (akun)">{gatedR(r.n_with_r, r.avg_r)}</Kv>
         </div>
       </div>
 
