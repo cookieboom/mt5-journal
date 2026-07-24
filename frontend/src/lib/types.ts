@@ -154,3 +154,42 @@ export interface TradeDetailData {
   is_ea: boolean;
   chartable: boolean;
 }
+
+export interface TradeNote {
+  position_id: number;
+  symbol_base: string;
+  net_profit: number;
+  setup: string | null;
+  confidence: number | null;
+  emotion: string | null;
+  followed_plan: number | null;  // 0 | 1 | null
+  notes: string | null;
+  tags: string[];
+}
+export interface WeeklyResult {
+  account_login: number;
+  currency: string;
+  iso_year: number;
+  iso_week: number;
+  start_msc: number;
+  end_msc: number;
+  n_closed: number;
+  n_wins: number;
+  n_losses: number;
+  n_breakeven: number;
+  net_total: number;
+  win_rate: number | null;
+  avg_win: number | null;
+  avg_loss: number | null;
+  profit_factor: number | null;
+  expectancy: number | null;
+  by_session: Bucket[];
+  by_source: Bucket[];
+  notes: TradeNote[];
+}
+export interface WeeklyData {
+  header: Header;
+  result: WeeklyResult;
+  weeks: [number, number][];
+  start_ms: number;
+}
