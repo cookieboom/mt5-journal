@@ -17,7 +17,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Iterator
 
-from fastapi import Body, Depends, FastAPI
+from fastapi import Body, Depends, FastAPI, Query
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
@@ -156,6 +156,24 @@ def create_app(db_path: str | None = None) -> FastAPI:
             return JSONResponse(api.weekly_payload(conn, y, w))
         except RuntimeError as e:
             return JSONResponse({"error": str(e)}, status_code=400)
+
+    @app.get("/api/candles")
+    def api_candles(
+        symbol: str,
+        timeframe: str,
+        from_ms: int = Query(..., alias="from"),
+        to_ms: int = Query(..., alias="to"),
+        conn: sqlite3.Connection = Depends(get_conn),
+    ):
+        """Read-only candle feed for the chart. Serves from the DB and enqueues a
+        fill for any uncovered range (never talks to the bridge — M9 boundary).
+        A bad symbol/timeframe is a 400; missing/non-integer from/to yield
+        FastAPI's own 422."""
+        try:
+            payload = api.candles_payload(conn, symbol, timeframe, from_ms, to_ms)
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        return JSONResponse(payload)
 
     # --- two-step trade command (M9 safety: preview writes nothing; enqueue
     # inserts ONE pending row; `journal live` executes. Validation lives in

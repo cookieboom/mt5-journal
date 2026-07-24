@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 
 import pytest
 
+from journal.adapter.base import Candle
+from journal.store import candles_store as cs
 from journal.store.db import connect, now_ms
 from journal.web import api
 
@@ -295,3 +297,40 @@ def test_weekly_payload_empty_week_is_honest(conn):
     assert p["result"]["net_total"] == 0
     assert p["result"]["notes"] == []
     assert p["weeks"] == []                   # no closed trades → empty nav
+
+
+# ------------------------------------------------------------- candles_payload
+
+BASE = 1_700_000_000_000
+M1 = 60_000
+
+
+def _c(t):
+    return Candle(time_msc=t, open=1, high=2, low=0.5, close=1.5,
+                  tick_volume=3, spread=1, real_volume=3)
+
+
+def test_candles_payload_serves_native_and_no_pending(tmp_path):
+    conn = connect(tmp_path / "t.db")
+    cs.insert_candle(conn, "XAUUSDc", "M1", _c(BASE + M1))
+    cs.record_coverage(conn, "XAUUSDc", "M1", BASE, BASE + 3 * M1)
+    conn.commit()
+    p = api.candles_payload(conn, "XAUUSDc", "M1", BASE, BASE + 3 * M1)
+    assert p["candles"] == [{"time_msc": BASE + M1, "o": 1, "h": 2, "l": 0.5, "c": 1.5, "v": 3}]
+    assert p["missing"] == [] and p["pending"] is False
+
+
+def test_candles_payload_enqueues_when_uncovered(tmp_path):
+    conn = connect(tmp_path / "t.db")
+    p = api.candles_payload(conn, "XAUUSDc", "M1", 0, 3 * M1)
+    assert p["candles"] == []
+    assert p["missing"] == [[0, 3 * M1]] and p["pending"] is True
+    # the fill was queued, NOT executed (no bridge in web)
+    n = conn.execute("SELECT count(*) FROM candle_requests WHERE status='pending'").fetchone()[0]
+    assert n == 1
+
+
+def test_candles_payload_rejects_unknown_timeframe(tmp_path):
+    conn = connect(tmp_path / "t.db")
+    with pytest.raises(ValueError):
+        api.candles_payload(conn, "XAUUSDc", "M3", 0, 3 * M1)

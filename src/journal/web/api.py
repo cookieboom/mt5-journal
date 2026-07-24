@@ -12,6 +12,10 @@ import dataclasses
 import sqlite3
 from typing import Any
 
+from ..adapter.base import TIMEFRAMES
+from ..domain.resample import resample_m1
+from ..store import candle_queue
+from ..store import candles_store as cs
 from . import views
 
 
@@ -119,3 +123,49 @@ def trade_detail_payload(conn: sqlite3.Connection, position_id: int) -> dict | N
     reused `/trades/{id}/chart.png` will render."""
     ctx = views.trade_detail_context(conn, position_id)
     return None if ctx is None else to_jsonable(ctx)
+
+
+def candles_payload(
+    conn: sqlite3.Connection, symbol: str, timeframe: str,
+    from_ms: int, to_ms: int, *, max_bars: int = 5000,
+) -> dict:
+    """Serve candles from the DB (native, else aggregated from M1). NEVER touches
+    the bridge: if a range is uncovered it ENQUEUES a fill (deduped) for
+    `journal live` to drain, and reports `missing`/`pending` so the client polls.
+    """
+    if timeframe not in TIMEFRAMES:
+        raise ValueError(f"unknown timeframe {timeframe!r}; expected one of {list(TIMEFRAMES)}")
+
+    native = cs.read_candles(conn, symbol, timeframe, from_ms, to_ms)
+    if native:
+        bars = [cs.row_to_candle(r) for r in native]
+    elif timeframe != "M1":
+        m1 = cs.read_candles(conn, symbol, "M1", from_ms, to_ms)
+        bars = (
+            resample_m1([cs.row_to_candle(r) for r in m1], timeframe,
+                        covered=cs.read_coverage(conn, symbol, "M1"))
+            if m1 else []
+        )
+    else:
+        bars = []
+
+    if len(bars) > max_bars:
+        bars = bars[-max_bars:]
+
+    missing = cs.missing_ranges(cs.read_coverage(conn, symbol, timeframe), (from_ms, to_ms))
+    pending = False
+    if missing:
+        candle_queue.request_candles(conn, symbol, timeframe, from_ms, to_ms)
+        pending = True
+
+    return {
+        "symbol": symbol,
+        "timeframe": timeframe,
+        "candles": [
+            {"time_msc": b.time_msc, "o": b.open, "h": b.high,
+             "l": b.low, "c": b.close, "v": b.tick_volume}
+            for b in bars
+        ],
+        "missing": [[lo, hi] for lo, hi in missing],
+        "pending": pending,
+    }
