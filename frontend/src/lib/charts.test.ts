@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { histogramBins, dayStartUtcMs, calendarCells } from "./charts";
+import { histogramBins, dayStartUtcMs, calendarCells, rValues, maeMfePoints } from "./charts";
 
 describe("charts", () => {
   it("histogramBins: fixed bins with open ends, all present, correct counts", () => {
@@ -37,5 +37,38 @@ describe("charts", () => {
     expect(cells.length).toBe(2);
     expect(cells[0]).toEqual({ day_ms: Date.UTC(2026, 0, 15), net: 200, n: 2 });
     expect(cells[1]).toEqual({ day_ms: Date.UTC(2026, 0, 16), net: -10, n: 1 });
+  });
+
+  it("rValues: drops null r_multiple, keeps reals incl. a genuine 0", () => {
+    const base = { symbol_base: "XAUUSD", close_time_msc: 0, net_profit: 0, mae_r: null, mfe_r: null };
+    const s = [
+      { ...base, position_id: 1, r_multiple: 1.5 },
+      { ...base, position_id: 2, r_multiple: null },
+      { ...base, position_id: 3, r_multiple: 0 },
+    ];
+    expect(rValues(s)).toEqual([1.5, 0]); // rule 4: null dropped, real 0 kept
+  });
+
+  it("maeMfePoints: drops a trade missing either MAE or MFE", () => {
+    const base = { symbol_base: "XAUUSD", close_time_msc: 0, net_profit: 0, r_multiple: null };
+    const s = [
+      { ...base, position_id: 1, mae_r: -0.4, mfe_r: 2.1 },
+      { ...base, position_id: 2, mae_r: -0.4, mfe_r: null },
+      { ...base, position_id: 3, mae_r: null, mfe_r: 2.1 },
+    ];
+    expect(maeMfePoints(s).map((p) => p.position_id)).toEqual([1]);
+  });
+
+  it("histogramBins: -2 and 3 land left-closed at their edge bins", () => {
+    const b = histogramBins([-2, 3]);
+    expect(b[1].count).toBe(1); // [-2,-1): the -2
+    expect(b[6].count).toBe(1); // [3,∞): the 3
+  });
+
+  it("dayStartUtcMs: midnight is a no-op; end-of-day floors to that midnight", () => {
+    const mid = Date.UTC(2026, 0, 15, 0, 0, 0);
+    expect(dayStartUtcMs(mid)).toBe(mid);
+    const eod = Date.UTC(2026, 0, 15, 23, 59, 59, 999);
+    expect(dayStartUtcMs(eod)).toBe(mid);
   });
 });

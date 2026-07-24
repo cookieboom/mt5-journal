@@ -3,7 +3,24 @@
 // from raw numbers). null R/MAE/MFE trades are filtered by the caller BEFORE
 // these run — these never see nulls and never invent a 0.
 
+import { ChartTrade } from "./types";
+
 const BIN_EDGES = [-Infinity, -2, -1, 0, 1, 2, 3, Infinity];
+
+export function rValues(series: ChartTrade[]): number[] {
+  // rule 4: a null r_multiple is UNKNOWN — dropped, never plotted as 0.
+  return series.map((t) => t.r_multiple).filter((r): r is number => r !== null);
+}
+
+export function maeMfePoints(
+  series: ChartTrade[],
+): (ChartTrade & { mae_r: number; mfe_r: number })[] {
+  // rule 4: a trade missing MAE or MFE is dropped, never coerced to 0.
+  return series.filter(
+    (t): t is ChartTrade & { mae_r: number; mfe_r: number } =>
+      t.mae_r !== null && t.mfe_r !== null,
+  );
+}
 
 export function histogramBins(
   values: number[],
