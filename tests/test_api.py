@@ -334,3 +334,26 @@ def test_candles_payload_rejects_unknown_timeframe(tmp_path):
     conn = connect(tmp_path / "t.db")
     with pytest.raises(ValueError):
         api.candles_payload(conn, "XAUUSDc", "M3", 0, 3 * M1)
+
+
+def test_candles_payload_aggregates_correct_boundary_bucket_for_unaligned_from(tmp_path):
+    # Regression (final-review Important): an unaligned from_ms must still yield a
+    # CORRECT M5 bucket. 5 M1 bars form one M5 bucket [BASE, BASE+5*M1); the
+    # request starts mid-bucket at BASE+2*M1. Without a bucket-aligned M1 read the
+    # boundary bucket gets only its tail bars and reports a wrong open/high/low.
+    # BASE shadowed locally: the module-level BASE (line 304) is NOT M5-bucket-
+    # aligned (BASE % 300_000 != 0), so it can't exercise this boundary case.
+    BASE = 1_700_000_100_000
+    conn = connect(tmp_path / "t.db")
+    opens = [10, 11, 12, 13, 14]; highs = [12, 20, 14, 13, 19]
+    lows = [9, 8, 13, 10, 12];   closes = [11, 14, 13, 12, 19]
+    for i in range(5):
+        cs.insert_candle(conn, "XAUUSDc", "M1", Candle(
+            time_msc=BASE + i*M1, open=opens[i], high=highs[i],
+            low=lows[i], close=closes[i], tick_volume=1, spread=1, real_volume=1))
+    cs.record_coverage(conn, "XAUUSDc", "M1", BASE, BASE + 5*M1); conn.commit()
+    p = api.candles_payload(conn, "XAUUSDc", "M5", BASE + 2*M1, BASE + 5*M1)
+    assert len(p["candles"]) == 1
+    c = p["candles"][0]
+    assert c["time_msc"] == BASE
+    assert c["o"] == 10 and c["h"] == 20 and c["l"] == 8 and c["c"] == 19

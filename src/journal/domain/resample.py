@@ -24,6 +24,13 @@ def bucket_start(time_msc: int, timeframe: str) -> int:
     return time_msc - (time_msc % size)
 
 
+def timeframe_ms(timeframe: str) -> int:
+    """Milliseconds per bar for `timeframe` (e.g. 'M5' -> 300_000)."""
+    if timeframe not in _TF_MS:
+        raise ValueError(f"unknown timeframe {timeframe!r}; expected one of {list(_TF_MS)}")
+    return _TF_MS[timeframe]
+
+
 def _bucket_fully_covered(bstart: int, size: int, covered: list[tuple[int, int]]) -> bool:
     # Every M1 open in [bstart, bstart+size) must sit inside one covered interval.
     # The last possible M1 open in the bucket is bstart + size - _M1.
