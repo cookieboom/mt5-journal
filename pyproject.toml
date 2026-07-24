@@ -9,9 +9,7 @@ dependencies = [
     "mplfinance",
     "typer",
     "fastapi",
-    "jinja2",
     "uvicorn",
-    "python-multipart",
 ]
 
 [project.scripts]
