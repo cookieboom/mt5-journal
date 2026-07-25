@@ -15,14 +15,29 @@ export function useChartData(symbol: string, tf: Timeframe) {
   const pollRef = useRef<number>(0);          // poll attempts for the current window
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const alive = useRef(true);
+  // Bumped on every symbol/tf reset and every retry(). Each load() call
+  // captures the generation in force when IT started; any result (success or
+  // error) that arrives after the generation has moved on is a no-op. This is
+  // what stops a still-filling window's poll cycle from being corrupted by a
+  // stale fetch that was in flight when the user switched symbol/tf or hit retry.
+  const genRef = useRef(0);
+  // loadOlder is a one-shot historical fetch, independent of the fill-poll
+  // cycle above. This guard collapses the burst of onRequestOlder calls a
+  // single pan gesture fires (subscribeVisibleLogicalRangeChange keeps
+  // reporting barsBefore < 20 on every frame of the drag) into one in-flight
+  // fetch instead of a stampede of overlapping requests.
+  const loadingOlderRef = useRef(false);
 
   const clearTimer = () => { if (timer.current) { clearTimeout(timer.current); timer.current = null; } };
 
-  // Fetch [from,to], merge, and decide whether to keep polling this window.
-  const load = useCallback(async (from: number, to: number, _isPoll: boolean) => {
+  // Fetch [from,to] for the CURRENT window, merge, and bounded-poll while data
+  // is still missing. Owns pollRef/timer/status(polling|gaveup) exclusively —
+  // loadOlder below must never touch them.
+  const load = useCallback(async (from: number, to: number) => {
+    const gen = genRef.current;
     try {
       const resp = await fetchCandles(symbol, tf, from, to);
-      if (!alive.current) return;
+      if (!alive.current || gen !== genRef.current) return;
       setCandles((prev) => mergeCandles(prev, resp.candles));
       setError(null);
       const stillMissing = resp.missing.length > 0;
@@ -33,35 +48,63 @@ export function useChartData(symbol: string, tf: Timeframe) {
       setStatus("polling");
       pollRef.current += 1;
       clearTimer();
-      timer.current = setTimeout(() => load(from, to, true), POLL_MS);
+      timer.current = setTimeout(() => {
+        // gen is closed over from THIS load() call, not re-read from genRef —
+        // so a poll scheduled by a superseded window/generation stays dead
+        // even though genRef.current itself has since moved on and a fresh
+        // load() would trivially match it.
+        if (gen !== genRef.current) return;
+        load(from, to);
+      }, POLL_MS);
     } catch (e) {
-      if (alive.current) { setError(String(e)); setStatus("error"); }
+      if (alive.current && gen === genRef.current) { setError(String(e)); setStatus("error"); }
     }
   }, [symbol, tf]);
 
   // (Re)load from scratch whenever symbol/tf changes.
   useEffect(() => {
     alive.current = true;
+    genRef.current += 1;
+    clearTimer();
     setCandles([]); setStatus("loading"); setError(null); pollRef.current = 0;
     const [from, to] = initialWindow(tf, Date.now());
     fromRef.current = from;
-    load(from, to, false);
+    load(from, to);
     return () => { alive.current = false; clearTimer(); };
   }, [symbol, tf, load]);
 
   const retry = useCallback(() => {
+    genRef.current += 1;
+    clearTimer();
     pollRef.current = 0;
     setStatus("polling");
     const [, to] = initialWindow(tf, Date.now());
-    load(fromRef.current, to, false);
+    load(fromRef.current, to);
   }, [tf, load]);
 
-  // Pan: extend the loaded window to the left. Does not disturb the poll state.
-  const loadOlder = useCallback(() => {
+  // Pan: extend the loaded window to the left. Does NOT touch pollRef, does
+  // NOT schedule a poll, and does NOT flip status to polling/gaveup — it only
+  // ever sets status on its own failure path (error), so a bad pan fetch is
+  // surfaced rather than silently dropped. fromRef only advances on success,
+  // so a failed pan can be retried (a later onRequestOlder recomputes the
+  // same window rather than skipping past a gap).
+  const loadOlder = useCallback(async () => {
+    if (loadingOlderRef.current) return;
+    loadingOlderRef.current = true;
+    const gen = genRef.current;
     const [from, to] = olderWindow(fromRef.current, tf);
-    fromRef.current = from;
-    load(from, to, false);
-  }, [tf, load]);
+    try {
+      const resp = await fetchCandles(symbol, tf, from, to);
+      if (!alive.current || gen !== genRef.current) return;
+      fromRef.current = from;
+      setCandles((prev) => mergeCandles(prev, resp.candles));
+      setError(null);
+    } catch (e) {
+      if (alive.current && gen === genRef.current) { setError(String(e)); setStatus("error"); }
+    } finally {
+      loadingOlderRef.current = false;
+    }
+  }, [symbol, tf]);
 
   const lastBarMs = candles.length ? candles[candles.length - 1].time_msc : null;
   return { candles, status, error, lastBarMs, retry, loadOlder };

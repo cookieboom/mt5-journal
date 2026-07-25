@@ -88,6 +88,12 @@ export default function Chart() {
               <button onClick={data.retry} className="text-cyan">Coba lagi</button>
             </div>
           )}
+          {hasBars && data.status === "error" && (
+            <div className="glass absolute top-2 left-2 px-2 py-1 text-[11px] text-neg flex items-center gap-2">
+              <span>Gagal memuat: {data.error}</span>
+              <button onClick={data.retry} className="text-cyan">Coba lagi</button>
+            </div>
+          )}
         </div>
         {/* ChartInfoPanel (Task 8) mounts here */}
         <aside className="glass w-[240px] shrink-0 p-3 hidden lg:block">
