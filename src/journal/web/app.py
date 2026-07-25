@@ -24,6 +24,7 @@ from fastapi.staticfiles import StaticFiles
 from ..annotate import AnnotateError, add_tag, list_tags, remove_tag, set_annotation
 from ..execute import CommandError, enqueue
 from ..render.chart import NoCandlesError, TradeNotFoundError, render_trade
+from ..store import prefs_store
 from ..store.db import connect
 from . import views
 from . import api
@@ -174,6 +175,23 @@ def create_app(db_path: str | None = None) -> FastAPI:
         except ValueError as e:
             return JSONResponse({"error": str(e)}, status_code=400)
         return JSONResponse(payload)
+
+    @app.get("/api/chart/prefs")
+    def api_get_chart_prefs(conn: sqlite3.Connection = Depends(get_conn)):
+        """Chart settings blob, cross-browser. `prefs` is null until first save;
+        the client then falls back to its own defaults / localStorage. Pure DB —
+        never talks to the bridge (M9 boundary)."""
+        return JSONResponse({"prefs": prefs_store.get_chart_prefs(conn)})
+
+    @app.put("/api/chart/prefs")
+    def api_put_chart_prefs(
+        prefs=Body(...),
+        conn: sqlite3.Connection = Depends(get_conn),
+    ):
+        """Upsert the chart settings blob under key 'chart'. The server stamps
+        updated_ms; the body is stored verbatim (the client owns the schema)."""
+        ts = prefs_store.set_chart_prefs(conn, prefs)
+        return JSONResponse({"ok": True, "updated_ms": ts})
 
     # --- two-step trade command (M9 safety: preview writes nothing; enqueue
     # inserts ONE pending row; `journal live` executes. Validation lives in

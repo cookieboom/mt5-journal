@@ -40,3 +40,12 @@ def test_chart_prefs_roundtrip_parses_json(conn):
     assert ps.get_chart_prefs(conn) == {"version": 1, "theme": "light"}
     # stored under the reserved chart key
     assert ps.get_pref(conn, ps.CHART_KEY) is not None
+
+
+def test_chart_prefs_envelope_shape(conn):
+    # GET envelope: {"prefs": null} before any save, {"prefs": {...}} after.
+    assert {"prefs": ps.get_chart_prefs(conn)} == {"prefs": None}
+    ps.set_chart_prefs(conn, {"version": 1, "theme": "dark", "grid": True})
+    assert {"prefs": ps.get_chart_prefs(conn)} == {
+        "prefs": {"version": 1, "theme": "dark", "grid": True}
+    }
