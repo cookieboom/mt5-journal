@@ -70,6 +70,7 @@ const CandleChart = forwardRef<ChartHandle, {
   const chart = useRef<IChartApi | null>(null);
   const series = useRef<ISeriesApi<SeriesType> | null>(null);
   const priceLines = useRef<IPriceLine[]>([]);
+  const chartTypeFirstRun = useRef(true);
   const cbs = useRef(props);
   cbs.current = props;
 
@@ -105,7 +106,9 @@ const CandleChart = forwardRef<ChartHandle, {
     series.current = s;
 
     c.subscribeCrosshairMove((param) => {
-      const d = param.seriesData.get(s) as
+      const cur = series.current;
+      if (!cur) { cbs.current.onHover(null); return; }
+      const d = param.seriesData.get(cur) as
         | { open: number; high: number; low: number; close: number }
         | { value: number } | undefined;
       if (!d || param.time === undefined) { cbs.current.onHover(null); return; }
@@ -178,6 +181,7 @@ const CandleChart = forwardRef<ChartHandle, {
   // zoom and theme survive), re-set data, and drop price lines (the overlay
   // effect below redraws them — it depends on chartType).
   useEffect(() => {
+    if (chartTypeFirstRun.current) { chartTypeFirstRun.current = false; return; }
     const c = chart.current;
     if (!c || !series.current) return;
     for (const pl of priceLines.current) series.current.removePriceLine(pl);
@@ -221,7 +225,7 @@ const CandleChart = forwardRef<ChartHandle, {
         );
       }
     }
-  }, [props.live, props.nowVisible, props.symbol, props.settings.liveOverlay]);
+  }, [props.live, props.nowVisible, props.symbol, props.settings.liveOverlay, props.settings.chartType]);
 
   useImperativeHandle(ref, () => ({
     jumpToNow: () => chart.current?.timeScale().scrollToRealTime(),
