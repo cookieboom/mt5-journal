@@ -25,9 +25,11 @@ from ..annotate import AnnotateError, add_tag, list_tags, remove_tag, set_annota
 from ..execute import CommandError, enqueue
 from ..render.chart import NoCandlesError, TradeNotFoundError, render_trade
 from ..store import prefs_store
+from ..store import training_store
 from ..store.db import connect
 from . import views
 from . import api
+from . import training
 
 # URL path segment → command kind. The URL uses hyphens; the kind uses
 # underscores (matching trade_commands.kind and domain/commands.KINDS).
@@ -299,6 +301,94 @@ def create_app(db_path: str | None = None) -> FastAPI:
         except RuntimeError as e:
             return Response(str(e), status_code=400, media_type="text/plain")
         return FileResponse(result.path, media_type="image/png")
+
+    # --------------------------------------------------------- training (Phase D)
+    # Replay/training. Pure DB + cached candles; never the bridge (M9 boundary).
+    # Results live in training_* tables, untouched by `journal rebuild` (rule 2).
+    @app.post("/api/training/sessions")
+    def api_training_create(
+        symbol: str = Body(...),
+        timeframe: str = Body(...),
+        range_start_msc: int = Body(...),
+        range_end_msc: int = Body(...),
+        cursor_start_msc: int | None = Body(None),
+        conn: sqlite3.Connection = Depends(get_conn),
+    ):
+        try:
+            out = training.create_session(
+                conn, symbol=symbol, timeframe=timeframe,
+                range_start_msc=range_start_msc, range_end_msc=range_end_msc,
+                cursor_start_msc=cursor_start_msc,
+            )
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        return JSONResponse(api.to_jsonable(out))
+
+    @app.get("/api/training/sessions")
+    def api_training_list(status: str | None = None,
+                          conn: sqlite3.Connection = Depends(get_conn)):
+        return JSONResponse(api.to_jsonable(training.list_sessions_view(conn, status)))
+
+    @app.get("/api/training/sessions/{session_id}")
+    def api_training_get(session_id: int, conn: sqlite3.Connection = Depends(get_conn)):
+        view = training.session_view(conn, session_id)
+        if view is None:
+            return JSONResponse({"error": f"no training session {session_id}"},
+                                status_code=404)
+        return JSONResponse(api.to_jsonable(view))
+
+    @app.delete("/api/training/sessions/{session_id}")
+    def api_training_delete(session_id: int,
+                            conn: sqlite3.Connection = Depends(get_conn)):
+        training_store.delete_session(conn, session_id)
+        return JSONResponse({"ok": True})
+
+    @app.post("/api/training/sessions/{session_id}/step")
+    def api_training_step(session_id: int, n: int = Body(1, embed=True),
+                          conn: sqlite3.Connection = Depends(get_conn)):
+        try:
+            out = training.step(conn, session_id, n)
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        return JSONResponse(api.to_jsonable(out))
+
+    @app.post("/api/training/sessions/{session_id}/positions")
+    def api_training_open(
+        session_id: int,
+        direction: str = Body(...),
+        volume: float = Body(...),
+        sl: float = Body(0.0),
+        tp: float = Body(0.0),
+        conn: sqlite3.Connection = Depends(get_conn),
+    ):
+        try:
+            pos = training.open_position(conn, session_id, direction=direction,
+                                         volume=volume, sl=sl, tp=tp)
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        return JSONResponse(api.to_jsonable(pos))
+
+    @app.post("/api/training/sessions/{session_id}/positions/{pid}/close")
+    def api_training_close(session_id: int, pid: int,
+                           conn: sqlite3.Connection = Depends(get_conn)):
+        try:
+            pos = training.close_position(conn, session_id, pid)
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        return JSONResponse(api.to_jsonable(pos))
+
+    @app.post("/api/training/sessions/{session_id}/end")
+    def api_training_end(session_id: int,
+                         conn: sqlite3.Connection = Depends(get_conn)):
+        try:
+            out = training.end_session(conn, session_id)
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        return JSONResponse(api.to_jsonable(out))
+
+    @app.get("/api/training/summary")
+    def api_training_summary(conn: sqlite3.Connection = Depends(get_conn)):
+        return JSONResponse(api.to_jsonable(training.career_summary(conn)))
 
     # --------------------------------------------------------------- SPA (React)
     # The built SPA is the ONLY UI (Jinja retired, Phase 5). Assets mount at

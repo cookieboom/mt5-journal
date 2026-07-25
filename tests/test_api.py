@@ -357,3 +357,34 @@ def test_candles_payload_aggregates_correct_boundary_bucket_for_unaligned_from(t
     c = p["candles"][0]
     assert c["time_msc"] == BASE
     assert c["o"] == 10 and c["h"] == 20 and c["l"] == 8 and c["c"] == 19
+
+
+def test_training_session_create_and_summary(conn):
+    from journal.web import api as _api
+    from journal.web import training as _tr
+    created = _tr.create_session(conn, symbol="XAUUSDc", timeframe="M15",
+                                 range_start_msc=1000, range_end_msc=9000,
+                                 cursor_start_msc=1000)
+    sid = created["session"]["id"]
+    view = _api.to_jsonable(_tr.session_view(conn, sid))
+    assert view["session"]["symbol"] == "XAUUSDc"
+    assert view["positions"] == []
+    summary = _api.to_jsonable(_tr.career_summary(conn))
+    assert summary["n"] == 0 and summary["total_r"] == 0
+
+
+def test_training_routes_smoke(tmp_path):
+    from fastapi.testclient import TestClient
+    from journal.web.app import create_app
+    db = tmp_path / "journal.db"
+    client = TestClient(create_app(str(db)))
+    r = client.post("/api/training/sessions", json={
+        "symbol": "XAUUSDc", "timeframe": "M15",
+        "range_start_msc": 1000, "range_end_msc": 9000, "cursor_start_msc": 1000,
+    })
+    assert r.status_code == 200, r.text
+    sid = r.json()["session"]["id"]
+    assert client.get(f"/api/training/sessions/{sid}").json()["positions"] == []
+    assert client.get("/api/training/summary").json()["n"] == 0
+    assert client.delete(f"/api/training/sessions/{sid}").json()["ok"] is True
+    assert client.get(f"/api/training/sessions/{sid}").status_code == 404
