@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Sym, Timeframe } from "../lib/candles";
-import { msPerStep, type StepEvent, type TrainingPosition, type TrainingSession } from "../lib/replay";
+import { msPerStep, type StepEvent, type TrainingPosition, type TrainingSession, type TrainingSummary } from "../lib/replay";
 import * as replayApi from "../lib/replayApi";
 
 export interface ReplayConfig {
@@ -18,6 +18,7 @@ export function useReplaySession() {
   const [session, setSession] = useState<TrainingSession | null>(null);
   const [positions, setPositions] = useState<TrainingPosition[]>([]);
   const [events, setEvents] = useState<StepEvent[]>([]);
+  const [sessionSummary, setSessionSummary] = useState<TrainingSummary | null>(null);
   const [status, setStatus] = useState<ReplayStatus>("idle");
   const [error, setError] = useState<string | null>(null);
   const [playing, setPlaying] = useState(false);
@@ -28,7 +29,7 @@ export function useReplaySession() {
   const clear = () => { if (timer.current) { clearTimeout(timer.current); timer.current = null; } };
 
   const _create = useCallback(async (cfg: ReplayConfig) => {
-    setStatus("starting"); setError(null); setEvents([]); setPositions([]);
+    setStatus("starting"); setError(null); setEvents([]); setPositions([]); setSessionSummary(null);
     const r = await replayApi.createSession(cfg);
     if (!r.ok || !r.data) { setError(r.error ?? "gagal membuat sesi"); setStatus("error"); return; }
     setSession(r.data.session);
@@ -49,6 +50,7 @@ export function useReplaySession() {
       setError(null);
       setPositions(r.data.positions);
       setEvents(r.data.events);
+      setSessionSummary(r.data.summary);
       setSession((s) => (s ? { ...s, cursor_msc: r.data!.cursor_msc } : s));
       return r.data.events;
     } finally {
@@ -83,7 +85,7 @@ export function useReplaySession() {
     if (id === null) return;
     try {
       const v = await replayApi.getSession(id);
-      if (v) { setSession(v.session); setPositions(v.positions); }
+      if (v) { setSession(v.session); setPositions(v.positions); setSessionSummary(v.summary); }
     } catch (e) {
       setError(String(e));
     }
@@ -116,6 +118,7 @@ export function useReplaySession() {
     setError(null);
     setSession(r.data.session);
     setPositions(r.data.positions);
+    setSessionSummary(r.data.summary);
     setStatus("ended");
   }, [session, pause]);
 
@@ -123,11 +126,11 @@ export function useReplaySession() {
     const id = _sid();
     pause();
     if (id !== null) await replayApi.deleteSession(id);
-    setSession(null); setPositions([]); setEvents([]); setStatus("idle");
+    setSession(null); setPositions([]); setEvents([]); setSessionSummary(null); setStatus("idle");
   }, [session, pause]);
 
   return {
-    session, positions, events, status, error, playing,
+    session, positions, events, sessionSummary, status, error, playing,
     cursorMsc: session?.cursor_msc ?? null,
     start, step, play, pause, jump, reset, open, close, end, discard,
   };

@@ -4,9 +4,9 @@ import { postJson } from "./api";
 import type { Sym, Timeframe } from "./candles";
 import type { StepEvent, TrainingPosition, TrainingSession, TrainingSummary } from "./replay";
 
-export interface SessionView { session: TrainingSession; positions: TrainingPosition[] }
+export interface SessionView { session: TrainingSession; positions: TrainingPosition[]; summary: TrainingSummary }
 export interface CreateResult { session: TrainingSession; pending: boolean }
-export interface StepResult { cursor_msc: number; events: StepEvent[]; positions: TrainingPosition[] }
+export interface StepResult { cursor_msc: number; events: StepEvent[]; positions: TrainingPosition[]; summary: TrainingSummary }
 
 export function createSession(body: {
   symbol: Sym; timeframe: Timeframe;

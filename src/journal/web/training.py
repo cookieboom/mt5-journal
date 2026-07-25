@@ -39,6 +39,24 @@ def _specs(conn: sqlite3.Connection, symbol: str) -> tuple[float, float] | None:
     return float(r["tick_size"]), float(r["tick_value"])
 
 
+def _next_bars(conn: sqlite3.Connection, symbol: str, timeframe: str,
+               cursor_msc: int, range_end_msc: int, n: int) -> list:
+    """The next `n` cached bars strictly after `cursor_msc`, up to `range_end_msc`.
+    Widens the read window past market gaps: a fixed time-box would land entirely
+    inside a weekend/holiday gap, read empty, and be mistaken for end-of-range. We
+    double the span until at least `n` bars are found or the window already reaches
+    range_end (genuinely no more bars). Bars come from cs.load_bars (native, else
+    M1-aggregated) so evaluation matches what the chart shows."""
+    span = timeframe_ms(timeframe) * (n + 2)
+    while True:
+        hi = min(range_end_msc, cursor_msc + span)
+        bars = [b for b in cs.load_bars(conn, symbol, timeframe, cursor_msc + 1, hi)
+                if b.time_msc > cursor_msc]
+        if len(bars) >= n or hi >= range_end_msc:
+            return bars[:n]
+        span *= 2
+
+
 def create_session(conn: sqlite3.Connection, *, symbol: str, timeframe: str,
                    range_start_msc: int, range_end_msc: int,
                    cursor_start_msc: int | None = None) -> dict:
@@ -66,7 +84,8 @@ def session_view(conn: sqlite3.Connection, session_id: int) -> dict | None:
     s = ts.get_session(conn, session_id)
     if s is None:
         return None
-    return {"session": _row(s), "positions": _positions(conn, session_id)}
+    return {"session": _row(s), "positions": _positions(conn, session_id),
+            "summary": ts.session_summary(conn, session_id)}
 
 
 def list_sessions_view(conn: sqlite3.Connection, status: str | None = None) -> list[dict]:
@@ -80,6 +99,10 @@ def open_position(conn: sqlite3.Connection, session_id: int, *, direction: str,
         raise ValueError(f"no training session {session_id}")
     if direction not in ("buy", "sell"):
         raise ValueError("direction must be 'buy' or 'sell'")
+    if s["status"] != "active":
+        raise ValueError(f"session {session_id} is not active")
+    if volume <= 0:
+        raise ValueError("volume must be > 0")
     pid = ts.insert_position(conn, session_id=session_id, direction=direction,
                              volume=volume, decision_msc=s["cursor_msc"],
                              sl=sl, tp=tp)
@@ -119,9 +142,9 @@ def _resolve_close(conn: sqlite3.Connection, symbol: str, timeframe: str,
     if state.entry_price is not None and state.exit_price is not None:
         r = ev.r_multiple(state.direction, state.entry_price, state.exit_price, state.sl)
     if state.entry_msc is not None and state.exit_msc is not None:
-        rows = cs.read_candles(conn, symbol, timeframe, state.entry_msc, state.exit_msc)
+        bars = cs.load_bars(conn, symbol, timeframe, state.entry_msc, state.exit_msc)
         mae, mfe = compute_excursion(
-            [(x["time_msc"], x["low"], x["high"]) for x in rows],
+            [(b.time_msc, b.low, b.high) for b in bars],
             state.entry_msc, state.exit_msc, state.entry_price, state.direction,
         )
         risk = abs(state.entry_price - state.sl) if state.sl else None
@@ -145,9 +168,7 @@ def step(conn: sqlite3.Connection, session_id: int, n: int = 1) -> dict:
     cursor, range_end = s["cursor_msc"], s["range_end_msc"]
 
     # The next n revealed bars are the first n with time_msc > cursor, up to range_end.
-    hi = min(range_end, cursor + timeframe_ms(tf) * (n + 2))
-    upcoming = [b for b in cs.load_bars(conn, symbol, tf, cursor + 1, hi)
-                if b.time_msc > cursor][:n]
+    upcoming = _next_bars(conn, symbol, tf, cursor, range_end, n)
 
     states = [_to_state(r) for r in ts.active_positions(conn, session_id)]
     by_id = {st.id: st for st in states}
@@ -169,7 +190,8 @@ def step(conn: sqlite3.Connection, session_id: int, n: int = 1) -> dict:
         cursor = range_end   # reached the end of the range; nothing left to reveal
     ts.update_cursor(conn, session_id, cursor)
     return {"cursor_msc": cursor, "events": all_events,
-            "positions": _positions(conn, session_id)}
+            "positions": _positions(conn, session_id),
+            "summary": ts.session_summary(conn, session_id)}
 
 
 def end_session(conn: sqlite3.Connection, session_id: int) -> dict:

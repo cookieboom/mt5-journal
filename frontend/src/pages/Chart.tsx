@@ -85,27 +85,6 @@ export default function Chart() {
   const atEnd = !!replay.session && cursor !== null && cursor >= replay.session.range_end_msc;
 
   const { data: career } = useApi<TrainingSummary>("/api/training/summary", replayOpen ? 3000 : undefined);
-  // Compact per-session tally computed client-side from replay.positions (rule 4:
-  // r_multiple null = unknown/no-SL, excluded rather than treated as 0).
-  const sessionSummary: TrainingSummary | null = useMemo(() => {
-    if (!replayOpen) return null;
-    const closed = replay.positions.filter((p) => p.status === "closed");
-    const scored = closed.filter((p) => p.r_multiple !== null);
-    const n = scored.length;
-    const total_r = scored.reduce((sum, p) => sum + (p.r_multiple ?? 0), 0);
-    const wins = scored.filter((p) => (p.r_multiple ?? 0) > 0).length;
-    const maes = closed.map((p) => p.mae_r).filter((v): v is number => v !== null);
-    const mfes = closed.map((p) => p.mfe_r).filter((v): v is number => v !== null);
-    const avg = (vals: number[]) => (vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null);
-    return {
-      n,
-      win_rate: n > 0 ? wins / n : null,
-      avg_r: n > 0 ? total_r / n : null,
-      total_r,
-      avg_mae_r: avg(maes),
-      avg_mfe_r: avg(mfes),
-    };
-  }, [replayOpen, replay.positions]);
 
   return (
     <div className="flex flex-col h-[calc(100vh-2rem)]">
@@ -196,7 +175,7 @@ export default function Chart() {
                 currency={currency}
                 onClose={replay.close}
               />
-              <ReplaySummary title="Sesi ini" s={sessionSummary} />
+              <ReplaySummary title="Sesi ini" s={replay.sessionSummary} />
               <ReplaySummary title="Kumulatif" s={career ?? null} />
             </>
           ) : (
