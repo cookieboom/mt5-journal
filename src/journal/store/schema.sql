@@ -373,3 +373,15 @@ LEFT JOIN annotations a
        ON a.account_login = t.account_login
       AND a.position_id   = t.position_id
       AND a.segment       = t.segment;
+
+-- ---------------------------------------------------------------- app prefs
+
+-- Single-value application preferences (chart settings live here under key
+-- 'chart'). Durable app config, NOT a chart cache and NOT derived from raw, so
+-- `journal rebuild` never touches it. Value is an opaque JSON blob owned by the
+-- client; the store does not parse or validate it. updated_ms = true UTC.
+CREATE TABLE IF NOT EXISTS app_prefs (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL,
+    updated_ms INTEGER NOT NULL
+);

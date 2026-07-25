@@ -68,9 +68,9 @@ def _make_v1(path) -> None:
 # ------------------------------------------------------------------ version
 
 
-def test_schema_version_is_4():
-    """Phase B adds the candle_requests.status CHECK (migration 004)."""
-    assert SCHEMA_VERSION == 4
+def test_schema_version_is_5():
+    """Chart Phase C adds app_prefs (migration 005)."""
+    assert SCHEMA_VERSION == 5
 
 
 def test_fresh_db_has_candle_store_tables(tmp_path):
@@ -162,7 +162,7 @@ def test_migrate_reports_what_it_applied(tmp_path):
     conn.row_factory = sqlite3.Row
     try:
         applied = migrate(conn)
-        assert applied == [2, 3, 4]
+        assert applied == [2, 3, 4, 5]
     finally:
         conn.close()
 
