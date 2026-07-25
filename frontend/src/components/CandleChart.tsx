@@ -65,6 +65,7 @@ const CandleChart = forwardRef<ChartHandle, {
   lastBarMs: number | null;
   live: LiveData | null;
   nowVisible: boolean;
+  overlayLines?: import("../lib/types").PriceLineSpec[];
 }>(function CandleChart(props, ref) {
   const el = useRef<HTMLDivElement>(null);
   const chart = useRef<IChartApi | null>(null);
@@ -209,23 +210,33 @@ const CandleChart = forwardRef<ChartHandle, {
     if (!s) return;
     for (const pl of priceLines.current) s.removePriceLine(pl);
     priceLines.current = [];
-    if (!props.settings.liveOverlay || !props.nowVisible || !props.live || props.live.live.empty) return;
-    const mine = props.live.live.positions.filter((p) => p.symbol === props.symbol);
-    for (const pos of mine) {
-      for (const line of liveLines(pos)) {
-        priceLines.current.push(
-          s.createPriceLine({
-            price: line.price,
-            color: line.color,
-            lineWidth: 1,
-            lineStyle: LineStyle.Dashed,
-            axisLabelVisible: true,
-            title: line.title,
-          }),
-        );
-      }
+
+    // Replay (or any caller) supplies explicit lines → draw exactly those.
+    const explicit = props.overlayLines;
+    let specs: { price: number; color: string; title: string }[] = [];
+    if (explicit !== undefined) {
+      specs = explicit;
+    } else {
+      // Live SL/TP/entry overlay — only when the current symbol has open positions
+      // AND "now" is in view (horizontal lines have no time).
+      if (!props.settings.liveOverlay || !props.nowVisible || !props.live || props.live.live.empty) return;
+      const mine = props.live.live.positions.filter((p) => p.symbol === props.symbol);
+      for (const pos of mine) specs.push(...liveLines(pos));
     }
-  }, [props.live, props.nowVisible, props.symbol, props.settings.liveOverlay, props.settings.chartType]);
+
+    for (const line of specs) {
+      priceLines.current.push(
+        s.createPriceLine({
+          price: line.price,
+          color: line.color,
+          lineWidth: 1,
+          lineStyle: LineStyle.Dashed,
+          axisLabelVisible: true,
+          title: line.title,
+        }),
+      );
+    }
+  }, [props.live, props.nowVisible, props.symbol, props.settings.liveOverlay, props.settings.chartType, props.overlayLines]);
 
   useImperativeHandle(ref, () => ({
     jumpToNow: () => chart.current?.timeScale().scrollToRealTime(),
