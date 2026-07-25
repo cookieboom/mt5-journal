@@ -1,10 +1,10 @@
 import { useState } from "react";
 import { SYMBOLS, TIMEFRAMES, type Sym, type Timeframe } from "../lib/candles";
 import type { ChartSettings } from "../lib/chartPrefs";
-import ChartSettingsPopover from "./ChartSettingsPopover";
+import ChartSettingsDrawer from "./ChartSettingsDrawer";
 
 export default function ChartToolbar({
-  symbol, tf, settings, onSymbol, onTf, onSettings, onJumpNow,
+  symbol, tf, settings, onSymbol, onTf, onSettings, onReset, onJumpNow,
 }: {
   symbol: Sym;
   tf: Timeframe;
@@ -12,6 +12,7 @@ export default function ChartToolbar({
   onSymbol: (s: Sym) => void;
   onTf: (t: Timeframe) => void;
   onSettings: (s: ChartSettings) => void;
+  onReset: () => void;
   onJumpNow: () => void;
 }) {
   const [gear, setGear] = useState(false);
@@ -50,7 +51,7 @@ export default function ChartToolbar({
         Ke sekarang
       </button>
 
-      <div className="relative ml-auto">
+      <div className="ml-auto">
         <button
           onClick={() => setGear((g) => !g)}
           className="glass px-2.5 py-1 text-[13px] text-muted hover:text-ink"
@@ -59,9 +60,10 @@ export default function ChartToolbar({
           ⚙
         </button>
         {gear && (
-          <ChartSettingsPopover
+          <ChartSettingsDrawer
             settings={settings}
             onChange={onSettings}
+            onReset={onReset}
             onClose={() => setGear(false)}
           />
         )}
