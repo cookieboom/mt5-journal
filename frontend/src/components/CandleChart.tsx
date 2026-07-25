@@ -5,7 +5,7 @@ import {
   createChart, CandlestickSeries, ColorType, CrosshairMode,
   type IChartApi, type ISeriesApi, type IPriceLine, type UTCTimestamp,
 } from "lightweight-charts";
-import { toSeconds, liveLines, type Sym, type Timeframe } from "../lib/candles";
+import { toSeconds, liveLines, isNowVisible, type Sym, type Timeframe } from "../lib/candles";
 import type { ChartSettings } from "../lib/chartPrefs";
 import type { Candle, HoverBar, LiveData } from "../lib/types";
 import { wib } from "../lib/format";
@@ -85,12 +85,15 @@ const CandleChart = forwardRef<ChartHandle, {
       const vis = c.timeScale().getVisibleRange();
       const toMs = vis ? (vis.to as number) * 1000 : null;
       const last = cbs.current.lastBarMs;
-      cbs.current.onNowVisibleChange(
-        last !== null && toMs !== null && toMs >= last - 60_000,
-      );
+      cbs.current.onNowVisibleChange(isNowVisible(last, toMs, cbs.current.tf));
     });
 
-    return () => { c.remove(); chart.current = null; series.current = null; };
+    return () => {
+      c.remove();
+      chart.current = null;
+      series.current = null;
+      priceLines.current = [];
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
