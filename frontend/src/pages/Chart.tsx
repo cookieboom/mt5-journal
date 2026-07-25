@@ -54,7 +54,11 @@ export default function Chart() {
   const replay = useReplaySession();
   const snapshotRef = useRef<string>("");
 
-  const enterReplay = () => { snapshotRef.current = params.toString(); setConfigOpen(true); };
+  const enterReplay = () => {
+    if (replayOpen || configOpen) return; // already in / entering replay — never re-snapshot
+    snapshotRef.current = params.toString();
+    setConfigOpen(true);
+  };
   const exitReplay = async () => {
     await replay.discard();
     setReplayOpen(false); setConfigOpen(false);
@@ -116,6 +120,7 @@ export default function Chart() {
         onReset={reset}
         onJumpNow={() => chartRef.current?.jumpToNow()}
         onReplay={enterReplay}
+        replayActive={replayOpen}
       />
       {replayOpen && (
         <div className="mb-3">

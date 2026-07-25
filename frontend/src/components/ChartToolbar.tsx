@@ -4,7 +4,7 @@ import type { ChartSettings } from "../lib/chartPrefs";
 import ChartSettingsDrawer from "./ChartSettingsDrawer";
 
 export default function ChartToolbar({
-  symbol, tf, settings, onSymbol, onTf, onSettings, onReset, onJumpNow, onReplay,
+  symbol, tf, settings, onSymbol, onTf, onSettings, onReset, onJumpNow, onReplay, replayActive,
 }: {
   symbol: Sym;
   tf: Timeframe;
@@ -15,6 +15,7 @@ export default function ChartToolbar({
   onReset: () => void;
   onJumpNow: () => void;
   onReplay: () => void;
+  replayActive?: boolean;
 }) {
   const [gear, setGear] = useState(false);
   return (
@@ -52,7 +53,12 @@ export default function ChartToolbar({
         Ke sekarang
       </button>
 
-      <button className="glass px-3 py-1 text-cyan" onClick={onReplay} title="Mode replay/training">
+      <button
+        className="glass px-3 py-1 text-cyan"
+        onClick={onReplay}
+        disabled={replayActive}
+        title="Mode replay/training"
+      >
         ▶ Replay
       </button>
 
