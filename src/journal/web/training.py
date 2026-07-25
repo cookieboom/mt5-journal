@@ -27,14 +27,14 @@ def _row(row: sqlite3.Row | None) -> dict | None:
 
 
 def _positions(conn: sqlite3.Connection, session_id: int) -> list[dict]:
-    return [dict(_row(r)) for r in ts.list_positions(conn, session_id)]
+    return [_row(r) for r in ts.list_positions(conn, session_id)]
 
 
 def _specs(conn: sqlite3.Connection, symbol: str) -> tuple[float, float] | None:
     r = conn.execute(
         "SELECT tick_size, tick_value FROM symbol_specs WHERE symbol = ?", (symbol,)
     ).fetchone()
-    if r is None or r["tick_size"] in (None, 0) or r["tick_value"] is None:
+    if r is None or r["tick_size"] in (None, 0) or r["tick_value"] in (None, 0):
         return None
     return float(r["tick_size"]), float(r["tick_value"])
 
@@ -90,6 +90,9 @@ def close_position(conn: sqlite3.Connection, session_id: int, position_id: int) 
     s = ts.get_session(conn, session_id)
     if s is None:
         raise ValueError(f"no training session {session_id}")
+    pos = ts.get_position(conn, position_id)
+    if pos is None or pos["session_id"] != session_id:
+        raise ValueError(f"position {position_id} does not belong to session {session_id}")
     ts.request_close(conn, position_id, s["cursor_msc"])
     return _row(ts.get_position(conn, position_id))
 
@@ -116,11 +119,7 @@ def _resolve_close(conn: sqlite3.Connection, symbol: str, timeframe: str,
     if state.entry_price is not None and state.exit_price is not None:
         r = ev.r_multiple(state.direction, state.entry_price, state.exit_price, state.sl)
     if state.entry_msc is not None and state.exit_msc is not None:
-        rows = conn.execute(
-            "SELECT time_msc, low, high FROM candles WHERE symbol = ? AND "
-            "timeframe = ? AND time_msc BETWEEN ? AND ? ORDER BY time_msc",
-            (symbol, timeframe, state.entry_msc, state.exit_msc),
-        ).fetchall()
+        rows = cs.read_candles(conn, symbol, timeframe, state.entry_msc, state.exit_msc)
         mae, mfe = compute_excursion(
             [(x["time_msc"], x["low"], x["high"]) for x in rows],
             state.entry_msc, state.exit_msc, state.entry_price, state.direction,

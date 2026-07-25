@@ -89,3 +89,20 @@ def test_create_rejects_bad_timeframe(conn):
     with pytest.raises(ValueError):
         tr.create_session(conn, symbol="XAUUSDc", timeframe="M7",
                           range_start_msc=1, range_end_msc=2, cursor_start_msc=1)
+
+
+def test_close_position_rejects_foreign_position(conn):
+    _seed_specs(conn)
+    t0 = 1_700_000_000_000
+    tf = 900_000
+    _seed_m15(conn, [
+        (t0,      4000, 4000, 4000, 4000),
+        (t0 + tf, 4000, 4000, 4000, 4000),
+    ])
+    a = tr.create_session(conn, symbol="XAUUSDc", timeframe="M15",
+                          range_start_msc=t0, range_end_msc=t0 + tf, cursor_start_msc=t0)["session"]["id"]
+    b = tr.create_session(conn, symbol="XAUUSDc", timeframe="M15",
+                          range_start_msc=t0, range_end_msc=t0 + tf, cursor_start_msc=t0)["session"]["id"]
+    pos = tr.open_position(conn, a, direction="buy", volume=0.1, sl=0.0, tp=0.0)
+    with pytest.raises(ValueError):
+        tr.close_position(conn, b, pos["id"])   # position belongs to a, not b
