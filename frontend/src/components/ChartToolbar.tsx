@@ -4,7 +4,7 @@ import type { ChartSettings } from "../lib/chartPrefs";
 import ChartSettingsDrawer from "./ChartSettingsDrawer";
 
 export default function ChartToolbar({
-  symbol, tf, settings, onSymbol, onTf, onSettings, onReset, onJumpNow,
+  symbol, tf, settings, onSymbol, onTf, onSettings, onReset, onJumpNow, onReplay,
 }: {
   symbol: Sym;
   tf: Timeframe;
@@ -14,6 +14,7 @@ export default function ChartToolbar({
   onSettings: (s: ChartSettings) => void;
   onReset: () => void;
   onJumpNow: () => void;
+  onReplay: () => void;
 }) {
   const [gear, setGear] = useState(false);
   return (
@@ -49,6 +50,10 @@ export default function ChartToolbar({
         className="glass px-2.5 py-1 text-[12px] text-muted hover:text-ink"
       >
         Ke sekarang
+      </button>
+
+      <button className="glass px-3 py-1 text-cyan" onClick={onReplay} title="Mode replay/training">
+        ▶ Replay
       </button>
 
       <div className="ml-auto">

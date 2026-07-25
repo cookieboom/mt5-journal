@@ -1,13 +1,20 @@
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useApi } from "../lib/api";
 import { clampBars, parseSelection } from "../lib/chartPrefs";
 import { useChartPrefs } from "../hooks/useChartPrefs";
 import type { Sym, Timeframe } from "../lib/candles";
 import type { HoverBar, LiveData } from "../lib/types";
+import { clipToCursor, replayLines, type TrainingSummary } from "../lib/replay";
+import { useReplaySession, type ReplayConfig } from "../hooks/useReplaySession";
 import ChartToolbar from "../components/ChartToolbar";
 import CandleChart from "../components/CandleChart";
 import ChartInfoPanel from "../components/ChartInfoPanel";
+import ReplayConfigModal from "../components/ReplayConfigModal";
+import ReplayControls from "../components/ReplayControls";
+import ReplayOrderTicket from "../components/ReplayOrderTicket";
+import ReplayPositions from "../components/ReplayPositions";
+import ReplaySummary from "../components/ReplaySummary";
 import { useChartData } from "../hooks/useChartData";
 
 export interface ChartHandle { jumpToNow: () => void }
@@ -38,8 +45,67 @@ export default function Chart() {
     setParams(p, { replace: true });
   };
 
+  // --- Replay/training mode --------------------------------------------
+  // Phase C isolation: this whole block only reads `settings` (for rendering)
+  // and never calls `update`/`reset` from useChartPrefs. Training state lives
+  // entirely in useReplaySession + local state below.
+  const [replayOpen, setReplayOpen] = useState(false);
+  const [configOpen, setConfigOpen] = useState(false);
+  const replay = useReplaySession();
+  const snapshotRef = useRef<string>("");
+
+  const enterReplay = () => { snapshotRef.current = params.toString(); setConfigOpen(true); };
+  const exitReplay = async () => {
+    await replay.discard();
+    setReplayOpen(false); setConfigOpen(false);
+    setParams(new URLSearchParams(snapshotRef.current), { replace: true }); // restore prior view
+  };
+  const onStart = (cfg: ReplayConfig) => {
+    setConfigOpen(false); setReplayOpen(true);
+    // Point the chart at the replay symbol/tf so CandleChart fetches the right series.
+    setParams(new URLSearchParams({ symbol: cfg.symbol, tf: cfg.timeframe }), { replace: true });
+    replay.start(cfg);
+  };
+
+  const cursor = replay.cursorMsc;
+  const shownCandles = replayOpen && cursor !== null
+    ? clipToCursor(data.candles, cursor)
+    : data.candles;
+  // Memoized: CandleChart's overlay effect re-runs on identity change of this
+  // prop, so an inline replayLines(...) here would thrash price lines every render.
+  const overlay = useMemo(
+    () => (replayOpen ? replayLines(replay.positions) : undefined),
+    [replayOpen, replay.positions],
+  );
+  const currentClose = shownCandles.length ? shownCandles[shownCandles.length - 1].c : null;
+  const atEnd = !!replay.session && cursor !== null && cursor >= replay.session.range_end_msc;
+
+  const { data: career } = useApi<TrainingSummary>("/api/training/summary", replayOpen ? 3000 : undefined);
+  // Compact per-session tally computed client-side from replay.positions (rule 4:
+  // r_multiple null = unknown/no-SL, excluded rather than treated as 0).
+  const sessionSummary: TrainingSummary | null = useMemo(() => {
+    if (!replayOpen) return null;
+    const closed = replay.positions.filter((p) => p.status === "closed");
+    const scored = closed.filter((p) => p.r_multiple !== null);
+    const n = scored.length;
+    const total_r = scored.reduce((sum, p) => sum + (p.r_multiple ?? 0), 0);
+    const wins = scored.filter((p) => (p.r_multiple ?? 0) > 0).length;
+    const maes = closed.map((p) => p.mae_r).filter((v): v is number => v !== null);
+    const mfes = closed.map((p) => p.mfe_r).filter((v): v is number => v !== null);
+    const avg = (vals: number[]) => (vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null);
+    return {
+      n,
+      win_rate: n > 0 ? wins / n : null,
+      avg_r: n > 0 ? total_r / n : null,
+      total_r,
+      avg_mae_r: avg(maes),
+      avg_mfe_r: avg(mfes),
+    };
+  }, [replayOpen, replay.positions]);
+
   return (
     <div className="flex flex-col h-[calc(100vh-2rem)]">
+      {configOpen && <ReplayConfigModal onStart={onStart} onCancel={exitReplay} />}
       <ChartToolbar
         symbol={symbol}
         tf={tf}
@@ -49,7 +115,22 @@ export default function Chart() {
         onSettings={update}
         onReset={reset}
         onJumpNow={() => chartRef.current?.jumpToNow()}
+        onReplay={enterReplay}
       />
+      {replayOpen && (
+        <div className="mb-3">
+          <ReplayControls
+            cursorMsc={replay.cursorMsc}
+            playing={replay.playing}
+            atEnd={atEnd}
+            onStep={() => replay.step(1)}
+            onPlayPause={() => (replay.playing ? replay.pause() : replay.play())}
+            onJump={replay.jump}
+            onReset={replay.reset}
+            onExit={exitReplay}
+          />
+        </div>
+      )}
       <div className="flex gap-3 flex-1 min-h-0">
         <div className="relative flex-1 min-h-0">
           {hasBars ? (
@@ -58,7 +139,8 @@ export default function Chart() {
               symbol={symbol}
               tf={tf}
               settings={settings}
-              candles={data.candles}
+              candles={shownCandles}
+              overlayLines={overlay}
               lastBarMs={data.lastBarMs}
               onHover={setHovered}
               onNowVisibleChange={setNowVisible}
@@ -99,16 +181,32 @@ export default function Chart() {
             </div>
           )}
         </div>
-        <aside className="glass w-[240px] shrink-0 p-3 hidden lg:block overflow-y-auto">
-          <ChartInfoPanel
-            symbol={symbol}
-            tf={tf}
-            candles={data.candles}
-            hovered={hovered}
-            live={live ?? null}
-            currency={currency}
-            chartType={settings.chartType}
-          />
+        <aside className="w-[240px] shrink-0 hidden lg:flex lg:flex-col gap-3 overflow-y-auto">
+          {replayOpen ? (
+            <>
+              <ReplayOrderTicket disabled={!replay.session || atEnd} onSubmit={replay.open} />
+              <ReplayPositions
+                positions={replay.positions}
+                currentClose={currentClose}
+                currency={currency}
+                onClose={replay.close}
+              />
+              <ReplaySummary title="Sesi ini" s={sessionSummary} />
+              <ReplaySummary title="Kumulatif" s={career ?? null} />
+            </>
+          ) : (
+            <div className="glass w-full p-3">
+              <ChartInfoPanel
+                symbol={symbol}
+                tf={tf}
+                candles={data.candles}
+                hovered={hovered}
+                live={live ?? null}
+                currency={currency}
+                chartType={settings.chartType}
+              />
+            </div>
+          )}
         </aside>
       </div>
     </div>
