@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   timeframeMs, toSeconds, initialWindow, olderWindow, mergeCandles,
-  isNowVisible, liveLines, LINE_COLORS,
+  isNowVisible, liveLines, LINE_COLORS, capCandles,
 } from "./candles";
 import type { Candle } from "./types";
 import type { LivePosition } from "./types";
@@ -66,5 +66,19 @@ describe("candles helpers", () => {
     const byTitle = Object.fromEntries(full.map((l) => [l.title.split(" ")[0], l.color]));
     expect(byTitle.SL).toBe(LINE_COLORS.sl);
     expect(byTitle.TP).toBe(LINE_COLORS.tp);
+  });
+});
+
+describe("capCandles", () => {
+  const bar = (t: number): Candle => ({ time_msc: t, o: 1, h: 1, l: 1, c: 1, v: 0 });
+
+  it("returns the array unchanged when at or under the cap", () => {
+    const cs = [bar(1), bar(2), bar(3)];
+    expect(capCandles(cs, 3)).toBe(cs);
+    expect(capCandles(cs, 10)).toBe(cs);
+  });
+  it("drops the OLDEST bars beyond maxBars, keeping the newest and order", () => {
+    const cs = [bar(1), bar(2), bar(3), bar(4), bar(5)];
+    expect(capCandles(cs, 2).map((c) => c.time_msc)).toEqual([4, 5]);
   });
 });

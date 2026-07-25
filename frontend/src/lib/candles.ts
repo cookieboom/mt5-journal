@@ -37,6 +37,15 @@ export function mergeCandles(existing: Candle[], incoming: Candle[]): Candle[] {
   return [...m.values()].sort((a, b) => a.time_msc - b.time_msc);
 }
 
+// Bound the in-memory array: keep the newest `maxBars` bars, drop the oldest.
+// Live-correct — the now side is always retained. Assumes ascending order
+// (mergeCandles guarantees it). Returns the same array when under the cap so
+// callers can skip a state update.
+export function capCandles(candles: Candle[], maxBars: number): Candle[] {
+  if (candles.length <= maxBars) return candles;
+  return candles.slice(candles.length - maxBars);
+}
+
 export function isNowVisible(
   lastBarMs: number | null, visibleToMs: number | null, tf: Timeframe,
 ): boolean {
@@ -64,7 +73,15 @@ export async function fetchCandles(
     symbol, timeframe: tf, from: String(Math.floor(fromMs)), to: String(Math.floor(toMs)),
   });
   const r = await fetch(`/api/candles?${q}`);
-  const body = await r.json();
-  if (!r.ok) throw new Error(body.error ?? `HTTP ${r.status}`);
-  return body as CandlesResponse;
+  if (!r.ok) {
+    let msg = `HTTP ${r.status}`;
+    try {
+      const b = await r.json();
+      if (b && typeof b.error === "string") msg = b.error;
+    } catch {
+      /* non-JSON error page — keep HTTP {status} */
+    }
+    throw new Error(msg);
+  }
+  return (await r.json()) as CandlesResponse;
 }
