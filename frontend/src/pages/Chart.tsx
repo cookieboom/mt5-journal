@@ -5,6 +5,8 @@ import { parseSelection, loadChartSettings, saveChartSettings, type ChartSetting
 import type { Sym, Timeframe } from "../lib/candles";
 import type { HoverBar, LiveData } from "../lib/types";
 import ChartToolbar from "../components/ChartToolbar";
+import CandleChart from "../components/CandleChart";
+import { useChartData } from "../hooks/useChartData";
 
 export interface ChartHandle { jumpToNow: () => void }
 
@@ -13,15 +15,19 @@ export default function Chart() {
   const { symbol, tf } = parseSelection(params);
   const [settings, setSettings] = useState<ChartSettings>(() => loadChartSettings());
   const [hovered, setHovered] = useState<HoverBar | null>(null);
-  const [, setNowVisible] = useState(false);
-  // setHovered / setNowVisible are wired to CandleChart's onHover /
-  // onNowVisibleChange props in Task 6 — no consumer exists yet in this shell.
-  void setHovered;
-  void setNowVisible;
+  const [nowVisible, setNowVisible] = useState(false);
+  // hovered is consumed by ChartInfoPanel in Task 8.
+  void hovered; // TODO(Task 8): consumed by ChartInfoPanel
+  // nowVisible is consumed by the live overlay in Task 7.
+  void nowVisible; // TODO(Task 7): consumed by live overlay
   const chartRef = useRef<ChartHandle>(null);
 
   const { data: live } = useApi<LiveData>("/api/live", 2500);
   const currency = live?.header.currency ?? "USC";
+  void currency; // TODO(Task 8): consumed by ChartInfoPanel
+
+  const data = useChartData(symbol, tf);
+  const hasBars = data.candles.length > 0;
 
   const setSelection = (next: { symbol?: Sym; tf?: Timeframe }) => {
     const p = new URLSearchParams(params);
@@ -43,13 +49,49 @@ export default function Chart() {
         onJumpNow={() => chartRef.current?.jumpToNow()}
       />
       <div className="flex gap-3 flex-1 min-h-0">
-        {/* CandleChart (Task 6) mounts here */}
-        <div className="glass flex-1 min-h-0 flex items-center justify-center text-muted text-sm">
-          chart — {symbol} {tf}{hovered ? ` · ${hovered.c}` : ""}
+        <div className="relative flex-1 min-h-0">
+          {hasBars ? (
+            <CandleChart
+              ref={chartRef}
+              symbol={symbol}
+              tf={tf}
+              settings={settings}
+              candles={data.candles}
+              lastBarMs={data.lastBarMs}
+              onHover={setHovered}
+              onNowVisibleChange={setNowVisible}
+              onRequestOlder={data.loadOlder}
+            />
+          ) : (
+            <div className="glass h-full flex items-center justify-center text-muted text-sm">
+              {data.status === "loading" || data.status === "polling" ? (
+                <span>⌛ Memuat data {symbol} {tf}…</span>
+              ) : data.status === "gaveup" ? (
+                <div className="text-center">
+                  <div>Belum ada data ter-cache untuk rentang ini.</div>
+                  <div className="mt-1">Jalankan <code>journal live</code> untuk mengisi cache.</div>
+                  <button onClick={data.retry} className="glass mt-2 px-3 py-1 text-cyan">Coba lagi</button>
+                </div>
+              ) : (
+                <span className="text-neg">Gagal memuat: {data.error}</span>
+              )}
+            </div>
+          )}
+
+          {/* Non-blocking banners while bars are already shown */}
+          {hasBars && (data.status === "loading" || data.status === "polling") && (
+            <div className="glass absolute top-2 left-2 px-2 py-1 text-[11px] text-muted">⌛ memuat data…</div>
+          )}
+          {hasBars && data.status === "gaveup" && (
+            <div className="glass absolute top-2 left-2 px-2 py-1 text-[11px] text-muted flex items-center gap-2">
+              <span>Data belum lengkap — jalankan <code>journal live</code>.</span>
+              <button onClick={data.retry} className="text-cyan">Coba lagi</button>
+            </div>
+          )}
         </div>
         {/* ChartInfoPanel (Task 8) mounts here */}
         <aside className="glass w-[240px] shrink-0 p-3 hidden lg:block">
-          <div className="text-muted text-[12px]">info panel · {currency}</div>
+          <div className="text-muted text-[12px]">info panel</div>
         </aside>
       </div>
     </div>
