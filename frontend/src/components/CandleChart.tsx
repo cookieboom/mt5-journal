@@ -2,8 +2,9 @@ import {
   forwardRef, useEffect, useImperativeHandle, useRef,
 } from "react";
 import {
-  createChart, CandlestickSeries, ColorType, CrosshairMode,
-  type IChartApi, type ISeriesApi, type IPriceLine, type UTCTimestamp,
+  createChart, CandlestickSeries, BarSeries, LineSeries, AreaSeries,
+  ColorType, CrosshairMode, PriceScaleMode, LineStyle,
+  type IChartApi, type ISeriesApi, type IPriceLine, type UTCTimestamp, type SeriesType,
 } from "lightweight-charts";
 import { toSeconds, liveLines, isNowVisible, type Sym, type Timeframe } from "../lib/candles";
 import type { ChartSettings } from "../lib/chartPrefs";
@@ -20,6 +21,39 @@ const LIGHT = {
   border: "rgba(0,0,0,0.12)", up: "#059669", down: "#e11d48",
 };
 
+const CROSSHAIR = {
+  normal: CrosshairMode.Normal, magnet: CrosshairMode.Magnet, hidden: CrosshairMode.Hidden,
+} as const;
+
+// Candle/bar carry OHLC; line/area carry a single value (close).
+function isOHLC(t: ChartSettings["chartType"]): boolean {
+  return t === "candle" || t === "bar";
+}
+function seriesData(candles: Candle[], t: ChartSettings["chartType"]) {
+  return candles.map((c) =>
+    isOHLC(t)
+      ? { time: toSeconds(c.time_msc) as UTCTimestamp, open: c.o, high: c.h, low: c.l, close: c.c }
+      : { time: toSeconds(c.time_msc) as UTCTimestamp, value: c.c },
+  );
+}
+function addSeriesFor(chart: IChartApi, s: ChartSettings): ISeriesApi<SeriesType> {
+  const { up, down, wick } = s.colors;
+  switch (s.chartType) {
+    case "bar":
+      return chart.addSeries(BarSeries, { upColor: up, downColor: down });
+    case "line":
+      return chart.addSeries(LineSeries, { color: up, lineWidth: 2 });
+    case "area":
+      return chart.addSeries(AreaSeries, { lineColor: up, topColor: up, bottomColor: "transparent" });
+    case "candle":
+    default:
+      return chart.addSeries(CandlestickSeries, {
+        upColor: up, downColor: down, wickUpColor: wick, wickDownColor: wick,
+        borderVisible: false,
+      });
+  }
+}
+
 const CandleChart = forwardRef<ChartHandle, {
   symbol: Sym;
   tf: Timeframe;
@@ -34,7 +68,7 @@ const CandleChart = forwardRef<ChartHandle, {
 }>(function CandleChart(props, ref) {
   const el = useRef<HTMLDivElement>(null);
   const chart = useRef<IChartApi | null>(null);
-  const series = useRef<ISeriesApi<"Candlestick"> | null>(null);
+  const series = useRef<ISeriesApi<SeriesType> | null>(null);
   const priceLines = useRef<IPriceLine[]>([]);
   const cbs = useRef(props);
   cbs.current = props;
@@ -50,8 +84,12 @@ const CandleChart = forwardRef<ChartHandle, {
         vertLines: { color: theme.grid, visible: props.settings.grid },
         horzLines: { color: theme.grid, visible: props.settings.grid },
       },
-      crosshair: { mode: CrosshairMode.Normal },
-      rightPriceScale: { borderColor: theme.border },
+      crosshair: { mode: CROSSHAIR[props.settings.crosshair] },
+      rightPriceScale: {
+        borderColor: theme.border,
+        mode: props.settings.priceScale === "log" ? PriceScaleMode.Logarithmic : PriceScaleMode.Normal,
+        autoScale: props.settings.autoScale,
+      },
       timeScale: {
         borderColor: theme.border,
         timeVisible: true,
@@ -61,20 +99,24 @@ const CandleChart = forwardRef<ChartHandle, {
       },
       localization: { timeFormatter: (t: number) => wib((t as number) * 1000, 0) },
     });
-    const s = c.addSeries(CandlestickSeries, {
-      upColor: theme.up, downColor: theme.down,
-      wickUpColor: theme.up, wickDownColor: theme.down, borderVisible: false,
-    });
+    const s = addSeriesFor(c, props.settings);
+    s.applyOptions({ priceLineVisible: props.settings.lastPriceLine });
     chart.current = c;
     series.current = s;
 
     c.subscribeCrosshairMove((param) => {
-      const bar = param.seriesData.get(s) as
-        | { open: number; high: number; low: number; close: number } | undefined;
-      if (!bar || param.time === undefined) { cbs.current.onHover(null); return; }
+      const d = param.seriesData.get(s) as
+        | { open: number; high: number; low: number; close: number }
+        | { value: number } | undefined;
+      if (!d || param.time === undefined) { cbs.current.onHover(null); return; }
+      const single = "value" in d;
+      const close = single ? d.value : d.close;
       cbs.current.onHover({
         time_msc: (param.time as number) * 1000,
-        o: bar.open, h: bar.high, l: bar.low, c: bar.close, v: 0,
+        o: single ? close : d.open,
+        h: single ? close : d.high,
+        l: single ? close : d.low,
+        c: close, v: 0,
       });
     });
 
@@ -97,31 +139,62 @@ const CandleChart = forwardRef<ChartHandle, {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Re-apply theme/grid when settings change (no full re-create).
+  // Re-apply live-appliable settings when they change (no full re-create; chart
+  // type is handled by its own recreate effect below).
   useEffect(() => {
     if (!chart.current || !series.current) return;
-    const theme = props.settings.theme === "light" ? LIGHT : DARK;
+    const s = props.settings;
+    const theme = s.theme === "light" ? LIGHT : DARK;
     chart.current.applyOptions({
       layout: { background: { type: ColorType.Solid, color: theme.bg }, textColor: theme.text },
       grid: {
-        vertLines: { color: theme.grid, visible: props.settings.grid },
-        horzLines: { color: theme.grid, visible: props.settings.grid },
+        vertLines: { color: theme.grid, visible: s.grid },
+        horzLines: { color: theme.grid, visible: s.grid },
+      },
+      crosshair: { mode: CROSSHAIR[s.crosshair] },
+      rightPriceScale: {
+        borderColor: theme.border,
+        mode: s.priceScale === "log" ? PriceScaleMode.Logarithmic : PriceScaleMode.Normal,
+        autoScale: s.autoScale,
       },
     });
-    series.current.applyOptions({
-      upColor: theme.up, downColor: theme.down, wickUpColor: theme.up, wickDownColor: theme.down,
-    });
+    // Colour options depend on series type; candle/bar use up/down, line/area a single colour.
+    if (s.chartType === "candle") {
+      series.current.applyOptions({
+        upColor: s.colors.up, downColor: s.colors.down,
+        wickUpColor: s.colors.wick, wickDownColor: s.colors.wick,
+      });
+    } else if (s.chartType === "bar") {
+      series.current.applyOptions({ upColor: s.colors.up, downColor: s.colors.down });
+    } else if (s.chartType === "line") {
+      series.current.applyOptions({ color: s.colors.up });
+    } else {
+      series.current.applyOptions({ lineColor: s.colors.up, topColor: s.colors.up });
+    }
+    series.current.applyOptions({ priceLineVisible: s.lastPriceLine });
   }, [props.settings]);
+
+  // Chart type change: recreate the SERIES only (not the whole chart, so pan/
+  // zoom and theme survive), re-set data, and drop price lines (the overlay
+  // effect below redraws them — it depends on chartType).
+  useEffect(() => {
+    const c = chart.current;
+    if (!c || !series.current) return;
+    for (const pl of priceLines.current) series.current.removePriceLine(pl);
+    priceLines.current = [];
+    c.removeSeries(series.current);
+    const s = addSeriesFor(c, props.settings);
+    s.applyOptions({ priceLineVisible: props.settings.lastPriceLine });
+    s.setData(seriesData(cbs.current.candles, props.settings.chartType));
+    series.current = s;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.settings.chartType]);
 
   // Push candle data.
   useEffect(() => {
     if (!series.current) return;
-    series.current.setData(
-      props.candles.map((c) => ({
-        time: toSeconds(c.time_msc) as UTCTimestamp,
-        open: c.o, high: c.h, low: c.l, close: c.c,
-      })),
-    );
+    series.current.setData(seriesData(props.candles, props.settings.chartType));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.candles]);
 
   // Live SL/TP/entry overlay — only when the current symbol has open positions
@@ -132,7 +205,7 @@ const CandleChart = forwardRef<ChartHandle, {
     if (!s) return;
     for (const pl of priceLines.current) s.removePriceLine(pl);
     priceLines.current = [];
-    if (!props.nowVisible || !props.live || props.live.live.empty) return;
+    if (!props.settings.liveOverlay || !props.nowVisible || !props.live || props.live.live.empty) return;
     const mine = props.live.live.positions.filter((p) => p.symbol === props.symbol);
     for (const pos of mine) {
       for (const line of liveLines(pos)) {
@@ -141,14 +214,14 @@ const CandleChart = forwardRef<ChartHandle, {
             price: line.price,
             color: line.color,
             lineWidth: 1,
-            lineStyle: 2,           // dashed
+            lineStyle: LineStyle.Dashed,
             axisLabelVisible: true,
             title: line.title,
           }),
         );
       }
     }
-  }, [props.live, props.nowVisible, props.symbol]);
+  }, [props.live, props.nowVisible, props.symbol, props.settings.liveOverlay]);
 
   useImperativeHandle(ref, () => ({
     jumpToNow: () => chart.current?.timeScale().scrollToRealTime(),

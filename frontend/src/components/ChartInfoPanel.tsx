@@ -1,5 +1,6 @@
 import type { Sym, Timeframe } from "../lib/candles";
 import type { Candle, HoverBar, LiveData } from "../lib/types";
+import type { ChartSettings } from "../lib/chartPrefs";
 import { money, price, wib } from "../lib/format";
 
 function Row({ k, v, cls = "" }: { k: string; v: string; cls?: string }) {
@@ -12,7 +13,7 @@ function Row({ k, v, cls = "" }: { k: string; v: string; cls?: string }) {
 }
 
 export default function ChartInfoPanel({
-  symbol, tf, candles, hovered, live, currency,
+  symbol, tf, candles, hovered, live, currency, chartType,
 }: {
   symbol: Sym;
   tf: Timeframe;
@@ -20,6 +21,7 @@ export default function ChartInfoPanel({
   hovered: HoverBar | null;
   live: LiveData | null;
   currency: string;
+  chartType: ChartSettings["chartType"];
 }) {
   const latest = candles.length ? candles[candles.length - 1] : null;
   const bar = hovered ?? latest;
@@ -38,11 +40,17 @@ export default function ChartInfoPanel({
         {bar ? (
           <>
             <div className="text-[11px] text-muted mb-1">{wib(bar.time_msc, 0)}</div>
-            <Row k="O" v={price(bar.o)} />
-            <Row k="H" v={price(bar.h)} />
-            <Row k="L" v={price(bar.l)} />
-            <Row k="C" v={price(bar.c)} />
-            {bar.v ? <Row k="V" v={String(bar.v)} /> : null}
+            {chartType === "line" || chartType === "area" ? (
+              <Row k="Harga" v={price(bar.c)} />
+            ) : (
+              <>
+                <Row k="O" v={price(bar.o)} />
+                <Row k="H" v={price(bar.h)} />
+                <Row k="L" v={price(bar.l)} />
+                <Row k="C" v={price(bar.c)} />
+                {bar.v != null ? <Row k="V" v={String(bar.v)} /> : null}
+              </>
+            )}
           </>
         ) : (
           <div className="text-muted text-[12px]">—</div>
