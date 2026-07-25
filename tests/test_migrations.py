@@ -68,9 +68,20 @@ def _make_v1(path) -> None:
 # ------------------------------------------------------------------ version
 
 
-def test_schema_version_is_5():
-    """Chart Phase C adds app_prefs (migration 005)."""
-    assert SCHEMA_VERSION == 5
+def test_schema_version_is_6():
+    """Chart Phase D adds training_sessions + training_positions (migration 006)."""
+    assert SCHEMA_VERSION == 6
+
+
+def test_fresh_db_has_training_tables(tmp_path):
+    conn = connect(tmp_path / "fresh.db")
+    try:
+        names = {r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()}
+        assert {"training_sessions", "training_positions"} <= names
+    finally:
+        conn.close()
 
 
 def test_fresh_db_has_candle_store_tables(tmp_path):
@@ -162,7 +173,7 @@ def test_migrate_reports_what_it_applied(tmp_path):
     conn.row_factory = sqlite3.Row
     try:
         applied = migrate(conn)
-        assert applied == [2, 3, 4, 5]
+        assert applied == [2, 3, 4, 5, 6]
     finally:
         conn.close()
 
@@ -376,3 +387,26 @@ def test_two_connections_reader_and_writer_do_not_lock(tmp_path):
     finally:
         writer.close()
         reader.close()
+
+
+def test_training_rows_survive_rebuild(tmp_path):
+    """journal rebuild rebuilds only `trades` from raw; training data is durable
+    (rule 2), like app_prefs. A seeded training session must remain untouched."""
+    from journal.domain.reconstruct import rebuild
+    conn = connect(tmp_path / "journal.db")
+    try:
+        conn.execute(
+            "INSERT INTO accounts (login, currency, first_seen_at) VALUES (0, 'USC', 1)"
+        )
+        conn.execute(
+            "INSERT INTO training_sessions "
+            "(symbol, symbol_base, timeframe, range_start_msc, range_end_msc, "
+            " cursor_msc, status, created_at_msc) "
+            "VALUES ('XAUUSDc','XAUUSD','M15',1000,2000,1000,'active',1)"
+        )
+        conn.commit()
+        rebuild(conn)  # rebuilds trades from (empty) raw; must not touch training_*
+        n = conn.execute("SELECT COUNT(*) FROM training_sessions").fetchone()[0]
+        assert n == 1
+    finally:
+        conn.close()
