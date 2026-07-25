@@ -45,7 +45,7 @@ export default function ChartSettingsDrawer({
     <>
       <div className="fixed inset-0 z-30" onClick={onClose} />
       <div
-        className="glass fixed right-0 top-0 z-40 h-full w-[300px] p-4 overflow-y-auto
+        className="glass fixed right-0 top-0 z-40 h-full w-[300px] p-4
                    flex flex-col"
         role="dialog"
         aria-label="Pengaturan chart"
@@ -55,7 +55,7 @@ export default function ChartSettingsDrawer({
           <button onClick={onClose} className="text-muted hover:text-ink" aria-label="tutup">✕</button>
         </div>
 
-        <div className="flex-1">
+        <div className="flex-1 overflow-y-auto min-h-0">
           <Section title="Tampilan">
             <Field label="Tema">
               <div className="flex gap-1">
