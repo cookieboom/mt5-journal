@@ -46,6 +46,7 @@ export function useReplaySession() {
     try {
       const r = await replayApi.step(id, n);
       if (!r.ok || !r.data) { setError(r.error ?? "gagal step"); return []; }
+      setError(null);
       setPositions(r.data.positions);
       setEvents(r.data.events);
       setSession((s) => (s ? { ...s, cursor_msc: r.data!.cursor_msc } : s));
@@ -80,8 +81,12 @@ export function useReplaySession() {
   const refresh = useCallback(async () => {
     const id = _sid();
     if (id === null) return;
-    const v = await replayApi.getSession(id);
-    if (v) { setSession(v.session); setPositions(v.positions); }
+    try {
+      const v = await replayApi.getSession(id);
+      if (v) { setSession(v.session); setPositions(v.positions); }
+    } catch (e) {
+      setError(String(e));
+    }
   }, [session]);
 
   const open = useCallback(async (order: { direction: "buy" | "sell"; volume: number; sl: number; tp: number }) => {
@@ -89,13 +94,16 @@ export function useReplaySession() {
     if (id === null) return;
     const r = await replayApi.openPosition(id, order);
     if (!r.ok) { setError(r.error ?? "gagal buka posisi"); return; }
+    setError(null);
     await refresh();
   }, [session, refresh]);
 
   const close = useCallback(async (pid: number) => {
     const id = _sid();
     if (id === null) return;
-    await replayApi.closePosition(id, pid);
+    const r = await replayApi.closePosition(id, pid);
+    if (!r.ok) { setError(r.error ?? "gagal tutup posisi"); return; }
+    setError(null);
     await refresh();
   }, [session, refresh]);
 
@@ -104,7 +112,10 @@ export function useReplaySession() {
     if (id === null) return;
     pause();
     const r = await replayApi.endSession(id);
-    if (r.ok && r.data) { setSession(r.data.session); setPositions(r.data.positions); }
+    if (!r.ok || !r.data) { setError(r.error ?? "gagal mengakhiri sesi"); return; }
+    setError(null);
+    setSession(r.data.session);
+    setPositions(r.data.positions);
     setStatus("ended");
   }, [session, pause]);
 
@@ -114,8 +125,6 @@ export function useReplaySession() {
     if (id !== null) await replayApi.deleteSession(id);
     setSession(null); setPositions([]); setEvents([]); setStatus("idle");
   }, [session, pause]);
-
-  useEffect(() => clear, []);
 
   return {
     session, positions, events, status, error, playing,
