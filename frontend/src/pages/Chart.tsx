@@ -6,6 +6,7 @@ import type { Sym, Timeframe } from "../lib/candles";
 import type { HoverBar, LiveData } from "../lib/types";
 import ChartToolbar from "../components/ChartToolbar";
 import CandleChart from "../components/CandleChart";
+import ChartInfoPanel from "../components/ChartInfoPanel";
 import { useChartData } from "../hooks/useChartData";
 
 export interface ChartHandle { jumpToNow: () => void }
@@ -16,13 +17,10 @@ export default function Chart() {
   const [settings, setSettings] = useState<ChartSettings>(() => loadChartSettings());
   const [hovered, setHovered] = useState<HoverBar | null>(null);
   const [nowVisible, setNowVisible] = useState(false);
-  // hovered is consumed by ChartInfoPanel in Task 8.
-  void hovered; // TODO(Task 8): consumed by ChartInfoPanel
   const chartRef = useRef<ChartHandle>(null);
 
   const { data: live } = useApi<LiveData>("/api/live", 2500);
   const currency = live?.header.currency ?? "USC";
-  void currency; // TODO(Task 8): consumed by ChartInfoPanel
 
   const data = useChartData(symbol, tf);
   const hasBars = data.candles.length > 0;
@@ -95,9 +93,15 @@ export default function Chart() {
             </div>
           )}
         </div>
-        {/* ChartInfoPanel (Task 8) mounts here */}
-        <aside className="glass w-[240px] shrink-0 p-3 hidden lg:block">
-          <div className="text-muted text-[12px]">info panel</div>
+        <aside className="glass w-[240px] shrink-0 p-3 hidden lg:block overflow-y-auto">
+          <ChartInfoPanel
+            symbol={symbol}
+            tf={tf}
+            candles={data.candles}
+            hovered={hovered}
+            live={live ?? null}
+            currency={currency}
+          />
         </aside>
       </div>
     </div>
