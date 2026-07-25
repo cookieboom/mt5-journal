@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { fetchCandles, initialWindow, mergeCandles, olderWindow, type Timeframe } from "../lib/candles";
+import { capCandles, fetchCandles, initialWindow, mergeCandles, olderWindow, type Timeframe } from "../lib/candles";
 import type { Candle } from "../lib/types";
 
 export type ChartStatus = "loading" | "polling" | "ready" | "gaveup" | "error";
@@ -7,7 +7,7 @@ export type ChartStatus = "loading" | "polling" | "ready" | "gaveup" | "error";
 const POLL_MS = 2000;
 const MAX_POLLS = 5;      // ~10s total, then give up (journal live likely not running)
 
-export function useChartData(symbol: string, tf: Timeframe) {
+export function useChartData(symbol: string, tf: Timeframe, initialBars: number, maxBars: number) {
   const [candles, setCandles] = useState<Candle[]>([]);
   const [status, setStatus] = useState<ChartStatus>("loading");
   const [error, setError] = useState<string | null>(null);
@@ -27,6 +27,10 @@ export function useChartData(symbol: string, tf: Timeframe) {
   // reporting barsBefore < 20 on every frame of the drag) into one in-flight
   // fetch instead of a stampede of overlapping requests.
   const loadingOlderRef = useRef(false);
+  // True once the in-memory array has reached maxBars. loadOlder becomes a
+  // no-op so a pan can't keep re-loading bars that capCandles would re-drop.
+  // Reset on every symbol/tf reset (the effect below) and on retry.
+  const atCapRef = useRef(false);
 
   const clearTimer = () => { if (timer.current) { clearTimeout(timer.current); timer.current = null; } };
 
@@ -38,7 +42,11 @@ export function useChartData(symbol: string, tf: Timeframe) {
     try {
       const resp = await fetchCandles(symbol, tf, from, to);
       if (!alive.current || gen !== genRef.current) return;
-      setCandles((prev) => mergeCandles(prev, resp.candles));
+      setCandles((prev) => {
+        const merged = capCandles(mergeCandles(prev, resp.candles), maxBars);
+        atCapRef.current = merged.length >= maxBars;
+        return merged;
+      });
       setError(null);
       const stillMissing = resp.missing.length > 0;
       if (!stillMissing) { setStatus("ready"); pollRef.current = 0; return; }
@@ -59,7 +67,7 @@ export function useChartData(symbol: string, tf: Timeframe) {
     } catch (e) {
       if (alive.current && gen === genRef.current) { setError(String(e)); setStatus("error"); }
     }
-  }, [symbol, tf]);
+  }, [symbol, tf, maxBars]);
 
   // (Re)load from scratch whenever symbol/tf changes.
   useEffect(() => {
@@ -67,20 +75,22 @@ export function useChartData(symbol: string, tf: Timeframe) {
     genRef.current += 1;
     clearTimer();
     setCandles([]); setStatus("loading"); setError(null); pollRef.current = 0;
-    const [from, to] = initialWindow(tf, Date.now());
+    atCapRef.current = false;
+    const [from, to] = initialWindow(tf, Date.now(), initialBars);
     fromRef.current = from;
     load(from, to);
     return () => { alive.current = false; clearTimer(); };
-  }, [symbol, tf, load]);
+  }, [symbol, tf, initialBars, load]);
 
   const retry = useCallback(() => {
     genRef.current += 1;
     clearTimer();
     pollRef.current = 0;
+    atCapRef.current = false;
     setStatus("polling");
-    const [, to] = initialWindow(tf, Date.now());
+    const [, to] = initialWindow(tf, Date.now(), initialBars);
     load(fromRef.current, to);
-  }, [tf, load]);
+  }, [tf, initialBars, load]);
 
   // Pan: extend the loaded window to the left. Does NOT touch pollRef, does
   // NOT schedule a poll, and does NOT flip status to polling/gaveup — it only
@@ -89,6 +99,7 @@ export function useChartData(symbol: string, tf: Timeframe) {
   // so a failed pan can be retried (a later onRequestOlder recomputes the
   // same window rather than skipping past a gap).
   const loadOlder = useCallback(async () => {
+    if (atCapRef.current) return;         // history bound reached — raise maxBars to go further
     if (loadingOlderRef.current) return;
     loadingOlderRef.current = true;
     const gen = genRef.current;
@@ -97,14 +108,18 @@ export function useChartData(symbol: string, tf: Timeframe) {
       const resp = await fetchCandles(symbol, tf, from, to);
       if (!alive.current || gen !== genRef.current) return;
       fromRef.current = from;
-      setCandles((prev) => mergeCandles(prev, resp.candles));
+      setCandles((prev) => {
+        const merged = capCandles(mergeCandles(prev, resp.candles), maxBars);
+        atCapRef.current = merged.length >= maxBars;
+        return merged;
+      });
       setError(null);
     } catch (e) {
       if (alive.current && gen === genRef.current) { setError(String(e)); setStatus("error"); }
     } finally {
       loadingOlderRef.current = false;
     }
-  }, [symbol, tf]);
+  }, [symbol, tf, maxBars]);
 
   const lastBarMs = candles.length ? candles[candles.length - 1].time_msc : null;
   return { candles, status, error, lastBarMs, retry, loadOlder };
