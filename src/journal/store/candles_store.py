@@ -55,6 +55,29 @@ def row_to_candle(r: sqlite3.Row) -> Candle:
     )
 
 
+def load_bars(conn: sqlite3.Connection, symbol: str, timeframe: str,
+              from_ms: int, to_ms: int) -> list[Candle]:
+    """Bars in [from_ms, to_ms], ascending: native rows if stored, else
+    aggregated from M1 over BUCKET-ALIGNED bounds (resample_m1's coverage guard
+    assumes it is handed every M1 bar for any bucket it may emit), else []. Pure
+    DB — no bridge (M9 boundary). The single bar-read shared by the /api/candles
+    payload and the Phase D replay step."""
+    from ..domain.resample import resample_m1, bucket_start, timeframe_ms
+
+    native = read_candles(conn, symbol, timeframe, from_ms, to_ms)
+    if native:
+        return [row_to_candle(r) for r in native]
+    if timeframe == "M1":
+        return []
+    lo = bucket_start(from_ms, timeframe)
+    hi = bucket_start(to_ms, timeframe) + timeframe_ms(timeframe) - 1
+    m1 = read_candles(conn, symbol, "M1", lo, hi)
+    if not m1:
+        return []
+    return resample_m1([row_to_candle(r) for r in m1], timeframe,
+                       covered=read_coverage(conn, symbol, "M1"))
+
+
 def read_coverage(conn: sqlite3.Connection, symbol: str, timeframe: str) -> list[tuple[int, int]]:
     rows = conn.execute(
         "SELECT from_msc, to_msc FROM candle_coverage "

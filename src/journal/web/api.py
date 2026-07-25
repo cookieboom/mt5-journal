@@ -13,7 +13,6 @@ import sqlite3
 from typing import Any
 
 from ..adapter.base import TIMEFRAMES
-from ..domain.resample import resample_m1, bucket_start, timeframe_ms
 from ..store import candle_queue
 from ..store import candles_store as cs
 from . import views
@@ -136,25 +135,7 @@ def candles_payload(
     if timeframe not in TIMEFRAMES:
         raise ValueError(f"unknown timeframe {timeframe!r}; expected one of {list(TIMEFRAMES)}")
 
-    native = cs.read_candles(conn, symbol, timeframe, from_ms, to_ms)
-    if native:
-        bars = [cs.row_to_candle(r) for r in native]
-    elif timeframe != "M1":
-        # Aggregate from M1. Read M1 over BUCKET-ALIGNED bounds, not the raw
-        # [from,to] window: resample_m1's coverage guard assumes it is handed
-        # EVERY M1 bar for any bucket it may emit. A window starting mid-bucket
-        # would feed a fully-covered boundary bucket only its tail bars and emit a
-        # wrong open/high/low — the exact bar the guard exists to prevent.
-        lo = bucket_start(from_ms, timeframe)
-        hi = bucket_start(to_ms, timeframe) + timeframe_ms(timeframe) - 1
-        m1 = cs.read_candles(conn, symbol, "M1", lo, hi)
-        bars = (
-            resample_m1([cs.row_to_candle(r) for r in m1], timeframe,
-                        covered=cs.read_coverage(conn, symbol, "M1"))
-            if m1 else []
-        )
-    else:
-        bars = []
+    bars = cs.load_bars(conn, symbol, timeframe, from_ms, to_ms)
 
     if len(bars) > max_bars:
         bars = bars[-max_bars:]

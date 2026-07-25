@@ -48,3 +48,18 @@ def test_row_to_candle(tmp_path):
     r = cs.read_candles(conn, "XAUUSDc", "M1", BASE, BASE + 3*M1)[0]
     c = cs.row_to_candle(r)
     assert c.time_msc == BASE + 2*M1 and c.open == 1.1
+
+def test_load_bars_returns_native_rows(tmp_path):
+    from journal.store.db import connect
+    from journal.store import candles_store as cs
+    from journal.adapter.base import Candle
+    conn = connect(tmp_path / "j.db")
+    try:
+        c = Candle(time_msc=1_700_000_000_000, open=1, high=2, low=0.5, close=1.5,
+                   tick_volume=3, spread=0, real_volume=0)
+        cs.insert_candle(conn, "XAUUSDc", "M5", c)
+        conn.commit()
+        bars = cs.load_bars(conn, "XAUUSDc", "M5", 1_700_000_000_000, 1_700_000_000_000)
+        assert len(bars) == 1 and bars[0].close == 1.5
+    finally:
+        conn.close()
