@@ -46,13 +46,27 @@ export const DEFAULT_SETTINGS: ChartSettings = {
 const KEY = "mt5j.chart.settings";
 
 // Bounds — also the numbers shown next to the inputs in the drawer.
-const INITIAL_MIN = 100, INITIAL_MAX = 1000;
-const MAX_MIN = 500, MAX_MAX = 10000;
+export const INITIAL_MIN = 100, INITIAL_MAX = 1000;
+export const MAX_MIN = 500, MAX_MAX = 10000;
 
 function clampInt(v: unknown, lo: number, hi: number, fallback: number): number {
   const n = typeof v === "number" && Number.isFinite(v) ? Math.round(v) : fallback;
   return Math.min(hi, Math.max(lo, n));
 }
+
+// Clamp initialBars/maxBars into bounds; maxBars is raised to initialBars if
+// smaller. Shared by normalizeSettings (load/reconcile) and by callers that
+// need to clamp at consumption time (e.g. Chart.tsx, since drawer inputs can
+// hold an out-of-range or empty value mid-typing).
+export function clampBars(
+  s: { initialBars: number; maxBars: number },
+): { initialBars: number; maxBars: number } {
+  const initialBars = clampInt(s.initialBars, INITIAL_MIN, INITIAL_MAX, DEFAULT_SETTINGS.initialBars);
+  let maxBars = clampInt(s.maxBars, MAX_MIN, MAX_MAX, DEFAULT_SETTINGS.maxBars);
+  if (maxBars < initialBars) maxBars = initialBars;
+  return { initialBars, maxBars };
+}
+
 function hex(v: unknown, fallback: string): string {
   return typeof v === "string" && /^#[0-9a-fA-F]{6}$/.test(v) ? v : fallback;
 }
@@ -69,9 +83,9 @@ export function normalizeSettings(raw: unknown): ChartSettings {
   const p = raw as Record<string, unknown>;
   const c = (p.colors ?? {}) as Record<string, unknown>;
   const D = DEFAULT_SETTINGS;
-  const initialBars = clampInt(p.initialBars, INITIAL_MIN, INITIAL_MAX, D.initialBars);
-  let maxBars = clampInt(p.maxBars, MAX_MIN, MAX_MAX, D.maxBars);
-  if (maxBars < initialBars) maxBars = initialBars;
+  const { initialBars, maxBars } = clampBars({
+    initialBars: p.initialBars as number, maxBars: p.maxBars as number,
+  });
   return {
     version: 1,
     theme: oneOf(p.theme, ["dark", "light"] as const, D.theme),

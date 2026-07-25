@@ -37,6 +37,9 @@ export function useChartPrefs(): {
         if (!alive || !body) return;
         const { settings: next, shouldImport } =
           reconcilePrefs(loadChartSettings(), body.prefs, localExists);
+        // A user edit made in the few-ms window before this GET resolves can be
+        // transiently overwritten by the DB value here; it self-heals on the
+        // next mount (single-user, acceptable).
         setSettings(next);
         saveChartSettings(next);
         if (shouldImport) putPrefs(next);   // seed DB from this browser
@@ -54,7 +57,7 @@ export function useChartPrefs(): {
 
   const reset = useCallback(() => update({ ...DEFAULT_SETTINGS }), [update]);
 
-  // Flush a pending debounced PUT on unmount so a quick change isn't lost.
+  // Cancel any pending debounced PUT on unmount (localStorage already holds the latest value).
   useEffect(() => () => { if (putTimer.current) clearTimeout(putTimer.current); }, []);
 
   return { settings, update, reset };

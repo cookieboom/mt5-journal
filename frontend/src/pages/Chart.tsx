@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useApi } from "../lib/api";
-import { parseSelection } from "../lib/chartPrefs";
+import { clampBars, parseSelection } from "../lib/chartPrefs";
 import { useChartPrefs } from "../hooks/useChartPrefs";
 import type { Sym, Timeframe } from "../lib/candles";
 import type { HoverBar, LiveData } from "../lib/types";
@@ -25,7 +25,10 @@ export default function Chart() {
   const { data: live } = useApi<LiveData>("/api/live", 2500);
   const currency = live?.header.currency ?? "USC";
 
-  const data = useChartData(symbol, tf, settings.initialBars, settings.maxBars);
+  // Clamp at consumption: drawer inputs can transiently hold an out-of-range
+  // or empty (Number("")===0) value mid-typing, which must never reach the hook.
+  const bars = clampBars(settings);
+  const data = useChartData(symbol, tf, bars.initialBars, bars.maxBars);
   const hasBars = data.candles.length > 0;
 
   const setSelection = (next: { symbol?: Sym; tf?: Timeframe }) => {

@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   DEFAULT_SETTINGS, loadChartSettings, saveChartSettings, parseSelection,
-  normalizeSettings, reconcilePrefs,
+  normalizeSettings, reconcilePrefs, clampBars,
 } from "./chartPrefs";
 
 function fakeStore(): Storage {
@@ -45,19 +45,6 @@ describe("chartPrefs", () => {
   });
 });
 
-// A throwaway Storage for load/save tests.
-function mem(): Storage {
-  const m = new Map<string, string>();
-  return {
-    getItem: (k) => m.get(k) ?? null,
-    setItem: (k, v) => void m.set(k, v),
-    removeItem: (k) => void m.delete(k),
-    clear: () => m.clear(),
-    key: () => null,
-    length: 0,
-  } as Storage;
-}
-
 describe("chartPrefs v1", () => {
   it("migrates a legacy {theme,grid} object (no version) to full v1 defaults", () => {
     const s = normalizeSettings({ theme: "light", grid: false });
@@ -83,7 +70,7 @@ describe("chartPrefs v1", () => {
   });
 
   it("load/save roundtrips through a Storage", () => {
-    const store = mem();
+    const store = fakeStore();
     const custom = { ...DEFAULT_SETTINGS, theme: "light" as const };
     saveChartSettings(custom, store);
     expect(loadChartSettings(store)).toEqual(custom);
@@ -107,6 +94,15 @@ describe("chartPrefs v1", () => {
   it("reconcile: DB absent + no local -> defaults, no import", () => {
     const r = reconcilePrefs(DEFAULT_SETTINGS, null, false);
     expect(r.shouldImport).toBe(false);
+  });
+
+  it("clampBars clamps at consumption (e.g. emptied number inputs -> 0)", () => {
+    expect(clampBars({ initialBars: 0, maxBars: 0 }))
+      .toEqual({ initialBars: 100, maxBars: 500 });
+    expect(clampBars({ initialBars: 900, maxBars: 200 }))
+      .toEqual({ initialBars: 900, maxBars: 900 }); // maxBars raised to initialBars
+    expect(clampBars({ initialBars: 300, maxBars: 3000 }))
+      .toEqual({ initialBars: 300, maxBars: 3000 }); // in-range pair passes through unchanged
   });
 
   it("parseSelection: URL wins, else saved default, else hard default", () => {

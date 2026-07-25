@@ -1,10 +1,10 @@
 import { useEffect } from "react";
 import { SYMBOLS, TIMEFRAMES } from "../lib/candles";
-import type { ChartSettings } from "../lib/chartPrefs";
+import {
+  INITIAL_MAX, INITIAL_MIN, MAX_MAX, MAX_MIN, type ChartSettings,
+} from "../lib/chartPrefs";
 
 // Number inputs advertise their clamp bounds; normalizeSettings enforces them.
-const INITIAL_MIN = 100, INITIAL_MAX = 1000, MAX_MIN = 500, MAX_MAX = 10000;
-
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="mb-4">
