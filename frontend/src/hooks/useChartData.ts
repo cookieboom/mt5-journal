@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { capCandles, fetchCandles, initialWindow, mergeCandles, olderWindow, type Timeframe } from "../lib/candles";
+import { backfillWindow, capCandles, fetchCandles, initialWindow, mergeCandles, olderWindow, timeframeMs, type Timeframe } from "../lib/candles";
 import type { Candle } from "../lib/types";
 
 export type ChartStatus = "loading" | "polling" | "ready" | "gaveup" | "error";
@@ -31,6 +31,12 @@ export function useChartData(symbol: string, tf: Timeframe, initialBars: number,
   // no-op so a pan can't keep re-loading bars that capCandles would re-drop.
   // Reset on every symbol/tf reset (the effect below) and on retry.
   const atCapRef = useRef(false);
+  // False until the CURRENT window has ever yielded a bar. While still false and
+  // a fetch comes back empty, load() widens the window backward (backfillWindow)
+  // instead of just polling — so an initial view anchored at Date.now() that
+  // lands in a weekend/holiday gap walks back to the last real bar rather than
+  // rendering blank. Reset on every symbol/tf reset and on retry.
+  const hasDataRef = useRef(false);
 
   const clearTimer = () => { if (timer.current) { clearTimeout(timer.current); timer.current = null; } };
 
@@ -42,12 +48,29 @@ export function useChartData(symbol: string, tf: Timeframe, initialBars: number,
     try {
       const resp = await fetchCandles(symbol, tf, from, to);
       if (!alive.current || gen !== genRef.current) return;
+      if (resp.candles.length > 0) hasDataRef.current = true;
       setCandles((prev) => {
         const merged = capCandles(mergeCandles(prev, resp.candles), maxBars);
         atCapRef.current = merged.length >= maxBars;
         return merged;
       });
       setError(null);
+      // Nothing found yet and this window came back empty → the view is anchored
+      // in a market-closed gap. Widen backward and retry immediately (older bars
+      // are already stored, so this renders without waiting on a fill) until data
+      // appears or the lookback bound is hit. Bounded by maxBars so we never load
+      // more than capCandles would keep. Skips the poll cycle for this iteration.
+      if (!hasDataRef.current) {
+        const wider = backfillWindow(from, to, timeframeMs(tf) * maxBars);
+        if (wider) {
+          fromRef.current = wider[0];
+          clearTimer();
+          setStatus("loading");
+          return load(wider[0], wider[1]);
+        }
+        // wider === null: reached the bound with no data anywhere in range — fall
+        // through so the missing/poll logic below can still surface pending fills.
+      }
       const stillMissing = resp.missing.length > 0;
       if (!stillMissing) { setStatus("ready"); pollRef.current = 0; return; }
       // Missing remains. Aggregated bars may already render (pending true) — that
@@ -76,6 +99,7 @@ export function useChartData(symbol: string, tf: Timeframe, initialBars: number,
     clearTimer();
     setCandles([]); setStatus("loading"); setError(null); pollRef.current = 0;
     atCapRef.current = false;
+    hasDataRef.current = false;
     const [from, to] = initialWindow(tf, Date.now(), initialBars);
     fromRef.current = from;
     load(from, to);
@@ -87,6 +111,7 @@ export function useChartData(symbol: string, tf: Timeframe, initialBars: number,
     clearTimer();
     pollRef.current = 0;
     atCapRef.current = false;
+    hasDataRef.current = false;
     setStatus("polling");
     const [, to] = initialWindow(tf, Date.now(), initialBars);
     load(fromRef.current, to);

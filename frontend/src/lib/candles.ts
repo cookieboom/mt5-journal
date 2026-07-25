@@ -30,6 +30,23 @@ export function olderWindow(currentFromMs: number, tf: Timeframe, bars = 300): [
   return [currentFromMs - timeframeMs(tf) * bars, currentFromMs - 1];
 }
 
+// A fetch that came back empty means the requested window fell entirely inside a
+// market-closed gap (weekend/holiday) — the newest real bar sits further back
+// than the window's left edge. Widen backward by DOUBLING the span (same right
+// edge `to`) so the next fetch reaches past the gap into real data. Returns the
+// next [from, to] to try, or null once the span already covers `maxSpanMs`
+// (give up: no data within reach — never loop forever into empty history).
+// This is why M1 was blank on a Saturday while wider timeframes rendered: their
+// 300-bar windows already spanned past the weekend, M1's 5-hour window did not.
+export function backfillWindow(
+  from: number, to: number, maxSpanMs: number,
+): [number, number] | null {
+  const span = to - from;
+  if (span >= maxSpanMs) return null;
+  const nextSpan = Math.min(span * 2, maxSpanMs);
+  return [to - nextSpan, to];
+}
+
 export function mergeCandles(existing: Candle[], incoming: Candle[]): Candle[] {
   const m = new Map<number, Candle>();
   for (const c of existing) m.set(c.time_msc, c);

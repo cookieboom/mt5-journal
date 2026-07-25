@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   timeframeMs, toSeconds, initialWindow, olderWindow, mergeCandles,
-  isNowVisible, liveLines, LINE_COLORS, capCandles,
+  isNowVisible, liveLines, LINE_COLORS, capCandles, backfillWindow,
 } from "./candles";
 import type { Candle } from "./types";
 import type { LivePosition } from "./types";
@@ -66,6 +66,30 @@ describe("candles helpers", () => {
     const byTitle = Object.fromEntries(full.map((l) => [l.title.split(" ")[0], l.color]));
     expect(byTitle.SL).toBe(LINE_COLORS.sl);
     expect(byTitle.TP).toBe(LINE_COLORS.tp);
+  });
+});
+
+describe("backfillWindow", () => {
+  const M1 = 60_000;
+  it("doubles the lookback span, keeping the same right edge", () => {
+    const to = 1_700_000_000_000;
+    const from = to - 5 * 60 * M1;          // a 5-hour window
+    // next try is twice as far back, still ending at `to`
+    expect(backfillWindow(from, to, 30 * 24 * 60 * M1)).toEqual([to - 10 * 60 * M1, to]);
+  });
+
+  it("caps the widened span at maxSpanMs instead of overshooting", () => {
+    const to = 1_700_000_000_000;
+    const from = to - 20 * 60 * M1;         // 20h window; doubling would be 40h
+    const max = 30 * 60 * M1;               // but the cap is 30h
+    expect(backfillWindow(from, to, max)).toEqual([to - max, to]);
+  });
+
+  it("returns null once the window already spans maxSpanMs (give up: no data in reach)", () => {
+    const to = 1_700_000_000_000;
+    const max = 30 * 60 * M1;
+    expect(backfillWindow(to - max, to, max)).toBeNull();
+    expect(backfillWindow(to - (max + 1), to, max)).toBeNull();  // already past the bound
   });
 });
 
