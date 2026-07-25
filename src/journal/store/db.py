@@ -128,7 +128,19 @@ def connect(path: str | Path) -> sqlite3.Connection:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    conn = sqlite3.connect(str(path))
+    # check_same_thread=False: the web layer opens ONE connection per request via
+    # a FastAPI `yield` dependency, and in modern Starlette both the sync endpoint
+    # and the sync dependency run in the anyio threadpool — with no guarantee the
+    # dependency's setup (which creates this connection) and the endpoint (which
+    # uses it) land on the same worker thread. SQLite's default same-thread guard
+    # turns that hop into "SQLite objects created in a thread can only be used in
+    # that same thread" — the intermittent 500s while clicking around the SPA.
+    # Disabling the guard is safe here because no connection is ever used by two
+    # threads AT ONCE: a request touches its connection strictly sequentially
+    # (setup → endpoint → teardown), and the CLI / `journal live` loop each use
+    # their connection on a single thread. It relaxes a thread-affinity check, not
+    # any of the WAL/busy_timeout concurrency guarantees below.
+    conn = sqlite3.connect(str(path), check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
 
