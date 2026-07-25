@@ -16,3 +16,6 @@ venv/
 # local so queries work; out of git so it stops dirtying the tree.
 graphify-out/
 .superpowers/
+
+# Vitest local run cache
+.vite/
