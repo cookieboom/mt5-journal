@@ -38,7 +38,7 @@ home each, and a second copy is a future lie. Point, never duplicate.
 
 **Last updated:** 2026-07-23
 
-**M9 in one line (`claude/trading-system-plan-2959b7`, NOT yet merged):** the
+**M9 in one line (MERGED to main; branch `claude/trading-system-plan-2959b7` since deleted):** the
 journal became able to *act*, not just describe. Six phases: (1) a real
 migration runner in `store/db.py` + `migrations/002_live_trading.sql` (bumps
 `SCHEMA_VERSION=2`, applied automatically by `connect()`); (2) trade ops at the
@@ -104,6 +104,21 @@ reconciliation intact.
 M9 is now *live-verified for ingest, the read/observe surface, and the full
 order-send plumbing up to the broker's verdict; a successful (accepted) order has
 not landed yet only because the terminal's AutoTrading is off.*
+
+**CORRECTION (2026-07-25) — kill a stale-doc misunderstanding.** Earlier phrasings
+(this file's own status table, and handoffs that quoted it) said the "M9 live
+smoke is pending a human run," which later work read as "the live/bridge path is
+unproven." That is wrong and has been for a long time. The live round trip —
+`journal live` owning the bridge, mirroring `open_positions`, serving `/api/live`,
+and the browser UI reading it — WORKS and was measured 2026-07-23 (above). The web
+layer never touches the bridge directly (rule 1 / M9 boundary); it goes through the
+`journal live` process + the command/candle queues, and that whole path is proven.
+The ONLY genuinely-pending items are: (1) enable AutoTrading in the container's MT5
+terminal and confirm one *accepted* `modify_sltp` actually changes the SL in MT5
+(a terminal toggle, not a code gap); (2) a browser visual/contrast pass of the SPA.
+Chart Phase B's live-position overlay consumes the same proven `/api/live` data
+path — its "positive path" is verifiable exactly the way `/live` already is; only
+the chart-specific line rendering is new frontend, not a bridge concern.
 
 **Done:** M0 (adapter + store + doctor) · M0.1 (Candle→ms, enums probed from the
 bridge) · M0.2 (fixtures re-recorded with `comment` preserved, `a15cc5e`) ·
@@ -490,7 +505,7 @@ note what was measured.
 | M6.1 | Weekly Markdown report (`journal weekly`) | done (`a989eac`) |
 | M7 | Web dashboard on localhost (`journal serve`) — read-mostly + annotation/tag writes | done |
 | M8 | Per-symbol breakdown (`by_symbol`) + dedicated `/report` web page | done |
-| M9 | Live positions + trade interaction + auto-ingest on close + UI redesign (`journal live`, `/live`) | code-complete, offline-verified; live smoke pending human (`claude/trading-system-plan-2959b7`) |
+| M9 | Live positions + trade interaction + auto-ingest on close + UI redesign (`journal live`, `/live`) | **done — merged to main.** Live-verified 2026-07-23 (real account/bridge): auto-ingest-on-close, `/live` observe, and the order-send path to the broker all proven. The browser UI → live data (`open_positions`/`/api/live`) → `journal live` → bridge round trip WORKS and has for a long time. Only unmeasured: an *accepted* order landing — blocked solely by the MT5 container's AutoTrading toggle (a terminal setting, not code) — plus a browser visual/contrast pass. |
 
 M0–M3 delivers the original ask: an automatic journal with charts. **Done.**
 M4 onward — poller, analytics, annotations — is what makes the journal worth
