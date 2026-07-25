@@ -18,8 +18,6 @@ export default function Chart() {
   const [nowVisible, setNowVisible] = useState(false);
   // hovered is consumed by ChartInfoPanel in Task 8.
   void hovered; // TODO(Task 8): consumed by ChartInfoPanel
-  // nowVisible is consumed by the live overlay in Task 7.
-  void nowVisible; // TODO(Task 7): consumed by live overlay
   const chartRef = useRef<ChartHandle>(null);
 
   const { data: live } = useApi<LiveData>("/api/live", 2500);
@@ -61,6 +59,8 @@ export default function Chart() {
               onHover={setHovered}
               onNowVisibleChange={setNowVisible}
               onRequestOlder={data.loadOlder}
+              live={live ?? null}
+              nowVisible={nowVisible}
             />
           ) : (
             <div className="glass h-full flex items-center justify-center text-muted text-sm">

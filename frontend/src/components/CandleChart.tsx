@@ -3,11 +3,11 @@ import {
 } from "react";
 import {
   createChart, CandlestickSeries, ColorType, CrosshairMode,
-  type IChartApi, type ISeriesApi, type UTCTimestamp,
+  type IChartApi, type ISeriesApi, type IPriceLine, type UTCTimestamp,
 } from "lightweight-charts";
-import { toSeconds, type Sym, type Timeframe } from "../lib/candles";
+import { toSeconds, liveLines, type Sym, type Timeframe } from "../lib/candles";
 import type { ChartSettings } from "../lib/chartPrefs";
-import type { Candle, HoverBar } from "../lib/types";
+import type { Candle, HoverBar, LiveData } from "../lib/types";
 import { wib } from "../lib/format";
 import type { ChartHandle } from "../pages/Chart";
 
@@ -29,10 +29,13 @@ const CandleChart = forwardRef<ChartHandle, {
   onNowVisibleChange: (v: boolean) => void;
   onRequestOlder: () => void;
   lastBarMs: number | null;
+  live: LiveData | null;
+  nowVisible: boolean;
 }>(function CandleChart(props, ref) {
   const el = useRef<HTMLDivElement>(null);
   const chart = useRef<IChartApi | null>(null);
   const series = useRef<ISeriesApi<"Candlestick"> | null>(null);
+  const priceLines = useRef<IPriceLine[]>([]);
   const cbs = useRef(props);
   cbs.current = props;
 
@@ -117,6 +120,32 @@ const CandleChart = forwardRef<ChartHandle, {
       })),
     );
   }, [props.candles]);
+
+  // Live SL/TP/entry overlay — only when the current symbol has open positions
+  // AND "now" is in view. Horizontal lines have no time, so they'd otherwise
+  // hang over history where those levels never existed.
+  useEffect(() => {
+    const s = series.current;
+    if (!s) return;
+    for (const pl of priceLines.current) s.removePriceLine(pl);
+    priceLines.current = [];
+    if (!props.nowVisible || !props.live || props.live.live.empty) return;
+    const mine = props.live.live.positions.filter((p) => p.symbol === props.symbol);
+    for (const pos of mine) {
+      for (const line of liveLines(pos)) {
+        priceLines.current.push(
+          s.createPriceLine({
+            price: line.price,
+            color: line.color,
+            lineWidth: 1,
+            lineStyle: 2,           // dashed
+            axisLabelVisible: true,
+            title: line.title,
+          }),
+        );
+      }
+    }
+  }, [props.live, props.nowVisible, props.symbol]);
 
   useImperativeHandle(ref, () => ({
     jumpToNow: () => chart.current?.timeScale().scrollToRealTime(),
