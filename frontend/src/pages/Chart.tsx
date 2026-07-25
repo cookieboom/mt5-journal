@@ -1,7 +1,8 @@
 import { useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useApi } from "../lib/api";
-import { parseSelection, loadChartSettings, saveChartSettings, type ChartSettings } from "../lib/chartPrefs";
+import { parseSelection } from "../lib/chartPrefs";
+import { useChartPrefs } from "../hooks/useChartPrefs";
 import type { Sym, Timeframe } from "../lib/candles";
 import type { HoverBar, LiveData } from "../lib/types";
 import ChartToolbar from "../components/ChartToolbar";
@@ -13,8 +14,10 @@ export interface ChartHandle { jumpToNow: () => void }
 
 export default function Chart() {
   const [params, setParams] = useSearchParams();
-  const { symbol, tf } = parseSelection(params);
-  const [settings, setSettings] = useState<ChartSettings>(() => loadChartSettings());
+  const { settings, update, reset } = useChartPrefs();
+  const { symbol, tf } = parseSelection(params, {
+    symbol: settings.defaultSymbol, tf: settings.defaultTimeframe,
+  });
   const [hovered, setHovered] = useState<HoverBar | null>(null);
   const [nowVisible, setNowVisible] = useState(false);
   const chartRef = useRef<ChartHandle>(null);
@@ -22,7 +25,7 @@ export default function Chart() {
   const { data: live } = useApi<LiveData>("/api/live", 2500);
   const currency = live?.header.currency ?? "USC";
 
-  const data = useChartData(symbol, tf);
+  const data = useChartData(symbol, tf, settings.initialBars, settings.maxBars);
   const hasBars = data.candles.length > 0;
 
   const setSelection = (next: { symbol?: Sym; tf?: Timeframe }) => {
@@ -31,7 +34,6 @@ export default function Chart() {
     p.set("tf", next.tf ?? tf);
     setParams(p, { replace: true });
   };
-  const applySettings = (s: ChartSettings) => { setSettings(s); saveChartSettings(s); };
 
   return (
     <div className="flex flex-col h-[calc(100vh-2rem)]">
@@ -41,7 +43,8 @@ export default function Chart() {
         settings={settings}
         onSymbol={(s) => setSelection({ symbol: s })}
         onTf={(t) => setSelection({ tf: t })}
-        onSettings={applySettings}
+        onSettings={update}
+        onReset={reset}
         onJumpNow={() => chartRef.current?.jumpToNow()}
       />
       <div className="flex gap-3 flex-1 min-h-0">
@@ -101,6 +104,7 @@ export default function Chart() {
             hovered={hovered}
             live={live ?? null}
             currency={currency}
+            chartType={settings.chartType}
           />
         </aside>
       </div>
