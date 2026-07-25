@@ -211,3 +211,9 @@ export interface CandlesResponse {
 // A candle the crosshair is hovering (or the latest bar when idle). Same shape
 // as Candle; named separately so the info panel's intent reads clearly.
 export type HoverBar = Candle;
+
+export interface PriceLineSpec {
+  price: number;
+  color: string;
+  title: string;
+}
