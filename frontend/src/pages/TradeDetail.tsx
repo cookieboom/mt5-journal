@@ -5,6 +5,8 @@ import { TradeDetailData } from "../lib/types";
 import { money, rmult, price, wib, dur } from "../lib/format";
 import AnnotationForm from "../components/AnnotationForm";
 import TagEditor from "../components/TagEditor";
+import TradePngPanel from "../components/TradePngPanel";
+import { useTradePngPrefs } from "../hooks/useTradePngPrefs";
 
 function Fact({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -21,7 +23,8 @@ export default function TradeDetail() {
   const { id } = useParams();
   const { data, error, loading, reload } = useApi<TradeDetailData>(`/api/trades/${id}`);
   const [chartFailed, setChartFailed] = useState(false);
-  useEffect(() => setChartFailed(false), [id]);
+  const png = useTradePngPrefs();
+  useEffect(() => setChartFailed(false), [id, png.version]);
   if (loading) return <div className="text-muted p-6">Memuat…</div>;
   if (error) return <div className="glass p-6 text-neg">Gagal memuat: {error}</div>;
   if (!data) return null;
@@ -62,12 +65,17 @@ export default function TradeDetail() {
         <div className="glass p-4">
           <h2 className="text-[13px] font-semibold uppercase tracking-wider text-muted mb-2">Chart</h2>
           {chartable ? (
-            chartFailed ? (
-              <p className="text-[12px] text-muted">Chart belum tersedia — jalankan <code>uv run journal candles</code> lalu buka lagi.</p>
-            ) : (
-              <img className="w-full rounded" src={`/trades/${trade.position_id}/chart.png`}
-                alt={`chart trade ${trade.position_id}`} onError={() => setChartFailed(true)} />
-            )
+            <>
+              <TradePngPanel settings={png.settings} onChange={png.update} />
+              {chartFailed ? (
+                <p className="text-[12px] text-muted">Chart belum tersedia — jalankan <code>uv run journal candles</code> lalu buka lagi.</p>
+              ) : (
+                <img className="w-full rounded" src={`/trades/${trade.position_id}/chart.png?v=${png.version}`}
+                  alt={`chart trade ${trade.position_id}`} onError={() => setChartFailed(true)} />
+              )}
+              <a className="inline-block mt-2 text-[12px] text-cyan hover:underline"
+                 href={`/trades/${trade.position_id}/view`}>Lihat di chart interaktif →</a>
+            </>
           ) : (
             <p className="text-[12px] text-muted">Hanya trade closed yang bisa di-chart.</p>
           )}
