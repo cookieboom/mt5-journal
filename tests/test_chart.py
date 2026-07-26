@@ -11,9 +11,13 @@ from __future__ import annotations
 import pytest
 
 from journal.render.chart import (
+    PAD_BARS,
     NoCandlesError,
+    RenderOpts,
     TradeNotFoundError,
+    normalize_opts,
     render_trade,
+    window_for,
 )
 from journal.store.db import connect
 
@@ -192,6 +196,34 @@ def test_no_candles_raises_not_a_blank_png(conn, tmp_path):
 def test_missing_trade_raises(conn, tmp_path):
     with pytest.raises(TradeNotFoundError):
         render_trade(conn, 999999, cache_dir=tmp_path / "cache")
+
+
+# ---------------------------------------------------------------- render opts
+
+
+def test_normalize_opts_defaults_and_clamps():
+    assert normalize_opts(None) == RenderOpts()          # all defaults
+    o = normalize_opts({"theme": "bogus", "pad_bars": 999, "tf_override": "M5",
+                        "show_sltp": False, "show_volume": True})
+    assert o.theme == "charles"        # unknown theme falls back
+    assert o.pad_bars == 120           # clamped to [5,120]
+    assert o.tf_override == "M5"
+    assert o.show_sltp is False and o.show_volume is True
+    assert normalize_opts({"pad_bars": 1}).pad_bars == 5
+    assert normalize_opts({"tf_override": "ZZ"}).tf_override is None
+
+def test_render_opts_signature_stable_and_sensitive():
+    a = RenderOpts()
+    assert a.signature() == RenderOpts().signature()          # stable
+    assert a.signature() != RenderOpts(pad_bars=30).signature()  # sensitive
+
+def test_window_for_pad_bars_widens_window():
+    narrow = window_for(1_000_000, 2_000_000, "M1", pad_bars=5)
+    wide = window_for(1_000_000, 2_000_000, "M1", pad_bars=30)
+    assert wide[0] < narrow[0] and wide[1] > narrow[1]
+    # default keeps PAD_BARS behavior
+    assert window_for(1_000_000, 2_000_000, "M1") == window_for(
+        1_000_000, 2_000_000, "M1", pad_bars=PAD_BARS)
 
 
 # -------------------------------------------------------------------- integration

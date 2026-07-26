@@ -16,6 +16,7 @@ and why `annotations` keys on `position_id`, never `trades.id`).
 
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -59,6 +60,60 @@ _TOL = 1e-9  # money/price float comparison tolerance (CLAUDE.md rule 5)
 
 _WIB = timezone(timedelta(hours=7))  # display zone only (CLAUDE.md rule 3)
 
+# allowed mplfinance base styles (light default first)
+THEMES: frozenset[str] = frozenset({"charles", "nightclouds", "yahoo"})
+PAD_MIN, PAD_MAX = 5, 120
+
+
+@dataclass(frozen=True)
+class RenderOpts:
+    theme: str = "charles"
+    pad_bars: int = PAD_BARS
+    tf_override: str | None = None
+    show_sltp: bool = True
+    show_markers: bool = True
+    show_volume: bool = False
+    show_grid: bool = True
+
+    def signature(self) -> str:
+        raw = (
+            f"{self.theme}|{self.pad_bars}|{self.tf_override}|"
+            f"{int(self.show_sltp)}{int(self.show_markers)}"
+            f"{int(self.show_volume)}{int(self.show_grid)}"
+        )
+        return hashlib.sha1(raw.encode()).hexdigest()[:8]
+
+
+def _clamp_pad(v: object) -> int:
+    try:
+        n = int(v)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return PAD_BARS
+    return max(PAD_MIN, min(PAD_MAX, n))
+
+
+def _b(v: object, default: bool) -> bool:
+    return v if isinstance(v, bool) else default
+
+
+def normalize_opts(raw: dict | None) -> RenderOpts:
+    """Coerce a stored/DB blob (or None) into a valid RenderOpts. Unknown theme
+    -> 'charles'; pad_bars clamped to [5,120]; tf_override must be a known
+    timeframe else None; booleans keep defaults when absent/wrong-typed."""
+    if not isinstance(raw, dict):
+        return RenderOpts()
+    theme = raw.get("theme")
+    tf = raw.get("tf_override")
+    return RenderOpts(
+        theme=theme if theme in THEMES else "charles",
+        pad_bars=_clamp_pad(raw.get("pad_bars")),
+        tf_override=tf if tf in TIMEFRAMES else None,
+        show_sltp=_b(raw.get("show_sltp"), True),
+        show_markers=_b(raw.get("show_markers"), True),
+        show_volume=_b(raw.get("show_volume"), False),
+        show_grid=_b(raw.get("show_grid"), True),
+    )
+
 
 def choose_timeframe(duration_s: int) -> str:
     """Finest TF where the trade spans <= MAX_TRADE_BARS bars, floor D1."""
@@ -68,12 +123,12 @@ def choose_timeframe(duration_s: int) -> str:
     return TIMEFRAMES[-1]
 
 
-def window_for(open_msc: int, close_msc: int, tf: str) -> tuple[int, int]:
-    """+/- PAD_BARS bars of context around [open_msc, close_msc], at `tf`
-    granularity. Both inputs and the return value are epoch milliseconds,
-    SERVER time (matches `trades.open_time_msc`/`close_time_msc` and
-    `candles.time_msc` -- no zone conversion happens here)."""
-    pad_ms = PAD_BARS * _TF_SECONDS[tf] * 1000
+def window_for(
+    open_msc: int, close_msc: int, tf: str, pad_bars: int = PAD_BARS,
+) -> tuple[int, int]:
+    """+/- `pad_bars` bars of context around [open_msc, close_msc] at `tf`
+    granularity. Epoch-ms, SERVER time (no zone conversion here)."""
+    pad_ms = pad_bars * _TF_SECONDS[tf] * 1000
     return open_msc - pad_ms, close_msc + pad_ms
 
 
