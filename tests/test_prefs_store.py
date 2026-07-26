@@ -64,3 +64,11 @@ def test_replay_and_chart_prefs_do_not_collide(conn):
     ps.set_replay_prefs(conn, {"version": 1, "symbol": "EURUSDc"})
     assert ps.get_chart_prefs(conn) == {"version": 1, "theme": "dark"}
     assert ps.get_replay_prefs(conn) == {"version": 1, "symbol": "EURUSDc"}
+
+
+def test_trade_png_prefs_roundtrip(conn):
+    assert ps.get_trade_png_prefs(conn) is None
+    ts = ps.set_trade_png_prefs(conn, {"theme": "nightclouds", "pad_bars": 40})
+    assert isinstance(ts, int) and ts > 0
+    assert ps.get_trade_png_prefs(conn) == {"theme": "nightclouds", "pad_bars": 40}
+    assert ps.get_pref(conn, ps.TRADE_PNG_KEY) is not None

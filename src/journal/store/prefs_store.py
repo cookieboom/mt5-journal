@@ -16,6 +16,7 @@ from .db import now_ms
 
 CHART_KEY = "chart"
 REPLAY_KEY = "replay"
+TRADE_PNG_KEY = "trade_png"
 
 
 def get_pref(conn: sqlite3.Connection, key: str) -> str | None:
@@ -58,3 +59,14 @@ def get_replay_prefs(conn: sqlite3.Connection) -> Any | None:
 def set_replay_prefs(conn: sqlite3.Connection, prefs: Any) -> int:
     """Persist replay-config prefs (serialised to JSON). Returns updated_ms."""
     return set_pref(conn, REPLAY_KEY, json.dumps(prefs), now_ms())
+
+
+def get_trade_png_prefs(conn: sqlite3.Connection) -> Any | None:
+    """Parsed trade-PNG render settings JSON, or None if never saved."""
+    raw = get_pref(conn, TRADE_PNG_KEY)
+    return json.loads(raw) if raw is not None else None
+
+
+def set_trade_png_prefs(conn: sqlite3.Connection, prefs: Any) -> int:
+    """Persist trade-PNG render settings (serialised to JSON). Returns updated_ms."""
+    return set_pref(conn, TRADE_PNG_KEY, json.dumps(prefs), now_ms())

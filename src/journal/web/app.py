@@ -114,6 +114,22 @@ def create_app(db_path: str | None = None) -> FastAPI:
         except RuntimeError as e:
             return JSONResponse({"error": str(e)}, status_code=400)
 
+    # NOTE: must precede /api/trades/{position_id} below — a parametrized path
+    # would otherwise swallow "png-prefs" as a position_id (422).
+    @app.get("/api/trades/png-prefs")
+    def api_get_trade_png_prefs(conn: sqlite3.Connection = Depends(get_conn)):
+        """Global trade-PNG render settings, cross-browser. `prefs` null until
+        first save. Pure DB (M9 boundary)."""
+        return JSONResponse({"prefs": prefs_store.get_trade_png_prefs(conn)})
+
+    @app.put("/api/trades/png-prefs")
+    def api_put_trade_png_prefs(
+        prefs=Body(...), conn: sqlite3.Connection = Depends(get_conn),
+    ):
+        """Upsert the trade-PNG settings blob under key 'trade_png'."""
+        ts = prefs_store.set_trade_png_prefs(conn, prefs)
+        return JSONResponse({"ok": True, "updated_ms": ts})
+
     @app.get("/api/trades/{position_id}")
     def api_trade_detail(
         position_id: int, conn: sqlite3.Connection = Depends(get_conn)
@@ -312,8 +328,11 @@ def create_app(db_path: str | None = None) -> FastAPI:
         """Render (or reuse the cached) PNG for a closed trade. Charts are cache,
         reproducible from the DB (rule 6). A missing window / open trade is a
         plain 404 with a message — never a silently blank image."""
+        from ..render.chart import normalize_opts  # local import keeps mpl lazy
+
+        opts = normalize_opts(prefs_store.get_trade_png_prefs(conn))
         try:
-            result = render_trade(conn, position_id, cache_dir=_CACHE_DIR)
+            result = render_trade(conn, position_id, opts=opts, cache_dir=_CACHE_DIR)
         except (TradeNotFoundError, NoCandlesError, ValueError) as e:
             return Response(str(e), status_code=404, media_type="text/plain")
         except RuntimeError as e:

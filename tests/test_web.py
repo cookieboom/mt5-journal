@@ -545,3 +545,29 @@ def test_api_replay_prefs_get_null_then_put_then_get(conn):
 
     resp2 = get_fn(conn=conn)
     assert json.loads(resp2.body) == {"prefs": blob}
+
+
+def test_api_trade_png_prefs_get_null_then_put_then_get(conn):
+    app = create_app(":memory:")
+    get_fn = _endpoint(app, "api_get_trade_png_prefs")
+    put_fn = _endpoint(app, "api_put_trade_png_prefs")
+
+    resp = get_fn(conn=conn)
+    assert resp.status_code == 200
+    assert json.loads(resp.body) == {"prefs": None}
+
+    blob = {"theme": "yahoo", "pad_bars": 20}
+    put = put_fn(prefs=blob, conn=conn)
+    put_body = json.loads(put.body)
+    assert put_body["ok"] is True and isinstance(put_body["updated_ms"], int)
+
+    resp2 = get_fn(conn=conn)
+    assert json.loads(resp2.body) == {"prefs": blob}
+
+
+def test_api_trade_png_prefs_route_precedes_position_id_catchall():
+    app = create_app(":memory:")
+    # Route-ordering guard: /api/trades/png-prefs must resolve to its own
+    # handler, not be captured by /api/trades/{position_id}.
+    assert _resolve(app, "GET", "/api/trades/png-prefs") == "api_get_trade_png_prefs"
+    assert _resolve(app, "PUT", "/api/trades/png-prefs") == "api_put_trade_png_prefs"
