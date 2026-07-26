@@ -7,6 +7,8 @@ import type { Sym, Timeframe } from "../lib/candles";
 import type { HoverBar, LiveData } from "../lib/types";
 import { clipToCursor, replayLines, type TrainingSummary } from "../lib/replay";
 import { useReplaySession, type ReplayConfig } from "../hooks/useReplaySession";
+import { useReplayPrefs } from "../hooks/useReplayPrefs";
+import type { ReplayFormPrefs } from "../lib/replayPrefs";
 import ChartToolbar from "../components/ChartToolbar";
 import CandleChart from "../components/CandleChart";
 import ChartInfoPanel from "../components/ChartInfoPanel";
@@ -39,6 +41,7 @@ export default function Chart() {
   const [replayOpen, setReplayOpen] = useState(false);
   const [configOpen, setConfigOpen] = useState(false);
   const replay = useReplaySession();
+  const replayPrefs = useReplayPrefs();
   const snapshotRef = useRef<string>("");
 
   // Clamp at consumption: drawer inputs can transiently hold an out-of-range
@@ -67,10 +70,11 @@ export default function Chart() {
     setReplayOpen(false); setConfigOpen(false);
     setParams(new URLSearchParams(snapshotRef.current), { replace: true }); // restore prior view
   };
-  const onStart = (cfg: ReplayConfig) => {
+  const onStart = (cfg: ReplayConfig, form: ReplayFormPrefs) => {
     setConfigOpen(false); setReplayOpen(true);
     // Point the chart at the replay symbol/tf so CandleChart fetches the right series.
     setParams(new URLSearchParams({ symbol: cfg.symbol, tf: cfg.timeframe }), { replace: true });
+    replayPrefs.save(form);   // remember these specs for next time
     replay.start(cfg);
   };
 
@@ -95,7 +99,7 @@ export default function Chart() {
 
   return (
     <div className="flex flex-col h-[calc(100vh-2rem)]">
-      {configOpen && <ReplayConfigModal onStart={onStart} onCancel={exitReplay} />}
+      {configOpen && <ReplayConfigModal initial={replayPrefs.prefs} onStart={onStart} onCancel={exitReplay} />}
       <ChartToolbar
         symbol={symbol}
         tf={tf}

@@ -1,28 +1,36 @@
 import { useState } from "react";
 import { SYMBOLS, TIMEFRAMES, timeframeMs, type Sym, type Timeframe } from "../lib/candles";
+import {
+  HISTORY_MIN, HISTORY_MAX, SPEED_MIN, SPEED_MAX, type ReplayFormPrefs,
+} from "../lib/replayPrefs";
 import type { ReplayConfig } from "../hooks/useReplaySession";
 
 // Config for a new replay: symbol, timeframe, a start date (the reveal cursor),
 // how many bars of history to show before it, and playback speed. range_start is
-// cursor - historyBars*tf; range_end is "now" (reveal target).
+// cursor - historyBars*tf; range_end is "now" (reveal target). Fields are seeded
+// from `initial` (last-launched prefs) and the raw form is handed back on submit.
 export default function ReplayConfigModal(props: {
-  onStart: (cfg: ReplayConfig) => void;
+  initial: ReplayFormPrefs;
+  onStart: (cfg: ReplayConfig, form: ReplayFormPrefs) => void;
   onCancel: () => void;
 }) {
-  const [symbol, setSymbol] = useState<Sym>("XAUUSDc");
-  const [tf, setTf] = useState<Timeframe>("M15");
-  const [startDate, setStartDate] = useState<string>(""); // yyyy-mm-dd
-  const [historyBars, setHistoryBars] = useState(300);
-  const [speed, setSpeed] = useState(4);
+  const [symbol, setSymbol] = useState<Sym>(props.initial.symbol);
+  const [tf, setTf] = useState<Timeframe>(props.initial.timeframe);
+  const [startDate, setStartDate] = useState<string>(props.initial.startDate);
+  const [historyBars, setHistoryBars] = useState(props.initial.historyBars);
+  const [speed, setSpeed] = useState(props.initial.speed);
 
   const submit = () => {
     const cursor = startDate ? new Date(startDate + "T00:00:00Z").getTime() : Date.now() - timeframeMs(tf) * 100;
     const range_start_msc = cursor - timeframeMs(tf) * historyBars;
-    props.onStart({
-      symbol, timeframe: tf,
-      range_start_msc, range_end_msc: Date.now(),
-      cursor_start_msc: cursor, speed,
-    });
+    props.onStart(
+      {
+        symbol, timeframe: tf,
+        range_start_msc, range_end_msc: Date.now(),
+        cursor_start_msc: cursor, speed,
+      },
+      { version: 1, symbol, timeframe: tf, startDate, historyBars, speed },
+    );
   };
 
   return (
@@ -46,11 +54,11 @@ export default function ReplayConfigModal(props: {
                  onChange={(e) => setStartDate(e.target.value)} />
         </label>
         <label className="block text-xs">Bar histori sebelum mulai: {historyBars}
-          <input type="range" min={100} max={1000} step={50} className="w-full" value={historyBars}
+          <input type="range" min={HISTORY_MIN} max={HISTORY_MAX} step={50} className="w-full" value={historyBars}
                  onChange={(e) => setHistoryBars(Number(e.target.value))} />
         </label>
         <label className="block text-xs">Kecepatan: {speed} bar/dtk
-          <input type="range" min={1} max={10} className="w-full" value={speed}
+          <input type="range" min={SPEED_MIN} max={SPEED_MAX} className="w-full" value={speed}
                  onChange={(e) => setSpeed(Number(e.target.value))} />
         </label>
         <div className="flex justify-end gap-2 pt-1">
