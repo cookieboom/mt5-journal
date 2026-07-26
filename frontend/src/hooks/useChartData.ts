@@ -6,12 +6,22 @@ export type ChartStatus = "loading" | "polling" | "ready" | "gaveup" | "error";
 
 const POLL_MS = 2000;
 const MAX_POLLS = 5;      // ~10s total, then give up (journal live likely not running)
+const FORWARD_CHUNK = 200; // bars fetched ahead per loadUpTo (batches replay stepping)
 
-export function useChartData(symbol: string, tf: Timeframe, initialBars: number, maxBars: number) {
+// `anchorMs` sets the RIGHT edge of the initial window. Live mode leaves it
+// undefined → anchors at Date.now(). Replay passes the session's start cursor so
+// the initial fetch lands on the chosen historical date instead of "now" — the
+// now-anchored window would hold only recent bars, which clipToCursor(<=cursor)
+// then filters to nothing (blank chart). See useReplaySession.anchorMsc.
+export function useChartData(
+  symbol: string, tf: Timeframe, initialBars: number, maxBars: number,
+  anchorMs?: number,
+) {
   const [candles, setCandles] = useState<Candle[]>([]);
   const [status, setStatus] = useState<ChartStatus>("loading");
   const [error, setError] = useState<string | null>(null);
   const fromRef = useRef<number>(0);          // oldest loaded window bound (ms)
+  const toRef = useRef<number>(0);            // newest loaded window bound (ms)
   const pollRef = useRef<number>(0);          // poll attempts for the current window
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const alive = useRef(true);
@@ -27,6 +37,7 @@ export function useChartData(symbol: string, tf: Timeframe, initialBars: number,
   // reporting barsBefore < 20 on every frame of the drag) into one in-flight
   // fetch instead of a stampede of overlapping requests.
   const loadingOlderRef = useRef(false);
+  const loadingNewerRef = useRef(false);      // same collapse-the-burst guard, forward side
   // True once the in-memory array has reached maxBars. loadOlder becomes a
   // no-op so a pan can't keep re-loading bars that capCandles would re-drop.
   // Reset on every symbol/tf reset (the effect below) and on retry.
@@ -100,11 +111,12 @@ export function useChartData(symbol: string, tf: Timeframe, initialBars: number,
     setCandles([]); setStatus("loading"); setError(null); pollRef.current = 0;
     atCapRef.current = false;
     hasDataRef.current = false;
-    const [from, to] = initialWindow(tf, Date.now(), initialBars);
+    const [from, to] = initialWindow(tf, anchorMs ?? Date.now(), initialBars);
     fromRef.current = from;
+    toRef.current = to;
     load(from, to);
     return () => { alive.current = false; clearTimer(); };
-  }, [symbol, tf, initialBars, load]);
+  }, [symbol, tf, initialBars, anchorMs, load]);
 
   const retry = useCallback(() => {
     genRef.current += 1;
@@ -113,9 +125,10 @@ export function useChartData(symbol: string, tf: Timeframe, initialBars: number,
     atCapRef.current = false;
     hasDataRef.current = false;
     setStatus("polling");
-    const [, to] = initialWindow(tf, Date.now(), initialBars);
+    const [, to] = initialWindow(tf, anchorMs ?? Date.now(), initialBars);
+    toRef.current = Math.max(toRef.current, to);
     load(fromRef.current, to);
-  }, [tf, initialBars, load]);
+  }, [tf, initialBars, anchorMs, load]);
 
   // Pan: extend the loaded window to the left. Does NOT touch pollRef, does
   // NOT schedule a poll, and does NOT flip status to polling/gaveup — it only
@@ -146,6 +159,32 @@ export function useChartData(symbol: string, tf: Timeframe, initialBars: number,
     }
   }, [symbol, tf, maxBars]);
 
+  // Replay: extend the loaded window to the RIGHT so a forward-advancing reveal
+  // cursor never outruns the loaded bars. No-op once the target is already
+  // covered. Fetches a FORWARD_CHUNK past the target so stepping doesn't fire a
+  // request per bar. Mirrors loadOlder: never touches pollRef/timer/status
+  // (only its own error path), and toRef advances only on success so a failed
+  // fetch is retried by the next cursor advance rather than skipping a gap.
+  const loadUpTo = useCallback(async (targetMs: number) => {
+    if (loadingNewerRef.current) return;
+    if (targetMs <= toRef.current) return;    // already loaded past the cursor
+    loadingNewerRef.current = true;
+    const gen = genRef.current;
+    const from = toRef.current;
+    const to = targetMs + timeframeMs(tf) * FORWARD_CHUNK;
+    try {
+      const resp = await fetchCandles(symbol, tf, from, to);
+      if (!alive.current || gen !== genRef.current) return;
+      toRef.current = to;
+      setCandles((prev) => capCandles(mergeCandles(prev, resp.candles), maxBars));
+      setError(null);
+    } catch (e) {
+      if (alive.current && gen === genRef.current) { setError(String(e)); setStatus("error"); }
+    } finally {
+      loadingNewerRef.current = false;
+    }
+  }, [symbol, tf, maxBars]);
+
   const lastBarMs = candles.length ? candles[candles.length - 1].time_msc : null;
-  return { candles, status, error, lastBarMs, retry, loadOlder };
+  return { candles, status, error, lastBarMs, retry, loadOlder, loadUpTo };
 }

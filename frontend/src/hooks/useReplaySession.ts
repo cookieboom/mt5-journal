@@ -22,6 +22,10 @@ export function useReplaySession() {
   const [status, setStatus] = useState<ReplayStatus>("idle");
   const [error, setError] = useState<string | null>(null);
   const [playing, setPlaying] = useState(false);
+  // The START cursor, captured once when the session is created and never moved
+  // by step(). The chart anchors its initial candle window here so far-back
+  // start dates load their real bars instead of a now-anchored (empty) window.
+  const [anchorMsc, setAnchorMsc] = useState<number | null>(null);
 
   const cfgRef = useRef<ReplayConfig | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -33,6 +37,7 @@ export function useReplaySession() {
     const r = await replayApi.createSession(cfg);
     if (!r.ok || !r.data) { setError(r.error ?? "gagal membuat sesi"); setStatus("error"); return; }
     setSession(r.data.session);
+    setAnchorMsc(r.data.session.cursor_msc);   // start cursor = window anchor (stable)
     setStatus("ready");
   }, []);
 
@@ -126,12 +131,14 @@ export function useReplaySession() {
     const id = _sid();
     pause();
     if (id !== null) await replayApi.deleteSession(id);
-    setSession(null); setPositions([]); setEvents([]); setSessionSummary(null); setStatus("idle");
+    setSession(null); setPositions([]); setEvents([]); setSessionSummary(null);
+    setAnchorMsc(null); setStatus("idle");
   }, [session, pause]);
 
   return {
     session, positions, events, sessionSummary, status, error, playing,
     cursorMsc: session?.cursor_msc ?? null,
+    anchorMsc,
     start, step, play, pause, jump, reset, open, close, end, discard,
   };
 }

@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useApi } from "../lib/api";
 import { clampBars, parseSelection } from "../lib/chartPrefs";
@@ -32,19 +32,6 @@ export default function Chart() {
   const { data: live } = useApi<LiveData>("/api/live", 2500);
   const currency = live?.header.currency ?? "USC";
 
-  // Clamp at consumption: drawer inputs can transiently hold an out-of-range
-  // or empty (Number("")===0) value mid-typing, which must never reach the hook.
-  const bars = clampBars(settings);
-  const data = useChartData(symbol, tf, bars.initialBars, bars.maxBars);
-  const hasBars = data.candles.length > 0;
-
-  const setSelection = (next: { symbol?: Sym; tf?: Timeframe }) => {
-    const p = new URLSearchParams(params);
-    p.set("symbol", next.symbol ?? symbol);
-    p.set("tf", next.tf ?? tf);
-    setParams(p, { replace: true });
-  };
-
   // --- Replay/training mode --------------------------------------------
   // Phase C isolation: this whole block only reads `settings` (for rendering)
   // and never calls `update`/`reset` from useChartPrefs. Training state lives
@@ -53,6 +40,22 @@ export default function Chart() {
   const [configOpen, setConfigOpen] = useState(false);
   const replay = useReplaySession();
   const snapshotRef = useRef<string>("");
+
+  // Clamp at consumption: drawer inputs can transiently hold an out-of-range
+  // or empty (Number("")===0) value mid-typing, which must never reach the hook.
+  const bars = clampBars(settings);
+  // In replay, anchor the initial window at the session start cursor so a
+  // far-back start date loads its real bars; live mode anchors at "now".
+  const replayAnchor = replayOpen ? replay.anchorMsc ?? undefined : undefined;
+  const data = useChartData(symbol, tf, bars.initialBars, bars.maxBars, replayAnchor);
+  const hasBars = data.candles.length > 0;
+
+  const setSelection = (next: { symbol?: Sym; tf?: Timeframe }) => {
+    const p = new URLSearchParams(params);
+    p.set("symbol", next.symbol ?? symbol);
+    p.set("tf", next.tf ?? tf);
+    setParams(p, { replace: true });
+  };
 
   const enterReplay = () => {
     if (replayOpen || configOpen) return; // already in / entering replay — never re-snapshot
@@ -72,6 +75,10 @@ export default function Chart() {
   };
 
   const cursor = replay.cursorMsc;
+  // Keep loaded bars ahead of the advancing reveal cursor (no-op once covered).
+  useEffect(() => {
+    if (replayOpen && cursor !== null) data.loadUpTo(cursor);
+  }, [replayOpen, cursor, data.loadUpTo]);
   const shownCandles = replayOpen && cursor !== null
     ? clipToCursor(data.candles, cursor)
     : data.candles;
