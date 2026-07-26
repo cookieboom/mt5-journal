@@ -526,3 +526,22 @@ def test_api_candles_route_400_on_bad_timeframe(conn):
     resp = fn(symbol="XAUUSDc", timeframe="M3", from_ms=0, to_ms=180000, conn=conn)
     assert resp.status_code == 400
     assert _resolve(app, "POST", "/api/trades/1/annotate") == "api_annotate"
+
+
+def test_api_replay_prefs_get_null_then_put_then_get(conn):
+    app = create_app(":memory:")
+    get_fn = _endpoint(app, "api_get_replay_prefs")
+    put_fn = _endpoint(app, "api_put_replay_prefs")
+
+    resp = get_fn(conn=conn)
+    assert resp.status_code == 200
+    assert json.loads(resp.body) == {"prefs": None}
+
+    blob = {"version": 1, "symbol": "BTCUSDc", "timeframe": "M15",
+            "startDate": "2026-01-02", "historyBars": 500, "speed": 7}
+    put = put_fn(prefs=blob, conn=conn)
+    put_body = json.loads(put.body)
+    assert put_body["ok"] is True and isinstance(put_body["updated_ms"], int)
+
+    resp2 = get_fn(conn=conn)
+    assert json.loads(resp2.body) == {"prefs": blob}

@@ -195,6 +195,24 @@ def create_app(db_path: str | None = None) -> FastAPI:
         ts = prefs_store.set_chart_prefs(conn, prefs)
         return JSONResponse({"ok": True, "updated_ms": ts})
 
+    @app.get("/api/replay/prefs")
+    def api_get_replay_prefs(conn: sqlite3.Connection = Depends(get_conn)):
+        """Replay-config popup prefs, cross-browser. `prefs` is null until first
+        save; the client then falls back to its own defaults / localStorage.
+        Pure DB — never talks to the bridge (M9 boundary)."""
+        return JSONResponse({"prefs": prefs_store.get_replay_prefs(conn)})
+
+    @app.put("/api/replay/prefs")
+    def api_put_replay_prefs(
+        prefs=Body(...),
+        conn: sqlite3.Connection = Depends(get_conn),
+    ):
+        """Upsert the replay-config prefs blob under key 'replay'. The server
+        stamps updated_ms; the body is stored verbatim (the client owns the
+        schema)."""
+        ts = prefs_store.set_replay_prefs(conn, prefs)
+        return JSONResponse({"ok": True, "updated_ms": ts})
+
     # --- two-step trade command (M9 safety: preview writes nothing; enqueue
     # inserts ONE pending row; `journal live` executes. Validation lives in
     # domain/commands via preview_command/enqueue and is re-run at enqueue.)
