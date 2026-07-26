@@ -5,8 +5,12 @@ position_id)` reads `trades` + `candles` and writes a PNG to `cache/`. Charts ar
 cache, not data (CLAUDE.md rule 6) — always reproducible from the DB, never the
 other way around.
 
-Cache identity is keyed on (account_login, position_id, segment), NEVER
-`trades.id` — `trades.id` is AUTOINCREMENT and renumbers on every `rebuild`
+Cache identity is keyed on (account_login, position_id, segment,
+opts.signature()), NEVER `trades.id`. The opts signature keeps each distinct
+`RenderOpts` (theme, padding, toggles, …) in its own file so a re-render with
+different settings never overwrites another and every PNG stays reproducible
+from the DB (rule 6). `trades.id` is excluded because it is AUTOINCREMENT and
+renumbers on every `rebuild`
 (docs/mt5-deal-model.md §5), so a filename built from it would go silently stale.
 The CLI accepts `position_id` only for the same reason: a saved `journal chart
 <id>` command built on `trades.id` could silently render the WRONG trade after a
