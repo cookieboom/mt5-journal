@@ -15,6 +15,7 @@ from typing import Any
 from .db import now_ms
 
 CHART_KEY = "chart"
+REPLAY_KEY = "replay"
 
 
 def get_pref(conn: sqlite3.Connection, key: str) -> str | None:
@@ -46,3 +47,14 @@ def get_chart_prefs(conn: sqlite3.Connection) -> Any | None:
 def set_chart_prefs(conn: sqlite3.Connection, prefs: Any) -> int:
     """Persist chart settings (serialised to JSON). Returns the updated_ms stamp."""
     return set_pref(conn, CHART_KEY, json.dumps(prefs), now_ms())
+
+
+def get_replay_prefs(conn: sqlite3.Connection) -> Any | None:
+    """Parsed replay-config prefs JSON, or None if never saved."""
+    raw = get_pref(conn, REPLAY_KEY)
+    return json.loads(raw) if raw is not None else None
+
+
+def set_replay_prefs(conn: sqlite3.Connection, prefs: Any) -> int:
+    """Persist replay-config prefs (serialised to JSON). Returns updated_ms."""
+    return set_pref(conn, REPLAY_KEY, json.dumps(prefs), now_ms())

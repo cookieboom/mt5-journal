@@ -49,3 +49,18 @@ def test_chart_prefs_envelope_shape(conn):
     assert {"prefs": ps.get_chart_prefs(conn)} == {
         "prefs": {"version": 1, "theme": "dark", "grid": True}
     }
+
+
+def test_replay_prefs_roundtrip_parses_json(conn):
+    assert ps.get_replay_prefs(conn) is None
+    ts = ps.set_replay_prefs(conn, {"version": 1, "symbol": "BTCUSDc", "speed": 7})
+    assert isinstance(ts, int) and ts > 0
+    assert ps.get_replay_prefs(conn) == {"version": 1, "symbol": "BTCUSDc", "speed": 7}
+    assert ps.get_pref(conn, ps.REPLAY_KEY) is not None
+
+
+def test_replay_and_chart_prefs_do_not_collide(conn):
+    ps.set_chart_prefs(conn, {"version": 1, "theme": "dark"})
+    ps.set_replay_prefs(conn, {"version": 1, "symbol": "EURUSDc"})
+    assert ps.get_chart_prefs(conn) == {"version": 1, "theme": "dark"}
+    assert ps.get_replay_prefs(conn) == {"version": 1, "symbol": "EURUSDc"}
