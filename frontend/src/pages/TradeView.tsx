@@ -47,6 +47,17 @@ export default function TradeView() {
   const overlay = useMemo(() => (t ? tradeLines(t) : undefined), [t]);
   const goto = (pid: number | null) => { if (pid != null) nav(`/trades/${pid}/view${listQ ? `?${listQ}` : ""}`); };
 
+  // Keyboard prev/next: ArrowLeft -> older neighbor, ArrowRight -> newer neighbor.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "ArrowLeft") goto(neighbors.prevId);
+      else if (e.key === "ArrowRight") goto(neighbors.nextId);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [neighbors.prevId, neighbors.nextId, listQ]);
+
   if (!data || !t) return <div className="text-muted p-6">Memuat…</div>;
   const pnl = t.net_profit ?? 0;
 

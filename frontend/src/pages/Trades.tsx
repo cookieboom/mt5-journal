@@ -8,13 +8,26 @@ import TradeSparkbar from "../components/TradeSparkbar";
 const STATUSES = ["closed", "open", "partially_open"];
 const SOURCES: [string, string][] = [["ea", "EA"], ["disc", "Discretionary"]];
 
-function qs(f: { symbol: string; status: string; source: string }): string {
+type Filters = { symbol: string; status: string; source: string };
+
+function filterParams(f: Filters): URLSearchParams {
   const p = new URLSearchParams();
   if (f.symbol) p.set("symbol", f.symbol);
   if (f.status) p.set("status", f.status);
   if (f.source) p.set("source", f.source);
-  const s = p.toString();
+  return p;
+}
+
+function qs(f: Filters): string {
+  const s = filterParams(f).toString();
   return s ? `/api/trades?${s}` : "/api/trades";
+}
+
+// Same filters as the /api/trades list query, so the row link carries the
+// exact query-string TradeView will re-fetch for its neighbor list.
+function linkQuery(f: Filters): string {
+  const s = filterParams(f).toString();
+  return s ? `?${s}` : "";
 }
 
 export default function Trades() {
@@ -24,6 +37,7 @@ export default function Trades() {
   if (error) return <div className="glass p-6 text-neg">Gagal memuat: {error}</div>;
   if (!data) return null;
   const { header, trades, tags, symbols, max_abs_net } = data;
+  const linkQ = linkQuery(f);
 
   const chip = (active: boolean) =>
     "px-2.5 py-1 rounded-full text-[11px] ring-1 " +
@@ -80,7 +94,7 @@ export default function Trades() {
                 return (
                   <tr key={t.position_id} className="border-t border-white/5">
                     <td className="py-2 num whitespace-nowrap">
-                      <Link className="text-cyan hover:underline" to={`/trades/${t.position_id}`}>
+                      <Link className="text-cyan hover:underline" to={`/trades/${t.position_id}${linkQ}`}>
                         {wib(t.open_time_msc, header.offset_s)}
                       </Link>
                     </td>

@@ -74,7 +74,7 @@ export default function TradeDetail() {
                   alt={`chart trade ${trade.position_id}`} onError={() => setChartFailed(true)} />
               )}
               <a className="inline-block mt-2 text-[12px] text-cyan hover:underline"
-                 href={`/trades/${trade.position_id}/view`}>Lihat di chart interaktif →</a>
+                 href={`/trades/${trade.position_id}/view${window.location.search}`}>Lihat di chart interaktif →</a>
             </>
           ) : (
             <p className="text-[12px] text-muted">Hanya trade closed yang bisa di-chart.</p>
