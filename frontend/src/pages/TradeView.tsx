@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams, useSearchParams, useNavigate } from "react-router-dom";
 import { useApi } from "../lib/api";
 import type { TradeDetailData, TradesData } from "../lib/types";
@@ -10,6 +10,7 @@ import TagEditor from "../components/TagEditor";
 import { money, rmult, price, wib, dur } from "../lib/format";
 import { tradeLines, navNeighbors, pickTf } from "../lib/tradeView";
 import { timeframeMs, type Sym } from "../lib/candles";
+import { clipToCursor } from "../lib/replay";
 
 function Fact({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -45,6 +46,29 @@ export default function TradeView() {
   }, [t?.close_time_msc, tf, chart.loadUpTo]);
 
   const overlay = useMemo(() => (t ? tradeLines(t) : undefined), [t]);
+
+  // --- Optional playback reveal (Task 10) -------------------------------
+  // Pure visual reveal: no evaluator, no fills. cursor === null means "show
+  // the full window" (the default). Play/Step move the cursor forward from a
+  // few bars before entry; clipToCursor (lib/replay.ts) hides everything past it.
+  const [cursor, setCursor] = useState<number | null>(null);
+  const [playing, setPlaying] = useState(false);
+  const startMs = (t?.open_time_msc ?? 0) - timeframeMs(tf) * 10; // a few bars before entry
+  const shown = cursor == null ? chart.candles : clipToCursor(chart.candles, cursor);
+
+  useEffect(() => {
+    if (!playing || cursor == null) return;
+    const iv = setInterval(() => {
+      setCursor((c) => {
+        const next = (c ?? startMs) + timeframeMs(tf);
+        const last = chart.lastBarMs ?? next;
+        if (next >= last) { setPlaying(false); return null; } // reached the end -> full view
+        return next;
+      });
+    }, 600);
+    return () => clearInterval(iv);
+  }, [playing, cursor, tf, chart.lastBarMs, startMs]);
+
   const goto = (pid: number | null) => { if (pid != null) nav(`/trades/${pid}/view${listQ ? `?${listQ}` : ""}`); };
 
   // Keyboard prev/next: ArrowLeft -> older neighbor, ArrowRight -> newer neighbor.
@@ -70,7 +94,7 @@ export default function TradeView() {
         <div className="flex-1 min-h-0">
           {chart.candles.length ? (
             <CandleChart symbol={t.symbol as Sym} tf={tf} settings={settings}
-              candles={chart.candles} overlayLines={overlay} lastBarMs={chart.lastBarMs}
+              candles={shown} overlayLines={overlay} lastBarMs={chart.lastBarMs}
               onHover={() => {}} onNowVisibleChange={() => {}} onRequestOlder={chart.loadOlder}
               live={null} nowVisible={false} />
           ) : (
@@ -80,6 +104,20 @@ export default function TradeView() {
                 : <span>⌛ Memuat data {t.symbol} {tf}…</span>}
             </div>
           )}
+        </div>
+        {/* optional playback reveal — pure visual, no evaluator/fills */}
+        <div className="flex justify-center items-center gap-2 mt-2 text-[12px]">
+          <button className="glass px-2 py-1" onClick={() => { setCursor(startMs); setPlaying(true); }}>
+            Putar ulang
+          </button>
+          <button className="glass px-2 py-1"
+            onClick={() => setCursor((c) => (c ?? startMs) + timeframeMs(tf))}>
+            Step ▸
+          </button>
+          <button className="glass px-2 py-1" onClick={() => { setCursor(null); setPlaying(false); }}>
+            Reset
+          </button>
+          <span className="text-muted num">bar: <span data-testid="bar-count">{shown.length}</span></span>
         </div>
         {/* bottom-center prev/next */}
         <div className="flex justify-center gap-3 mt-2">
