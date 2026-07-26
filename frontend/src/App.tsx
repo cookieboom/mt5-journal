@@ -6,6 +6,7 @@ import Chart from "./pages/Chart";
 import Commands from "./pages/Commands";
 import Trades from "./pages/Trades";
 import TradeDetail from "./pages/TradeDetail";
+import TradeView from "./pages/TradeView";
 import Report from "./pages/Report";
 import Weekly from "./pages/Weekly";
 
@@ -19,6 +20,7 @@ export default function App() {
           <Route path="/chart" element={<Chart />} />
           <Route path="/trades" element={<Trades />} />
           <Route path="/trades/:id" element={<TradeDetail />} />
+          <Route path="/trades/:id/view" element={<TradeView />} />
           <Route path="/report" element={<Report />} />
           <Route path="/weekly" element={<Weekly />} />
           <Route path="/weekly/:week" element={<Weekly />} />

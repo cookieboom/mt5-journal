@@ -1,4 +1,4 @@
-import { LINE_COLORS } from "./candles";
+import { LINE_COLORS, timeframeMs, TIMEFRAMES, type Timeframe } from "./candles";
 import type { TradeFull, TradeRow } from "./types";
 
 const real = (v: number | null): v is number => v !== null && Math.abs(v) > 1e-9;
@@ -25,4 +25,15 @@ export function navNeighbors(
     nextId: index > 0 ? trades[index - 1].position_id : null,
     prevId: index < trades.length - 1 ? trades[index + 1].position_id : null,
   };
+}
+
+// Client-side TF ladder for the interactive viewer — mirrors the Python ladder
+// in render/chart.py: pick the coarsest TF that still keeps the whole trade
+// within MAX_TRADE_BARS bars, so a long-held trade doesn't render as a wall of
+// M1 candles.
+const MAX_TRADE_BARS = 60;
+export function pickTf(durationS: number | null): Timeframe {
+  const d = (durationS ?? 0) * 1000;
+  for (const tf of TIMEFRAMES) if (d <= timeframeMs(tf) * MAX_TRADE_BARS) return tf;
+  return TIMEFRAMES[TIMEFRAMES.length - 1];
 }
