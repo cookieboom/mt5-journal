@@ -249,6 +249,14 @@ def test_trade_detail_payload_null_annotation(conn):
     assert p["tags"] == []
 
 
+def test_trade_detail_payload_exposes_raw_symbol(conn):
+    _seed_account(conn)
+    _seed_trade(conn, 9, symbol_base="XAUUSD")
+    p = api.trade_detail_payload(conn, 9)
+    assert p["trade"]["symbol"] == "XAUUSDc"        # raw, suffixed — for the candle feed
+    assert p["trade"]["symbol_base"] == "XAUUSD"
+
+
 def test_report_payload_composes_report_and_series(conn):
     _seed_account(conn)
     _seed_trade(conn, 1, net_profit=250.0, r_multiple=1.5, mae_r=-0.4, mfe_r=2.1,

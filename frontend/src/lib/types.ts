@@ -128,6 +128,7 @@ export interface Annotation {
 }
 export interface TradeFull {
   position_id: number;
+  symbol: string;        // raw, e.g. "XAUUSDc" — for the candle feed
   symbol_base: string;
   direction: "buy" | "sell";
   status: "closed" | "open" | "partially_open";
