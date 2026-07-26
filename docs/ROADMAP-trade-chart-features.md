@@ -10,7 +10,7 @@ dulu, realtime terakhir saat pola chart sudah mapan).
 
 | # ide | Nama | Ukuran | Menyentuh | Spec | Status |
 |-------|------|--------|-----------|------|--------|
-| 2 + 3 | **Spec A** — Setting render PNG + Viewer trade interaktif | Kecil + Sedang | `render/chart.py`, `app_prefs`, `TradeDetail.tsx`, route baru `/trades/:id/view`, reuse engine chart + kursor replay + `annotate` | `docs/superpowers/specs/2026-07-26-trade-png-settings-and-viewer-design.md` | **Design approved; plan sedang ditulis** |
+| 2 + 3 | **Spec A** — Setting render PNG + Viewer trade interaktif | Kecil + Sedang | `render/chart.py`, `app_prefs`, `TradeDetail.tsx`, route baru `/trades/:id/view`, reuse engine chart + kursor replay + `annotate` | spec: `docs/superpowers/specs/2026-07-26-trade-png-settings-and-viewer-design.md` · plan: `docs/superpowers/plans/2026-07-26-trade-png-settings-and-viewer.md` (10 task) | **Plan siap; belum dieksekusi** |
 | 4 | **Spec B** — Gestur ukur harga (double-click + hold → jarak harga live) | Kecil | interaksi chart FE saja (lightweight-charts); berlaku untuk semua chart termasuk viewer #3 & monitor #1 | *belum ditulis* | Belum dibrainstorm |
 | 1 | **Spec C** — Monitor simbol realtime | **Besar** | candle store baru (strategi simpan forming-bar), backend stream, polling FE + interval di setting, isu storage 1-bar-banyak-update | *belum ditulis* | Belum dibrainstorm |
 
