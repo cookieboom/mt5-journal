@@ -441,12 +441,14 @@ def chart(
     built on it could silently chart the WRONG trade after a rebuild. The cache
     filename is keyed the same way, so charts survive rebuilds too.
     """
-    from .render.chart import NoCandlesError, TradeNotFoundError, render_trade
+    from .render.chart import NoCandlesError, RenderOpts, TradeNotFoundError, render_trade
 
     conn = connect(db)
     try:
         try:
-            r = render_trade(conn, position_id, tf=tf, cache_dir=cache_dir)
+            r = render_trade(
+                conn, position_id, opts=RenderOpts(tf_override=tf), cache_dir=cache_dir
+            )
         except (TradeNotFoundError, NoCandlesError) as e:
             typer.echo(str(e))
             raise typer.Exit(code=1)

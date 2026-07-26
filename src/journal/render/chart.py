@@ -240,16 +240,18 @@ def render_trade(
     conn: sqlite3.Connection,
     position_id: int,
     *,
-    tf: str | None = None,
+    opts: RenderOpts = RenderOpts(),
     cache_dir: str | Path = "cache",
     segment: int = 0,
 ) -> ChartResult:
     """Render one trade to a PNG in `cache_dir`, named by the stable cache key
-    (account_login, position_id, segment) -- never `trades.id`.
+    (account_login, position_id, segment, opts.signature()) -- never
+    `trades.id`. Charts are cache, not data (rule 6): different `opts` must
+    land in different files so no render can silently overwrite another.
 
-    `tf` overrides the duration-based ladder (`choose_timeframe`) when given.
-    Raises `TradeNotFoundError` / `NoCandlesError` rather than ever writing a
-    silently blank or wrong chart.
+    `opts.tf_override` overrides the duration-based ladder (`choose_timeframe`)
+    when given. Raises `TradeNotFoundError` / `NoCandlesError` rather than ever
+    writing a silently blank or wrong chart.
     """
     login = one_account_login(conn)
     trade = _load_trade(conn, login, position_id, segment)
@@ -261,12 +263,12 @@ def render_trade(
             f"{trade['status']!r}); only closed trades can be charted in M3"
         )
 
-    chosen_tf = tf or choose_timeframe(duration_s)
+    chosen_tf = opts.tf_override or choose_timeframe(duration_s)
     if chosen_tf not in _TF_SECONDS:
         raise ValueError(f"unknown timeframe {chosen_tf!r}; expected one of {TIMEFRAMES}")
 
     from_msc, to_msc = window_for(
-        trade["open_time_msc"], trade["close_time_msc"], chosen_tf
+        trade["open_time_msc"], trade["close_time_msc"], chosen_tf, opts.pad_bars,
     )
 
     rows = candles_store.read_candles(conn, trade["symbol"], chosen_tf, from_msc, to_msc)
@@ -301,21 +303,24 @@ def render_trade(
     n_trade_bars = close_idx - open_idx + 1
 
     is_buy = trade["direction"] == "buy"
-    entry_marker = pd.Series(index=df.index, dtype=float)
-    exit_marker = pd.Series(index=df.index, dtype=float)
-    entry_marker.iloc[open_idx] = trade["open_price"]
-    exit_marker.iloc[close_idx] = trade["close_price"]
 
-    addplots = [
-        mpf.make_addplot(
-            entry_marker, type="scatter", markersize=100,
-            marker="^" if is_buy else "v", color="blue",
-        ),
-        mpf.make_addplot(
-            exit_marker, type="scatter", markersize=100,
-            marker="v" if is_buy else "^", color="darkorange",
-        ),
-    ]
+    addplots: list = []
+    if opts.show_markers:
+        entry_marker = pd.Series(index=df.index, dtype=float)
+        exit_marker = pd.Series(index=df.index, dtype=float)
+        entry_marker.iloc[open_idx] = trade["open_price"]
+        exit_marker.iloc[close_idx] = trade["close_price"]
+
+        addplots = [
+            mpf.make_addplot(
+                entry_marker, type="scatter", markersize=100,
+                marker="^" if is_buy else "v", color="blue",
+            ),
+            mpf.make_addplot(
+                exit_marker, type="scatter", markersize=100,
+                marker="v" if is_buy else "^", color="darkorange",
+            ),
+        ]
 
     # SL/TP hlines: guard on the VALUE being a real, non-zero price -- NOT on
     # `is not None`. `0.0 is not None` is True, and drawing an hline at price 0
@@ -329,8 +334,8 @@ def render_trade(
     # must already be correct.
     sl = trade["sl_initial"]
     tp = trade["tp_initial"]
-    sl_drawn = sl is not None and abs(sl) > _TOL
-    tp_drawn = tp is not None and abs(tp) > _TOL
+    sl_drawn = opts.show_sltp and sl is not None and abs(sl) > _TOL
+    tp_drawn = opts.show_sltp and tp is not None and abs(tp) > _TOL
 
     hlines_prices: list[float] = []
     hlines_colors: list[str] = []
@@ -360,16 +365,21 @@ def render_trade(
 
     cache_dir = Path(cache_dir)
     cache_dir.mkdir(parents=True, exist_ok=True)
-    out_path = cache_dir / f"{login}-{position_id}-seg{segment}.png"
+    out_path = cache_dir / f"{login}-{position_id}-seg{segment}-{opts.signature()}.png"
 
+    style = mpf.make_mpf_style(
+        base_mpf_style=opts.theme, rc={"axes.grid": opts.show_grid}
+    )
     plot_kwargs: dict = dict(
         type="candle",
-        style="charles",
-        addplot=addplots,
+        style=style,
+        addplot=addplots if addplots else None,
         title=title,
-        volume=False,
+        volume=opts.show_volume,
         savefig=dict(fname=str(out_path), dpi=150),
     )
+    if not addplots:
+        plot_kwargs.pop("addplot")
     if hlines_prices:
         plot_kwargs["hlines"] = dict(
             hlines=hlines_prices, colors=hlines_colors, linestyle="--", linewidths=1,

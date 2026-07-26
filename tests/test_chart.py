@@ -91,7 +91,10 @@ def test_render_trade_writes_a_real_png(conn, tmp_path):
     assert r.timeframe == "M1"
     assert r.n_trade_bars == 7  # 373s // 60 + 1, matches docs §7 median
     assert r.same_bar is False
-    assert r.path.name == f"{_LOGIN}-555-seg0.png"  # stable cache key, not trades.id
+    # stable cache key, not trades.id -- now opts-keyed (rule 6: different
+    # opts must be different cache files), so the default RenderOpts()
+    # signature is part of the expected name.
+    assert r.path.name == f"{_LOGIN}-555-seg0-{RenderOpts().signature()}.png"
 
 
 def test_render_trade_sub_bar_is_rendered_honestly(conn, tmp_path):
@@ -224,6 +227,40 @@ def test_window_for_pad_bars_widens_window():
     # default keeps PAD_BARS behavior
     assert window_for(1_000_000, 2_000_000, "M1") == window_for(
         1_000_000, 2_000_000, "M1", pad_bars=PAD_BARS)
+
+
+# ------------------------------------------------------------ render_trade(opts=)
+
+
+def test_render_trade_opts_toggle_sltp_and_cache_key(conn, tmp_path):
+    _insert_trade(conn, 570, sl_initial=4030.0, tp_initial=4040.0)
+    _insert_candles(conn, "XAUUSDc", "M1", _OPEN_MSC, 60)
+
+    on = render_trade(
+        conn, 570, opts=RenderOpts(show_sltp=True), cache_dir=tmp_path / "cache"
+    )
+    off = render_trade(
+        conn, 570, opts=RenderOpts(show_sltp=False), cache_dir=tmp_path / "cache"
+    )
+
+    assert on.sl_drawn is True and on.tp_drawn is True
+    assert off.sl_drawn is False and off.tp_drawn is False
+    assert on.path != off.path            # opts change -> different cache file
+    assert on.path.exists() and off.path.exists()
+
+
+def test_render_trade_pad_bars_changes_bar_count(conn, tmp_path):
+    _insert_trade(conn, 571)
+    _insert_candles(conn, "XAUUSDc", "M1", _OPEN_MSC, 60)
+
+    narrow = render_trade(
+        conn, 571, opts=RenderOpts(pad_bars=5), cache_dir=tmp_path / "cache"
+    )
+    wide = render_trade(
+        conn, 571, opts=RenderOpts(pad_bars=15), cache_dir=tmp_path / "cache"
+    )
+
+    assert wide.n_bars >= narrow.n_bars   # more padding -> at least as many bars
 
 
 # -------------------------------------------------------------------- integration
