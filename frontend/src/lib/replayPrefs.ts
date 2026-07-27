@@ -11,6 +11,9 @@ export interface ReplayFormPrefs {
   startDate: string;   // "yyyy-mm-dd" or "" (kept only if valid pattern)
   historyBars: number; // clamped [HISTORY_MIN, HISTORY_MAX]
   speed: number;       // clamped [SPEED_MIN, SPEED_MAX]
+  competitiveMode: boolean;
+  competitiveHideDate: boolean;
+  competitiveRounds: number; // 0 = endless
 }
 
 export const HISTORY_MIN = 100, HISTORY_MAX = 1000;
@@ -23,6 +26,9 @@ export const DEFAULT_REPLAY_PREFS: ReplayFormPrefs = {
   startDate: "",
   historyBars: 300,
   speed: 4,
+  competitiveMode: false,
+  competitiveHideDate: true,
+  competitiveRounds: 0,
 };
 
 const KEY = "mt5j.replay.config";
@@ -38,6 +44,9 @@ function oneOf<T extends string>(v: unknown, allowed: readonly T[], fallback: T)
 function isoDate(v: unknown, fallback: string): string {
   return typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : fallback;
 }
+function asBool(v: unknown, fallback: boolean): boolean {
+  return typeof v === "boolean" ? v : fallback;
+}
 
 // Coerce any stored/DB/corrupt object into a valid v1 ReplayFormPrefs.
 export function normalizeReplayPrefs(raw: unknown): ReplayFormPrefs {
@@ -51,6 +60,9 @@ export function normalizeReplayPrefs(raw: unknown): ReplayFormPrefs {
     startDate: isoDate(p.startDate, D.startDate),
     historyBars: clampInt(p.historyBars, HISTORY_MIN, HISTORY_MAX, D.historyBars),
     speed: clampInt(p.speed, SPEED_MIN, SPEED_MAX, D.speed),
+    competitiveMode: asBool(p.competitiveMode, D.competitiveMode),
+    competitiveHideDate: asBool(p.competitiveHideDate, D.competitiveHideDate),
+    competitiveRounds: clampInt(p.competitiveRounds, 0, 100, D.competitiveRounds),
   };
 }
 

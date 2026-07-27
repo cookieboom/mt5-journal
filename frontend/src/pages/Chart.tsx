@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useApi } from "../lib/api";
 import { clampBars, parseSelection } from "../lib/chartPrefs";
 import { useChartPrefs } from "../hooks/useChartPrefs";
-import { mergeForming, type Sym, type Timeframe } from "../lib/candles";
+import { mergeForming, type Sym, type Timeframe, timeframeMs } from "../lib/candles";
 import type { HoverBar, LiveData } from "../lib/types";
 import { clipToCursor, replayLines, type TrainingSummary } from "../lib/replay";
 import { useReplaySession, type ReplayConfig } from "../hooks/useReplaySession";
@@ -50,6 +50,10 @@ export default function Chart() {
   const replayPrefs = useReplayPrefs();
   const snapshotRef = useRef<string>("");
 
+  const [compRound, setCompRound] = useState(1);
+  const [evalPause, setEvalPause] = useState<{ pnl: number; isSkip: boolean } | null>(null);
+  const prevPosCount = useRef(0);
+
   // Clamp at consumption: drawer inputs can transiently hold an out-of-range
   // or empty (Number("")===0) value mid-typing, which must never reach the hook.
   const bars = clampBars(settings);
@@ -79,6 +83,7 @@ export default function Chart() {
   const exitReplay = async () => {
     await replay.discard();
     setReplayOpen(false); setConfigOpen(false);
+    setEvalPause(null);
     setParams(new URLSearchParams(snapshotRef.current), { replace: true }); // restore prior view
   };
   const onStart = (cfg: ReplayConfig, form: ReplayFormPrefs) => {
@@ -86,8 +91,62 @@ export default function Chart() {
     // Point the chart at the replay symbol/tf so CandleChart fetches the right series.
     setParams(new URLSearchParams({ symbol: cfg.symbol, tf: cfg.timeframe }), { replace: true });
     replayPrefs.save(form);   // remember these specs for next time
+    setCompRound(1);
+    setEvalPause(null);
+    prevPosCount.current = 0;
     replay.start(cfg);
   };
+
+  const nextCompetitiveRound = useCallback((isSkip = false) => {
+    const prefs = replayPrefs.prefs;
+    if (!isSkip && prefs.competitiveRounds > 0 && compRound >= prefs.competitiveRounds) {
+       exitReplay();
+       return;
+    }
+    
+    // Generate new random date
+    const endMs = Date.now() - 14 * 24 * 3600 * 1000;
+    const startMs = Date.now() - 2 * 365 * 24 * 3600 * 1000;
+    const cursor = Math.floor(startMs + Math.random() * (endMs - startMs));
+    const range_start_msc = cursor - timeframeMs(prefs.timeframe) * prefs.historyBars;
+    
+    const newCfg: ReplayConfig = {
+      symbol: prefs.symbol,
+      timeframe: prefs.timeframe,
+      range_start_msc,
+      range_end_msc: Date.now(),
+      cursor_start_msc: cursor,
+      speed: prefs.speed,
+    };
+    
+    if (!isSkip) setCompRound(r => r + 1);
+    
+    if (isSkip) {
+       setEvalPause({ pnl: 0, isSkip: true });
+       setTimeout(() => {
+         setEvalPause(null);
+         prevPosCount.current = 0;
+         replay.start(newCfg);
+       }, 1000);
+    } else {
+       setEvalPause(null);
+       prevPosCount.current = 0;
+       replay.start(newCfg);
+    }
+  }, [replayPrefs.prefs, compRound, replay, exitReplay]);
+
+  useEffect(() => {
+    if (!replayOpen || !replayPrefs.prefs.competitiveMode) return;
+    const count = replay.positions.length;
+    if (prevPosCount.current > 0 && count === 0 && !evalPause) {
+      // all positions closed, trigger evaluation pause
+      setEvalPause({ pnl: replay.sessionSummary?.total_r || 0, isSkip: false });
+      setTimeout(() => {
+        nextCompetitiveRound();
+      }, 3000);
+    }
+    prevPosCount.current = count;
+  }, [replay.positions.length, replayOpen, replayPrefs.prefs.competitiveMode, evalPause, nextCompetitiveRound, replay.sessionSummary]);
 
   const cursor = replay.cursorMsc;
   // Keep loaded bars ahead of the advancing reveal cursor (no-op once covered).
@@ -127,7 +186,7 @@ export default function Chart() {
         <LiveDot status={liveStatus} />
       </div>
       {replayOpen && (
-        <div className="mb-3">
+        <div className="mb-3 flex items-center justify-between">
           <ReplayControls
             cursorMsc={replay.cursorMsc}
             playing={replay.playing}
@@ -138,6 +197,16 @@ export default function Chart() {
             onReset={replay.reset}
             onExit={exitReplay}
           />
+          {replayPrefs.prefs.competitiveMode && (
+            <div className="flex items-center gap-4 text-xs font-semibold">
+               <span className="text-orange-300">
+                 Skenario {compRound} {replayPrefs.prefs.competitiveRounds > 0 ? `/ ${replayPrefs.prefs.competitiveRounds}` : ''}
+               </span>
+               <button className="glass px-3 py-1 text-cyan hover:bg-cyan/10" onClick={() => nextCompetitiveRound(true)}>
+                 Skip ⏭
+               </button>
+            </div>
+          )}
         </div>
       )}
       <div className="flex gap-3 flex-1 min-h-0">
@@ -158,6 +227,7 @@ export default function Chart() {
               nowVisible={nowVisible}
               missing={data.missing}
               shadeCoverage={!replayOpen}
+              hideDate={replayOpen && replayPrefs.prefs.competitiveMode && replayPrefs.prefs.competitiveHideDate}
             />
           ) : (
             <div className="glass h-full flex items-center justify-center text-muted text-sm">
@@ -201,6 +271,22 @@ export default function Chart() {
               onBackfill={() => data.retry()}
             />
           )}
+
+          {evalPause && (
+            <div className="absolute inset-0 bg-black/80 flex flex-col items-center justify-center z-50 text-center">
+               {evalPause.isSkip ? (
+                 <h2 className="text-2xl font-bold text-muted">Mencari Skenario Baru...</h2>
+               ) : (
+                 <>
+                   <h2 className="text-2xl font-bold mb-2">Evaluasi Skenario {compRound}</h2>
+                   <div className={`text-4xl font-bold ${evalPause.pnl >= 0 ? 'text-up' : 'text-down'}`}>
+                     {evalPause.pnl > 0 ? '+' : ''}{evalPause.pnl.toFixed(2)}R
+                   </div>
+                   <div className="text-muted mt-4">Bersiap untuk skenario berikutnya...</div>
+                 </>
+               )}
+            </div>
+          )}
         </div>
         <aside className="w-[240px] shrink-0 hidden lg:flex lg:flex-col gap-3 overflow-y-auto">
           {replayOpen ? (
@@ -212,8 +298,10 @@ export default function Chart() {
                 currency={currency}
                 onClose={replay.close}
               />
-              <ReplaySummary title="Sesi ini" s={replay.sessionSummary} />
-              <ReplaySummary title="Kumulatif" s={career ?? null} />
+              {!replayPrefs.prefs.competitiveMode && (
+                <ReplaySummary title="Kumulatif" s={career ?? null} />
+              )}
+              <ReplaySummary title={replayPrefs.prefs.competitiveMode ? "Sesi Ini" : "Sesi ini"} s={replay.sessionSummary} />
             </>
           ) : (
             <>

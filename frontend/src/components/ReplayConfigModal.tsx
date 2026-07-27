@@ -20,8 +20,17 @@ export default function ReplayConfigModal(props: {
   const [historyBars, setHistoryBars] = useState(props.initial.historyBars);
   const [speed, setSpeed] = useState(props.initial.speed);
 
+  const [compMode, setCompMode] = useState(props.initial.competitiveMode);
+  const [compHideDate, setCompHideDate] = useState(props.initial.competitiveHideDate);
+  const [compRounds, setCompRounds] = useState(props.initial.competitiveRounds);
+
   const submit = () => {
-    const cursor = startDate ? new Date(startDate + "T00:00:00Z").getTime() : Date.now() - timeframeMs(tf) * 100;
+    let cursor = startDate ? new Date(startDate + "T00:00:00Z").getTime() : Date.now() - timeframeMs(tf) * 100;
+    if (compMode) {
+      const endMs = Date.now() - 14 * 24 * 3600 * 1000;
+      const startMs = Date.now() - 2 * 365 * 24 * 3600 * 1000;
+      cursor = Math.floor(startMs + Math.random() * (endMs - startMs));
+    }
     const range_start_msc = cursor - timeframeMs(tf) * historyBars;
     props.onStart(
       {
@@ -29,7 +38,10 @@ export default function ReplayConfigModal(props: {
         range_start_msc, range_end_msc: Date.now(),
         cursor_start_msc: cursor, speed,
       },
-      { version: 1, symbol, timeframe: tf, startDate, historyBars, speed },
+      { 
+        version: 1, symbol, timeframe: tf, startDate, historyBars, speed,
+        competitiveMode: compMode, competitiveHideDate: compHideDate, competitiveRounds: compRounds
+      },
     );
   };
 
@@ -49,10 +61,28 @@ export default function ReplayConfigModal(props: {
             {TIMEFRAMES.map((t) => <option key={t} value={t}>{t}</option>)}
           </select>
         </label>
-        <label className="block text-xs">Mulai dari tanggal (UTC)
-          <input type="date" className="glass mt-1 w-full px-2 py-1" value={startDate}
-                 onChange={(e) => setStartDate(e.target.value)} />
+        <label className="block text-xs flex items-center gap-2 mt-4 text-orange-300 font-semibold">
+          <input type="checkbox" checked={compMode} onChange={(e) => setCompMode(e.target.checked)} />
+          Competitive Mode
         </label>
+        {compMode && (
+          <div className="pl-4 space-y-2 border-l border-orange-500/50">
+            <label className="block text-xs flex items-center gap-2">
+              <input type="checkbox" checked={compHideDate} onChange={(e) => setCompHideDate(e.target.checked)} />
+              Sembunyikan Tanggal
+            </label>
+            <label className="block text-xs">Jumlah Skenario (0 = tak terbatas): {compRounds}
+              <input type="range" min={0} max={20} className="w-full" value={compRounds}
+                     onChange={(e) => setCompRounds(Number(e.target.value))} />
+            </label>
+          </div>
+        )}
+        {!compMode && (
+          <label className="block text-xs mt-2">Mulai dari tanggal (UTC)
+            <input type="date" className="glass mt-1 w-full px-2 py-1" value={startDate}
+                   onChange={(e) => setStartDate(e.target.value)} />
+          </label>
+        )}
         <label className="block text-xs">Bar histori sebelum mulai: {historyBars}
           <input type="range" min={HISTORY_MIN} max={HISTORY_MAX} step={50} className="w-full" value={historyBars}
                  onChange={(e) => setHistoryBars(Number(e.target.value))} />

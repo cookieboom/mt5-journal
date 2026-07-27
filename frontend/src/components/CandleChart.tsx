@@ -78,6 +78,7 @@ const CandleChart = forwardRef<ChartHandle, {
   markers?: SeriesMarker<Time>[];
   missing?: [number, number][];
   shadeCoverage?: boolean;
+  hideDate?: boolean;
 }>(function CandleChart(props, ref) {
   const el = useRef<HTMLDivElement>(null);
   const chart = useRef<IChartApi | null>(null);
@@ -139,9 +140,17 @@ const CandleChart = forwardRef<ChartHandle, {
         timeVisible: true,
         secondsVisible: false,
         // Axis labels in WIB (server=UTC, +7h; display only).
-        tickMarkFormatter: (t: number) => wib((t as number) * 1000, 0).replace(" WIB", ""),
+        tickMarkFormatter: (t: number) => {
+          const dt = wib((t as number) * 1000, 0).replace(" WIB", "");
+          return props.hideDate ? dt.split(" ")[1] || dt : dt;
+        },
       },
-      localization: { timeFormatter: (t: number) => wib((t as number) * 1000, 0) },
+      localization: { 
+        timeFormatter: (t: number) => {
+          const dt = wib((t as number) * 1000, 0);
+          return props.hideDate ? dt.split(" ")[1] + " WIB" || dt : dt;
+        } 
+      },
     });
     const s = addSeriesFor(c, props.settings);
     s.applyOptions({ priceLineVisible: props.settings.lastPriceLine });
