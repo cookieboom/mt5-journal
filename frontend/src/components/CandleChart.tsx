@@ -369,7 +369,7 @@ const CandleChart = forwardRef<ChartHandle, {
   const project = (p: Point): ProjectedPoint | null => {
     const c = chart.current, s = series.current;
     if (!c || !s) return null;
-    const x = c.timeScale().logicalToCoordinate(p.logical as never);
+    const x = c.timeScale().timeToCoordinate((p.barTimeMs / 1000) as UTCTimestamp);
     const y = s.priceToCoordinate(p.price);
     if (x === null || y === null) return null;
     return { x: x as number, y: y as number };
@@ -378,11 +378,13 @@ const CandleChart = forwardRef<ChartHandle, {
   if (measure.phase !== "idle") {
     const a = project(measure.anchor);
     const cur = project(measure.cursor);
-    if (a && cur) {
+    const m = computeMetrics(measure.anchor, measure.cursor);
+    const degenerate = m.bars === 0 && Math.abs(m.dPrice) < 1e-9;
+    if (!degenerate && a && cur) {
       overlay = (
         <MeasureOverlay
           anchor={a} cursor={cur}
-          metrics={computeMetrics(measure.anchor, measure.cursor)}
+          metrics={m}
           upColor={theme.up} downColor={theme.down}
         />
       );
@@ -390,7 +392,8 @@ const CandleChart = forwardRef<ChartHandle, {
   }
 
   return (
-    <div ref={el} className="w-full h-full relative">
+    <div className="relative w-full h-full">
+      <div ref={el} className="w-full h-full" />
       {overlay}
     </div>
   );
