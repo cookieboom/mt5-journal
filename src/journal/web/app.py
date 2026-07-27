@@ -93,6 +93,10 @@ def create_app(db_path: str | None = None) -> FastAPI:
         except RuntimeError as e:
             return JSONResponse({"error": str(e)}, status_code=400)
 
+    @app.get("/api/live-status")
+    def api_live_status(conn: sqlite3.Connection = Depends(get_conn)):
+        return JSONResponse(api.live_status_payload(conn))
+
     @app.get("/api/commands")
     def api_commands(conn: sqlite3.Connection = Depends(get_conn)):
         try:

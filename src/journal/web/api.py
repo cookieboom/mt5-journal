@@ -87,6 +87,22 @@ def live_payload(conn: sqlite3.Connection) -> dict:
     })
 
 
+def live_status_payload(
+    conn: sqlite3.Connection, *, stale_ms: int = 15_000, now_msc: int | None = None
+) -> dict:
+    """Is `journal live` running? `live` is True when the last heartbeat is newer
+    than `stale_ms`. `now_msc` is injectable for tests; None = real clock."""
+    from ..store import live_store
+    from ..store.db import now_ms
+
+    now = now_ms() if now_msc is None else now_msc
+    beat = live_store.read_heartbeat(conn)
+    if beat is None:
+        return {"live": False, "beat_msc": None, "age_ms": None}
+    age = now - beat
+    return {"live": age < stale_ms, "beat_msc": beat, "age_ms": age}
+
+
 def commands_payload(conn: sqlite3.Connection) -> dict:
     """Header + the trade-command audit log (newest first) for /api/commands.
     Wraps `views.commands_context`; the retcode NAME (never the bare int) and any

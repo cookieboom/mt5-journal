@@ -158,6 +158,28 @@ def test_live_payload_empty_is_honest(conn):
     assert p["live"]["positions"] == []
 
 
+def test_live_status_offline_when_no_heartbeat(conn):
+    from journal.web import api
+    p = api.live_status_payload(conn, now_msc=1_700_000_100_000)
+    assert p == {"live": False, "beat_msc": None, "age_ms": None}
+
+
+def test_live_status_live_when_recent(conn):
+    from journal.web import api
+    from journal.store import live_store as ls
+    ls.beat(conn, 1_700_000_100_000)
+    p = api.live_status_payload(conn, stale_ms=15_000, now_msc=1_700_000_105_000)
+    assert p["live"] is True and p["age_ms"] == 5_000
+
+
+def test_live_status_stale_when_old(conn):
+    from journal.web import api
+    from journal.store import live_store as ls
+    ls.beat(conn, 1_700_000_100_000)
+    p = api.live_status_payload(conn, stale_ms=15_000, now_msc=1_700_000_200_000)
+    assert p["live"] is False and p["age_ms"] == 100_000
+
+
 def test_commands_payload_maps_retcode_name(conn):
     _seed_account(conn)
     _seed_command(conn, position_id=1, kind="close", status="done", retcode=10009)
