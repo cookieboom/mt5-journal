@@ -9,7 +9,9 @@ import { clipToCursor, replayLines, type TrainingSummary } from "../lib/replay";
 import { useReplaySession, type ReplayConfig } from "../hooks/useReplaySession";
 import { useReplayPrefs } from "../hooks/useReplayPrefs";
 import type { ReplayFormPrefs } from "../lib/replayPrefs";
+import { useLiveStatus } from "../hooks/useLiveStatus";
 import ChartToolbar from "../components/ChartToolbar";
+import LiveDot from "../components/LiveDot";
 import CandleChart from "../components/CandleChart";
 import ChartInfoPanel from "../components/ChartInfoPanel";
 import ReplayConfigModal from "../components/ReplayConfigModal";
@@ -33,6 +35,7 @@ export default function Chart() {
 
   const { data: live } = useApi<LiveData>("/api/live", 2500);
   const currency = live?.header.currency ?? "USC";
+  const { status: liveStatus } = useLiveStatus();
 
   // --- Replay/training mode --------------------------------------------
   // Phase C isolation: this whole block only reads `settings` (for rendering)
@@ -100,18 +103,21 @@ export default function Chart() {
   return (
     <div className="flex flex-col h-[calc(100vh-2rem)]">
       {configOpen && <ReplayConfigModal initial={replayPrefs.prefs} onStart={onStart} onCancel={exitReplay} />}
-      <ChartToolbar
-        symbol={symbol}
-        tf={tf}
-        settings={settings}
-        onSymbol={(s) => setSelection({ symbol: s })}
-        onTf={(t) => setSelection({ tf: t })}
-        onSettings={update}
-        onReset={reset}
-        onJumpNow={() => chartRef.current?.jumpToNow()}
-        onReplay={enterReplay}
-        replayActive={replayOpen}
-      />
+      <div className="flex items-center gap-3">
+        <ChartToolbar
+          symbol={symbol}
+          tf={tf}
+          settings={settings}
+          onSymbol={(s) => setSelection({ symbol: s })}
+          onTf={(t) => setSelection({ tf: t })}
+          onSettings={update}
+          onReset={reset}
+          onJumpNow={() => chartRef.current?.jumpToNow()}
+          onReplay={enterReplay}
+          replayActive={replayOpen}
+        />
+        <LiveDot status={liveStatus} />
+      </div>
       {replayOpen && (
         <div className="mb-3">
           <ReplayControls

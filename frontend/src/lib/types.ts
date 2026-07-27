@@ -218,3 +218,5 @@ export interface PriceLineSpec {
   color: string;
   title: string;
 }
+
+export type LiveStatus = { live: boolean; beat_msc: number | null; age_ms: number | null };
