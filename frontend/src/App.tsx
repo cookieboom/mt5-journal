@@ -9,6 +9,7 @@ import TradeDetail from "./pages/TradeDetail";
 import TradeView from "./pages/TradeView";
 import Report from "./pages/Report";
 import Weekly from "./pages/Weekly";
+import StoragePage from "./pages/StoragePage";
 
 export default function App() {
   return (
@@ -25,6 +26,7 @@ export default function App() {
           <Route path="/weekly" element={<Weekly />} />
           <Route path="/weekly/:week" element={<Weekly />} />
           <Route path="/commands" element={<Commands />} />
+          <Route path="/storage" element={<StoragePage />} />
         </Routes>
       </AppShell>
     </BrowserRouter>
