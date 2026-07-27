@@ -462,6 +462,84 @@ def create_app(db_path: str | None = None) -> FastAPI:
     def api_training_summary(conn: sqlite3.Connection = Depends(get_conn)):
         return JSONResponse(api.to_jsonable(training.career_summary(conn)))
 
+    # -------------------------------------------------------- storage & maintenance
+    @app.get("/api/storage/overview")
+    def api_storage_overview(conn: sqlite3.Connection = Depends(get_conn)):
+        p = Path(db_path)
+        db_size_bytes = p.stat().st_size if p.is_file() else 0
+
+        wal_p = Path(str(db_path) + "-wal")
+        wal_size_bytes = wal_p.stat().st_size if wal_p.is_file() else 0
+
+        total_m1_bars = conn.execute("SELECT COUNT(*) FROM candles").fetchone()[0]
+        total_trades = conn.execute("SELECT COUNT(*) FROM trades").fetchone()[0]
+
+        cache_p = Path(_CACHE_DIR)
+        cache_files = [f for f in cache_p.rglob("*") if f.is_file()] if cache_p.is_dir() else []
+        cache_size_bytes = sum(f.stat().st_size for f in cache_files)
+        cache_files_count = len(cache_files)
+
+        rows = conn.execute("SELECT DISTINCT symbol FROM candle_coverage ORDER BY symbol").fetchall()
+        symbols = [r[0] for r in rows]
+
+        return JSONResponse({
+            "db_size_bytes": db_size_bytes,
+            "wal_size_bytes": wal_size_bytes,
+            "total_m1_bars": total_m1_bars,
+            "total_trades": total_trades,
+            "cache_size_bytes": cache_size_bytes,
+            "cache_files_count": cache_files_count,
+            "symbols": symbols,
+        })
+
+    @app.post("/api/storage/maintenance/clear-cache")
+    def api_storage_clear_cache():
+        cache_p = Path(_CACHE_DIR)
+        cleared_files = 0
+        freed_bytes = 0
+        if cache_p.is_dir():
+            for f in list(cache_p.rglob("*")):
+                if f.is_file():
+                    try:
+                        freed_bytes += f.stat().st_size
+                        f.unlink()
+                        cleared_files += 1
+                    except OSError:
+                        pass
+        return JSONResponse({
+            "cleared_files": cleared_files,
+            "freed_bytes": freed_bytes,
+        })
+
+    @app.post("/api/storage/maintenance/vacuum")
+    def api_storage_vacuum(conn: sqlite3.Connection = Depends(get_conn)):
+        if conn.in_transaction:
+            conn.commit()
+        conn.execute("VACUUM")
+        conn.execute("PRAGMA optimize")
+
+        p = Path(db_path)
+        db_size_after = p.stat().st_size if p.is_file() else 0
+        return JSONResponse({
+            "status": "ok",
+            "db_size_after": db_size_after,
+        })
+
+    @app.post("/api/storage/maintenance/rebuild")
+    def api_storage_rebuild(conn: sqlite3.Connection = Depends(get_conn)):
+        from ..domain.reconstruct import rebuild
+
+        try:
+            report = rebuild(conn)
+            n = report.n_trades
+        except RuntimeError:
+            n = 0
+
+        return JSONResponse({
+            "status": "ok",
+            "trades_rebuilt": n,
+        })
+
     # --------------------------------------------------------------- SPA (React)
     # The built SPA is the ONLY UI (Jinja retired, Phase 5). Assets mount at
     # /assets when a build exists; a catch-all — registered LAST — returns the SPA
