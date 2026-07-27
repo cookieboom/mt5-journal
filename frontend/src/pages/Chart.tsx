@@ -155,6 +155,8 @@ export default function Chart() {
               onRequestOlder={data.loadOlder}
               live={live ?? null}
               nowVisible={nowVisible}
+              missing={data.missing}
+              shadeCoverage={!replayOpen}
             />
           ) : (
             <div className="glass h-full flex items-center justify-center text-muted text-sm">

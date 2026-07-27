@@ -17,6 +17,8 @@ import {
   measureReducer, computeMetrics, isDoubleClickHold, IDLE,
   type MeasureState, type Point,
 } from "../lib/measure";
+import CoverageShadeOverlay from "./CoverageShadeOverlay";
+import { classifyGaps } from "../lib/coverage";
 
 const DARK = {
   bg: "transparent", text: "#9a97c4", grid: "rgba(255,255,255,0.06)",
@@ -74,6 +76,8 @@ const CandleChart = forwardRef<ChartHandle, {
   overlayLines?: import("../lib/types").PriceLineSpec[];
   fitToRange?: { startMs: number; endMs: number };
   markers?: SeriesMarker<Time>[];
+  missing?: [number, number][];
+  shadeCoverage?: boolean;
 }>(function CandleChart(props, ref) {
   const el = useRef<HTMLDivElement>(null);
   const chart = useRef<IChartApi | null>(null);
@@ -452,10 +456,33 @@ const CandleChart = forwardRef<ChartHandle, {
     }
   }
 
+  // Coverage shading (unfetched/closed bands), normal-mode only (gated by the
+  // caller via shadeCoverage — replay passes neither prop). Time→x projection
+  // mirrors `project()` above; re-runs on every re-render, including the
+  // bumpProjection-forced ones from visible-range change and resize.
+  let shadeOverlay: JSX.Element | null = null;
+  if (props.shadeCoverage && props.candles.length > 0) {
+    const projectMs = (ms: number): number | null => {
+      const c = chart.current;
+      if (!c) return null;
+      const x = c.timeScale().timeToCoordinate((ms / 1000) as UTCTimestamp);
+      return x === null ? null : (x as number);
+    };
+    const winRange: [number, number] = [
+      props.candles[0].time_msc, props.candles[props.candles.length - 1].time_msc,
+    ];
+    const segments = classifyGaps(props.candles, props.missing ?? [], winRange, props.tf);
+    const chartHeight = el.current?.clientHeight ?? 0;
+    if (chartHeight > 0) {
+      shadeOverlay = <CoverageShadeOverlay segments={segments} project={projectMs} height={chartHeight} />;
+    }
+  }
+
   return (
     <div className="relative w-full h-full">
       <div ref={el} className="w-full h-full" />
       {overlay}
+      {shadeOverlay}
     </div>
   );
 });
