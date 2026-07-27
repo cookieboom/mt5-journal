@@ -1,3 +1,5 @@
+import sqlite3
+
 from journal.adapter.base import Candle
 from journal.store.db import connect
 from journal.store import candles_store as cs
@@ -45,3 +47,46 @@ def test_fill_is_idempotent(tmp_path):
     n2 = fill_range(client, conn, "XAUUSDc", "M1", BASE, BASE+3*M1)  # already covered
     assert n2 == 0
     assert client.calls == []   # no gap → no bridge call
+
+
+class ConcurrentWriter:
+    """copy_rates_range that, on every call, tries to write from a SEPARATE
+    connection — exactly what `journal serve`'s request_candles INSERT does while
+    `journal live` is draining. If fill_range holds the write transaction open
+    across a bridge fetch, this second connection is locked out (WAL = one
+    writer), which is the reported `database is locked` 500."""
+    def __init__(self, db_path, bars_by_range):
+        self.db_path = db_path
+        self.bars_by_range = bars_by_range
+        self.lock_errors: list[str] = []
+
+    def copy_rates_range(self, symbol, timeframe, date_from, date_to):
+        f = int(date_from.timestamp() * 1000)
+        t = int(date_to.timestamp() * 1000)
+        w = sqlite3.connect(str(self.db_path))
+        w.execute("PRAGMA busy_timeout = 200")   # fail fast so the test is quick
+        try:
+            w.execute(
+                "INSERT INTO candle_requests (symbol, timeframe, from_msc, to_msc, "
+                "status, requested_msc) VALUES ('XAUUSDc', 'M1', ?, ?, 'pending', 0)",
+                (f, t),
+            )
+            w.commit()
+        except sqlite3.OperationalError as e:      # 'database is locked'
+            self.lock_errors.append(str(e))
+        finally:
+            w.close()
+        return self.bars_by_range.get((f, t), [])
+
+
+def test_fill_does_not_hold_write_lock_across_bridge_fetches(tmp_path):
+    db = tmp_path / "t.db"
+    conn = connect(db)
+    # Pre-cover a middle slice so the fill has TWO disjoint gaps → two bridge
+    # fetches. Under the bug, the first gap's write opens a transaction that stays
+    # open across the SECOND gap's fetch, locking any other writer out.
+    cs.record_coverage(conn, "XAUUSDc", "M1", BASE + M1, BASE + 2 * M1)
+    conn.commit()
+    client = ConcurrentWriter(db, {})
+    fill_range(client, conn, "XAUUSDc", "M1", BASE, BASE + 3 * M1)
+    assert client.lock_errors == []   # a concurrent enqueue must never be locked out

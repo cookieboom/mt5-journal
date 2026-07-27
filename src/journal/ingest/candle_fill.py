@@ -21,11 +21,23 @@ def fill_range(client: MT5Client, conn: sqlite3.Connection, symbol: str,
     """Fetch only the UNCOVERED sub-ranges of [from_ms, to_ms] from the bridge,
     insert the bars, and record coverage (even for ranges that return zero bars,
     so a genuinely-empty span is never re-fetched). Idempotent. Returns bars_new.
-    One commit at the end."""
+    One commit at the end.
+
+    Two phases, on purpose: fetch every gap from the bridge FIRST (no write
+    transaction open), then do all the local writes in one short transaction. The
+    inline version held SQLite's single WAL writer slot across the per-gap
+    network round-trip — so a multi-gap backfill in `journal live` starved the
+    web's `request_candles` INSERT past its 5 s busy_timeout and it 500'd with
+    "database is locked". Never hold the write lock across a bridge call."""
     covered = cs.read_coverage(conn, symbol, timeframe)
-    bars_new = 0
+    # Phase 1 — network only, no write lock held.
+    fetched: list[tuple[int, int, list]] = []
     for lo, hi in cs.missing_ranges(covered, (from_ms, to_ms)):
         bars = client.copy_rates_range(symbol, timeframe, _ms_to_dt(lo), _ms_to_dt(hi))
+        fetched.append((lo, hi, bars))
+    # Phase 2 — local writes only, one short transaction.
+    bars_new = 0
+    for lo, hi, bars in fetched:
         for c in bars:
             bars_new += cs.insert_candle(conn, symbol, timeframe, c)
         cs.record_coverage(conn, symbol, timeframe, lo, hi)
