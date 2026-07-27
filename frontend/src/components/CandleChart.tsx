@@ -3,8 +3,9 @@ import {
 } from "react";
 import {
   createChart, CandlestickSeries, BarSeries, LineSeries, AreaSeries,
-  ColorType, CrosshairMode, PriceScaleMode, LineStyle,
+  ColorType, CrosshairMode, PriceScaleMode, LineStyle, createSeriesMarkers,
   type IChartApi, type ISeriesApi, type IPriceLine, type UTCTimestamp, type SeriesType,
+  type SeriesMarker, type Time,
 } from "lightweight-charts";
 import { toSeconds, liveLines, isNowVisible, type Sym, type Timeframe } from "../lib/candles";
 import type { ChartSettings } from "../lib/chartPrefs";
@@ -71,10 +72,13 @@ const CandleChart = forwardRef<ChartHandle, {
   live: LiveData | null;
   nowVisible: boolean;
   overlayLines?: import("../lib/types").PriceLineSpec[];
+  fitToRange?: { startMs: number; endMs: number };
+  markers?: SeriesMarker<Time>[];
 }>(function CandleChart(props, ref) {
   const el = useRef<HTMLDivElement>(null);
   const chart = useRef<IChartApi | null>(null);
   const series = useRef<ISeriesApi<SeriesType> | null>(null);
+  const markersPrimitive = useRef<ReturnType<typeof createSeriesMarkers> | null>(null);
   const priceLines = useRef<IPriceLine[]>([]);
   const chartTypeFirstRun = useRef(true);
   const cbs = useRef(props);
@@ -311,6 +315,7 @@ const CandleChart = forwardRef<ChartHandle, {
     for (const pl of priceLines.current) series.current.removePriceLine(pl);
     priceLines.current = [];
     c.removeSeries(series.current);
+    markersPrimitive.current = null;
     const s = addSeriesFor(c, props.settings);
     s.applyOptions({ priceLineVisible: props.settings.lastPriceLine });
     s.setData(seriesData(cbs.current.candles, props.settings.chartType));
@@ -324,6 +329,49 @@ const CandleChart = forwardRef<ChartHandle, {
     series.current.setData(seriesData(props.candles, props.settings.chartType));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.candles]);
+
+  // Set markers when they change
+  useEffect(() => {
+    if (!series.current) return;
+    const m = props.markers ?? [];
+    if (typeof (series.current as any).setMarkers === "function") {
+      (series.current as any).setMarkers(m);
+    } else {
+      if (!markersPrimitive.current) {
+        markersPrimitive.current = createSeriesMarkers(series.current, m);
+      } else {
+        markersPrimitive.current.setMarkers(m);
+      }
+    }
+  }, [props.markers, props.settings.chartType]);
+
+  // Smart fit auto-focus
+  useEffect(() => {
+    if (!chart.current || !series.current || !props.fitToRange || props.candles.length === 0) return;
+    const { startMs, endMs } = props.fitToRange;
+
+    // Find the logical index (array index) of the start and end bars
+    let startIndex = props.candles.findIndex(c => c.time_msc >= startMs);
+    if (startIndex === -1) startIndex = props.candles.length - 1;
+
+    let endIndex = props.candles.findIndex(c => c.time_msc >= endMs);
+    if (endIndex === -1) endIndex = props.candles.length - 1;
+
+    // Pad context: 10 bars before entry, 5 bars after exit
+    const paddedStart = Math.max(0, startIndex - 10);
+    let paddedEnd = Math.min(props.candles.length - 1, endIndex + 5);
+
+    // Enforce 100 bars max zoom-out limit to prevent unreadable thin candles
+    if (paddedEnd - paddedStart > 100) {
+      paddedEnd = paddedStart + 100;
+    }
+
+    // Apply logical range
+    chart.current.timeScale().setVisibleLogicalRange({
+      from: paddedStart,
+      to: paddedEnd,
+    });
+  }, [props.fitToRange, props.candles.length, props.settings.chartType]);
 
   // Live SL/TP/entry overlay — only when the current symbol has open positions
   // AND "now" is in view. Horizontal lines have no time, so they'd otherwise
