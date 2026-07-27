@@ -504,3 +504,27 @@ def test_serve_watches_noop_without_active_watch(conn):
     from journal.ingest.live_candles import serve_watches
     client = FakeLiveClientWithRates([[]], bar=None)  # never asked
     assert serve_watches(client, conn, 1_700_000_000_000) == 0
+
+
+def test_serve_watches_records_coverage_when_bridge_returns_no_bars(conn):
+    # A watch left open across a weekend/holiday: the bridge has no closed and
+    # no forming bar for the window. Coverage over the closed span must still
+    # be recorded, or the same empty slice gets re-fetched every live cycle.
+    from journal.ingest.live_candles import serve_watches
+    from journal.store import live_store as ls
+    from journal.store import candles_store as cs
+
+    tf = "M5"; size = 300_000
+    now = 1_700_000_000_000
+    now = now - (now % size) + 120_000          # 2 min into the current bucket
+
+    class C(FakeLiveClient):
+        def copy_rates_range(self, symbol, timeframe, date_from, date_to):
+            return []
+
+    client = C([[]])
+    ls.upsert_watch(conn, "XAUUSDc", tf, now, ttl_ms=30_000)
+    written = serve_watches(client, conn, now)
+
+    assert written == 0
+    assert cs.read_coverage(conn, "XAUUSDc", tf) != []

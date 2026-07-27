@@ -37,9 +37,9 @@ def serve_watches(client: MT5Client, conn: sqlite3.Connection, now_msc: int,
                 written += 1
             else:
                 cs.insert_candle(conn, symbol, tf, c)             # closed → promote
-        # Record coverage over the CLOSED span we just fetched, so the store knows
-        # these bars were fetched (a genuinely-empty closed slice is remembered too).
-        if bars:
-            cs.record_coverage(conn, symbol, tf, frm, cur_bucket - 1)
+        # Record coverage over the CLOSED span we just fetched, unconditionally —
+        # even a zero-bar fetch (e.g. a watch left open across a weekend/holiday)
+        # must be remembered, so a genuinely-empty closed slice is never re-fetched.
+        cs.record_coverage(conn, symbol, tf, frm, cur_bucket - 1)
         conn.commit()
     return written
