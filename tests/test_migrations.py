@@ -68,9 +68,9 @@ def _make_v1(path) -> None:
 # ------------------------------------------------------------------ version
 
 
-def test_schema_version_is_6():
-    """Chart Phase D adds training_sessions + training_positions (migration 006)."""
-    assert SCHEMA_VERSION == 6
+def test_schema_version_is_7():
+    """Spec C adds live_heartbeat/live_watches/live_candles (migration 007)."""
+    assert SCHEMA_VERSION == 7
 
 
 def test_fresh_db_has_training_tables(tmp_path):
@@ -173,7 +173,7 @@ def test_migrate_reports_what_it_applied(tmp_path):
     conn.row_factory = sqlite3.Row
     try:
         applied = migrate(conn)
-        assert applied == [2, 3, 4, 5, 6]
+        assert applied == [2, 3, 4, 5, 6, 7]
     finally:
         conn.close()
 

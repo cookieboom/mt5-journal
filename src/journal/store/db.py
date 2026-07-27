@@ -17,7 +17,7 @@ import sqlite3
 import time
 from pathlib import Path
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 _SCHEMA_PATH = Path(__file__).resolve().parent / "schema.sql"
 _MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"

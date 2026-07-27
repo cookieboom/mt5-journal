@@ -434,3 +434,38 @@ CREATE INDEX IF NOT EXISTS idx_training_positions_session
     ON training_positions (session_id);
 CREATE INDEX IF NOT EXISTS idx_training_positions_status
     ON training_positions (status);
+
+-- ---------------------------------------------------------------- live monitor (Spec C)
+
+-- Single-row liveness beacon. `journal live` overwrites beat_msc every cycle.
+CREATE TABLE IF NOT EXISTS live_heartbeat (
+    id       INTEGER PRIMARY KEY CHECK (id = 1),
+    beat_msc INTEGER NOT NULL
+);
+
+-- Demand-driven watch registry. Web upserts (with a TTL); `journal live` reads
+-- the still-active rows each cycle and fetches their forming bar.
+CREATE TABLE IF NOT EXISTS live_watches (
+    symbol        TEXT    NOT NULL,
+    timeframe     TEXT    NOT NULL,
+    expires_msc   INTEGER NOT NULL,       -- active while expires_msc > now
+    requested_msc INTEGER NOT NULL,
+    PRIMARY KEY (symbol, timeframe)
+);
+
+-- At most one FORMING bar per (symbol, timeframe). Overwritten freely — NOT part
+-- of the candles append-only contract. Column types mirror `candles` exactly.
+CREATE TABLE IF NOT EXISTS live_candles (
+    symbol      TEXT    NOT NULL,
+    timeframe   TEXT    NOT NULL,
+    time_msc    INTEGER NOT NULL,         -- bar OPEN time (bucket start), server time
+    open        REAL    NOT NULL,
+    high        REAL    NOT NULL,
+    low         REAL    NOT NULL,
+    close       REAL    NOT NULL,
+    tick_volume INTEGER,
+    spread      INTEGER,
+    real_volume INTEGER,
+    updated_msc INTEGER NOT NULL,         -- true UTC of last overwrite
+    PRIMARY KEY (symbol, timeframe)
+) WITHOUT ROWID;
