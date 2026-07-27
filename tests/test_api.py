@@ -449,6 +449,25 @@ def test_live_candle_payload_returns_forming_and_liveness(conn):
                             "l": 0.5, "c": 1.5, "v": 9}
 
 
+def test_backfill_enqueues_a_request(conn):
+    from journal.web import api
+    out = api.backfill(conn, "XAUUSDc", "M5", 0, 600_000)
+    assert out["queued"] is True and out["request_id"] > 0
+    row = conn.execute(
+        "SELECT status FROM candle_requests WHERE id = ?", (out["request_id"],)
+    ).fetchone()
+    assert row["status"] == "pending"
+
+
+def test_backfill_noop_when_already_covered(conn):
+    from journal.web import api
+    from journal.store import candles_store as cs
+    cs.record_coverage(conn, "XAUUSDc", "M5", 0, 600_000)
+    conn.commit()
+    out = api.backfill(conn, "XAUUSDc", "M5", 0, 600_000)
+    assert out == {"request_id": 0, "queued": False}
+
+
 def test_training_routes_smoke(tmp_path):
     from fastapi.testclient import TestClient
     from journal.web.app import create_app

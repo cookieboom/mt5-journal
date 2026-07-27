@@ -219,6 +219,16 @@ def create_app(db_path: str | None = None) -> FastAPI:
         except (KeyError, ValueError) as e:
             return JSONResponse({"error": str(e)}, status_code=400)
 
+    @app.post("/api/backfill")
+    def api_backfill(body=Body(...), conn: sqlite3.Connection = Depends(get_conn)):
+        try:
+            return JSONResponse(api.backfill(
+                conn, body["symbol"], body["timeframe"],
+                int(body["from_ms"]), int(body["to_ms"]),
+            ))
+        except (KeyError, ValueError) as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+
     @app.get("/api/chart/prefs")
     def api_get_chart_prefs(conn: sqlite3.Connection = Depends(get_conn)):
         """Chart settings blob, cross-browser. `prefs` is null until first save;

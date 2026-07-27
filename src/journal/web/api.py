@@ -213,3 +213,12 @@ def coverage_payload(conn: sqlite3.Connection, symbol: str, timeframe: str,
         "covered": [[lo, hi] for lo, hi in covered if hi >= from_ms and lo <= to_ms],
         "missing": [[lo, hi] for lo, hi in missing],
     }
+
+
+def backfill(conn: sqlite3.Connection, symbol: str, timeframe: str,
+             from_ms: int, to_ms: int) -> dict:
+    """Explicit backfill: enqueue a fill for [from_ms, to_ms] (deduped, skips
+    already-covered). `journal live` drains it. Returns 0/False when nothing was
+    queued because the range is already covered."""
+    rid = candle_queue.request_candles(conn, symbol, timeframe, from_ms, to_ms)
+    return {"request_id": rid, "queued": rid > 0}
