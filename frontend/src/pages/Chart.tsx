@@ -14,6 +14,7 @@ import { useLiveForming } from "../hooks/useLiveForming";
 import ChartToolbar from "../components/ChartToolbar";
 import LiveDot from "../components/LiveDot";
 import CandleChart from "../components/CandleChart";
+import CoverageRibbon from "../components/CoverageRibbon";
 import ChartInfoPanel from "../components/ChartInfoPanel";
 import ReplayConfigModal from "../components/ReplayConfigModal";
 import ReplayControls from "../components/ReplayControls";
@@ -186,6 +187,15 @@ export default function Chart() {
               <span>Gagal memuat: {data.error}</span>
               <button onClick={data.retry} className="text-cyan">Coba lagi</button>
             </div>
+          )}
+
+          {!replayOpen && hasBars && (
+            <CoverageRibbon
+              bars={shownCandles}
+              missing={data.missing}
+              window={[shownCandles[0]?.time_msc ?? Date.now(), shownCandles[shownCandles.length - 1]?.time_msc ?? Date.now()]}
+              tf={tf}
+            />
           )}
         </div>
         <aside className="w-[240px] shrink-0 hidden lg:flex lg:flex-col gap-3 overflow-y-auto">

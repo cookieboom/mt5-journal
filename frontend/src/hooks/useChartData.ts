@@ -20,6 +20,7 @@ export function useChartData(
   const [candles, setCandles] = useState<Candle[]>([]);
   const [status, setStatus] = useState<ChartStatus>("loading");
   const [error, setError] = useState<string | null>(null);
+  const [missing, setMissing] = useState<[number, number][]>([]);
   const fromRef = useRef<number>(0);          // oldest loaded window bound (ms)
   const toRef = useRef<number>(0);            // newest loaded window bound (ms)
   const pollRef = useRef<number>(0);          // poll attempts for the current window
@@ -65,6 +66,7 @@ export function useChartData(
         atCapRef.current = merged.length >= maxBars;
         return merged;
       });
+      setMissing(resp.missing as [number, number][]);
       setError(null);
       // Nothing found yet and this window came back empty → the view is anchored
       // in a market-closed gap. Widen backward and retry immediately (older bars
@@ -186,5 +188,5 @@ export function useChartData(
   }, [symbol, tf, maxBars]);
 
   const lastBarMs = candles.length ? candles[candles.length - 1].time_msc : null;
-  return { candles, status, error, lastBarMs, retry, loadOlder, loadUpTo };
+  return { candles, status, error, lastBarMs, missing, retry, loadOlder, loadUpTo };
 }
