@@ -75,6 +75,7 @@ from ..store import live_store
 from ..store.candle_queue import claim_next_request, requeue_orphaned
 from ..store.db import now_ms
 from .candle_fill import fulfill_request
+from .live_candles import serve_watches
 from .poller import poll_once
 
 log = logging.getLogger(__name__)
@@ -304,6 +305,10 @@ def live_cycle(
                 "live: candle request %d failed — marked failed, will not auto-retry "
                 "this exact row (a new request re-queues)", candle_request_id
             )
+
+    # (4b) serve realtime watches — forming bar + promote closed bars. Cheap
+    # (one latest-bars fetch per active watch, ~1 given demand-driven watching).
+    serve_watches(client, conn, observed_msc)
 
     # (5) liveness beacon — ALWAYS, even with no positions/watches, so the web can
     # tell "journal live is running" from "data is just old". Empty open_positions

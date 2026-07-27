@@ -461,3 +461,46 @@ def test_live_cycle_writes_heartbeat(conn):
     live_cycle(client, conn, _LOGIN)
     beat = ls.read_heartbeat(conn)
     assert beat is not None and beat >= _MSC_FLOOR  # real ms, always written
+
+
+# ---------------------------------------------------------------- serve_watches
+
+
+def test_serve_watches_splits_forming_from_closed(conn):
+    from journal.ingest.live_candles import serve_watches
+    from journal.store import live_store as ls
+    from journal.store import candles_store as cs
+    from journal.adapter.base import Candle
+
+    tf = "M5"; size = 300_000
+    now = 1_700_000_000_000
+    now = now - (now % size) + 120_000          # 2 min into the current bucket
+    cur_bucket = now - (now % size)
+    prev_bucket = cur_bucket - size
+    closed = Candle(time_msc=prev_bucket, open=1, high=2, low=0.5, close=1.5,
+                    tick_volume=5, spread=2, real_volume=0)
+    forming = Candle(time_msc=cur_bucket, open=1.5, high=3, low=1.4, close=2.9,
+                     tick_volume=7, spread=2, real_volume=0)
+
+    class C(FakeLiveClient):
+        def copy_rates_range(self, symbol, timeframe, date_from, date_to):
+            return [closed, forming]
+
+    client = C([[]])
+    ls.upsert_watch(conn, "XAUUSDc", tf, now, ttl_ms=30_000)
+    written = serve_watches(client, conn, now)
+
+    assert written == 1
+    # forming bar is in live_candles, NOT candles
+    assert ls.read_forming(conn, "XAUUSDc", tf).time_msc == cur_bucket
+    assert cs.read_candles(conn, "XAUUSDc", tf, cur_bucket, cur_bucket) == []
+    # closed bar promoted to candles + coverage recorded
+    rows = cs.read_candles(conn, "XAUUSDc", tf, prev_bucket, prev_bucket)
+    assert len(rows) == 1
+    assert cs.read_coverage(conn, "XAUUSDc", tf) != []
+
+
+def test_serve_watches_noop_without_active_watch(conn):
+    from journal.ingest.live_candles import serve_watches
+    client = FakeLiveClientWithRates([[]], bar=None)  # never asked
+    assert serve_watches(client, conn, 1_700_000_000_000) == 0
