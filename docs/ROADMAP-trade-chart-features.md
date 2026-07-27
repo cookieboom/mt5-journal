@@ -12,7 +12,7 @@ dulu, realtime terakhir saat pola chart sudah mapan).
 |-------|------|--------|-----------|------|--------|
 | 2 + 3 | **Spec A** — Setting render PNG + Viewer trade interaktif | Kecil + Sedang | `render/chart.py`, `app_prefs`, `TradeDetail.tsx`, route baru `/trades/:id/view`, reuse engine chart + kursor replay + `annotate` | spec: `docs/superpowers/specs/2026-07-26-trade-png-settings-and-viewer-design.md` · plan: `docs/superpowers/plans/2026-07-26-trade-png-settings-and-viewer.md` (10 task) | **Plan siap; belum dieksekusi** |
 | 4 | **Spec B** — Gestur ukur harga (double-click + hold → jarak harga live) | Kecil | interaksi chart FE saja (lightweight-charts); berlaku untuk semua chart termasuk viewer #3 & monitor #1 | spec: `docs/superpowers/specs/2026-07-27-price-measure-gesture-design.md` · plan: `docs/superpowers/plans/2026-07-27-price-measure-gesture.md` (4 task) | **SELESAI** (branch `spec-b-price-measure-gesture`; vitest 93 / tsc 0 / build 0 / pytest 473 / rebuild OK). Pending human: visual pass di browser |
-| 1 | **Spec C** — Monitor simbol realtime | **Besar** | candle store baru (strategi simpan forming-bar), backend stream, polling FE + interval di setting, isu storage 1-bar-banyak-update | *belum ditulis* | Belum dibrainstorm |
+| 1 | **Spec C** — Monitor simbol realtime + kelengkapan data | **Besar** | migration 007 (`live_heartbeat`/`live_watches`/`live_candles`), `live_store`, `serve_watches` di `journal live`, endpoint `/api/live-status`·`/api/watch`·`/api/candles/live`·`/api/coverage`·`/api/backfill`, FE `LiveDot`/`useLiveForming`/`mergeForming`/`CoverageRibbon`/`CoverageShadeOverlay`/`DataHealthPanel` | spec: `docs/superpowers/specs/2026-07-27-spec-c-realtime-monitor-and-data-completeness-design.md` · plan: `docs/superpowers/plans/2026-07-27-spec-c-realtime-monitor-and-data-completeness.md` (19 task) | **SELESAI** (branch `spec-c-realtime-monitor`; pytest 500 / vitest 112 / tsc 0 / build 0 / rebuild OK). Pending human: visual pass di browser |
 
 ## Isi tiap spec (ringkas)
 
@@ -36,7 +36,16 @@ dulu, realtime terakhir saat pola chart sudah mapan).
   lightweight-charts. Pertanyaan yang belum digali: tampilkan juga jarak dalam
   pip/tick & % & waktu? snap ke OHLC? berlaku di chart mana saja?
 
-### Spec C — Monitor simbol realtime (#1) *(brainstorm dulu saat gilirannya)*
+### Spec C — Monitor simbol realtime + kelengkapan data (#1) — **SELESAI**
+Diimplementasikan subagent-driven (19 task, TDD). Heartbeat + `LiveDot`;
+forming-bar realtime (watch demand-driven → `serve_watches` di `journal live`,
+forming di `live_candles`, closed dipromosikan ke `candles`); visual kelengkapan
+data (`CoverageRibbon`/badge + shading on-chart `unfetched` vs `closed`) +
+`DataHealthPanel` dengan backfill lewat antrian `candle_requests` yang sudah ada.
+Web tak pernah menyentuh bridge. Gate: pytest 500 / vitest 112 / tsc 0 / build 0
+/ rebuild OK. **Pending human: visual pass di browser.**
+
+Rancangan awal (arsip):
 - Chart update tiap N detik (N di setting) ambil data terbaru untuk update bar.
 - **Isu inti storage:** normal 1 bar disimpan sekali; realtime 1 bar bisa update
   berkali-kali. Perlu strategi terbaik (mis. hanya forming-bar in-memory/`live.db`
