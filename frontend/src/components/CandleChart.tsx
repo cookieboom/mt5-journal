@@ -1,5 +1,5 @@
 import {
-  forwardRef, useEffect, useImperativeHandle, useRef, useState, useCallback,
+  forwardRef, useEffect, useImperativeHandle, useRef, useState, useCallback, useReducer,
 } from "react";
 import {
   createChart, CandlestickSeries, BarSeries, LineSeries, AreaSeries,
@@ -83,6 +83,7 @@ const CandleChart = forwardRef<ChartHandle, {
   const [measure, setMeasure] = useState<MeasureState>(IDLE);
   const lastUp = useRef<{ ms: number; x: number; y: number } | null>(null);
   const dragging = useRef(false);
+  const [, bumpProjection] = useReducer((c: number) => c + 1, 0);
 
   // Pointer pixel (relative to the pane) → data coordinates, using the current
   // series/timeScale. candles give a gap-aware bar time from the logical index.
@@ -96,6 +97,16 @@ const CandleChart = forwardRef<ChartHandle, {
     const idx = Math.max(0, Math.min(cand.length - 1, Math.round(logical as number)));
     const barTimeMs = cand.length ? cand[idx].time_msc : 0;
     return { price: price as number, logical: logical as number, barTimeMs };
+  }, []);
+
+  // Always restore pan/zoom and reset drag state, regardless of which path
+  // ended the drag (pointerup, Escape, pointercancel, or auto-clear on data
+  // identity change).
+  const endDrag = useCallback(() => {
+    if (dragging.current) {
+      dragging.current = false;
+      chart.current?.applyOptions({ handleScroll: true, handleScale: true });
+    }
   }, []);
 
   // Create the chart once.
@@ -155,6 +166,7 @@ const CandleChart = forwardRef<ChartHandle, {
       const toMs = vis ? (vis.to as number) * 1000 : null;
       const last = cbs.current.lastBarMs;
       cbs.current.onNowVisibleChange(isNowVisible(last, toMs, cbs.current.tf));
+      bumpProjection();
     });
 
     return () => {
@@ -164,6 +176,17 @@ const CandleChart = forwardRef<ChartHandle, {
       priceLines.current = [];
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // autoSize:true resize doesn't always trigger a React re-render, so a frozen
+  // measurement overlay (projected from chart coordinates) can lag the pane.
+  // Force a re-render on resize so `project()` re-runs against fresh coords.
+  useEffect(() => {
+    const node = el.current;
+    if (!node || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => bumpProjection());
+    ro.observe(node);
+    return () => ro.disconnect();
   }, []);
 
   // Double-click-then-hold measurement gesture. Pure logic lives in measure.ts;
@@ -206,32 +229,42 @@ const CandleChart = forwardRef<ChartHandle, {
       const { x, y } = rel(e);
       lastUp.current = { ms: e.timeStamp, x, y };
       if (dragging.current) {
-        dragging.current = false;
-        c.applyOptions({ handleScroll: true, handleScale: true });
+        endDrag();
         setMeasure((s) => measureReducer(s, { t: "release" }));
       }
     };
 
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setMeasure((s) => measureReducer(s, { t: "clear" }));
+      if (e.key === "Escape") {
+        endDrag();
+        setMeasure((s) => measureReducer(s, { t: "clear" }));
+      }
+    };
+
+    const onCancel = () => {
+      endDrag();
+      setMeasure((s) => measureReducer(s, { t: "clear" }));
     };
 
     node.addEventListener("pointerdown", onDown);
-    node.addEventListener("pointermove", onMove);
+    window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
     window.addEventListener("keydown", onKey);
+    window.addEventListener("pointercancel", onCancel);
     return () => {
       node.removeEventListener("pointerdown", onDown);
-      node.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("keydown", onKey);
+      window.removeEventListener("pointercancel", onCancel);
     };
-  }, [toPoint]);
+  }, [toPoint, endDrag]);
 
   // Data identity changed → the stored data coordinates may no longer line up.
   useEffect(() => {
+    endDrag();
     setMeasure((s) => (s.phase === "idle" ? s : IDLE));
-  }, [props.symbol, props.tf, props.settings.chartType]);
+  }, [props.symbol, props.tf, props.settings.chartType, endDrag]);
 
   // Re-apply live-appliable settings when they change (no full re-create; chart
   // type is handled by its own recreate effect below).
