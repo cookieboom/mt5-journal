@@ -2,6 +2,7 @@ import sqlite3
 import pytest
 from journal.store.db import connect
 from journal.store import live_store as ls
+from journal.adapter.base import Candle
 
 
 @pytest.fixture
@@ -52,3 +53,33 @@ def test_prune_expired(conn):
     ls.upsert_watch(conn, "XAUUSDc", "M5", 1_700_000_000_000, ttl_ms=30_000)
     assert ls.prune_expired(conn, 1_700_000_040_000) == 1
     assert conn.execute("SELECT COUNT(*) c FROM live_watches").fetchone()["c"] == 0
+
+
+_BAR = Candle(time_msc=1_700_000_040_000, open=1.0, high=2.0, low=0.5, close=1.5,
+              tick_volume=10, spread=3, real_volume=0)
+
+
+def test_read_forming_none(conn):
+    assert ls.read_forming(conn, "XAUUSDc", "M5") is None
+
+
+def test_upsert_then_read_forming(conn):
+    ls.upsert_forming(conn, "XAUUSDc", "M5", _BAR, 1_700_000_045_000)
+    got = ls.read_forming(conn, "XAUUSDc", "M5")
+    assert got == _BAR
+
+
+def test_forming_overwrites(conn):
+    ls.upsert_forming(conn, "XAUUSDc", "M5", _BAR, 1_700_000_045_000)
+    newer = Candle(time_msc=1_700_000_040_000, open=1.0, high=9.0, low=0.5,
+                   close=8.0, tick_volume=99, spread=3, real_volume=0)
+    ls.upsert_forming(conn, "XAUUSDc", "M5", newer, 1_700_000_050_000)
+    assert ls.read_forming(conn, "XAUUSDc", "M5") == newer
+    assert conn.execute("SELECT COUNT(*) c FROM live_candles").fetchone()["c"] == 1
+
+
+def test_upsert_forming_rejects_seconds(conn):
+    import pytest
+    bad = Candle(time_msc=1_700_000_040, open=1.0, high=2.0, low=0.5, close=1.5)
+    with pytest.raises(ValueError):
+        ls.upsert_forming(conn, "XAUUSDc", "M5", bad, 1_700_000_045_000)

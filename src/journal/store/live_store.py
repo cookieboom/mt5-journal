@@ -51,3 +51,38 @@ def prune_expired(conn: sqlite3.Connection, now_msc: int) -> int:
     cur = conn.execute("DELETE FROM live_watches WHERE expires_msc <= ?", (now_msc,))
     conn.commit()
     return cur.rowcount
+
+
+def upsert_forming(conn: sqlite3.Connection, symbol: str, timeframe: str,
+                   c: Candle, now_msc: int) -> None:
+    if c.time_msc is None or c.time_msc < _MSC_FLOOR:
+        raise ValueError(
+            f"forming candle time_msc={c.time_msc!r} for {symbol} {timeframe} is "
+            f"below {_MSC_FLOOR} — seconds leaked through (Trap 15). Fix the adapter "
+            "boundary; never ×1000 here."
+        )
+    conn.execute(
+        "INSERT INTO live_candles "
+        "(symbol, timeframe, time_msc, open, high, low, close, tick_volume, spread, real_volume, updated_msc) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT(symbol, timeframe) DO UPDATE SET "
+        "time_msc=excluded.time_msc, open=excluded.open, high=excluded.high, "
+        "low=excluded.low, close=excluded.close, tick_volume=excluded.tick_volume, "
+        "spread=excluded.spread, real_volume=excluded.real_volume, updated_msc=excluded.updated_msc",
+        (symbol, timeframe, c.time_msc, c.open, c.high, c.low, c.close,
+         c.tick_volume, c.spread, c.real_volume, now_msc),
+    )
+    conn.commit()
+
+
+def read_forming(conn: sqlite3.Connection, symbol: str, timeframe: str) -> Candle | None:
+    r = conn.execute(
+        "SELECT time_msc, open, high, low, close, tick_volume, spread, real_volume "
+        "FROM live_candles WHERE symbol = ? AND timeframe = ?",
+        (symbol, timeframe),
+    ).fetchone()
+    if r is None:
+        return None
+    return Candle(time_msc=r["time_msc"], open=r["open"], high=r["high"], low=r["low"],
+                  close=r["close"], tick_volume=r["tick_volume"], spread=r["spread"],
+                  real_volume=r["real_volume"])
