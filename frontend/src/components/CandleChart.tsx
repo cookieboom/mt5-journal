@@ -366,6 +366,9 @@ const CandleChart = forwardRef<ChartHandle, {
       paddedEnd = paddedStart + 100;
     }
 
+    // Defensive guard for malformed range data (e.g. startMs > endMs)
+    if (paddedStart > paddedEnd) return;
+
     // Apply logical range
     chart.current.timeScale().setVisibleLogicalRange({
       from: paddedStart,

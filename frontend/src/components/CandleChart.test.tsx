@@ -5,8 +5,8 @@ import type { Candle } from "../lib/types";
 import type { ChartSettings } from "../lib/chartPrefs";
 import type { SeriesMarker, Time, UTCTimestamp } from "lightweight-charts";
 
-let capturedMarkers: any = null;
-let capturedLogicalRange: any = null;
+let capturedMarkers: SeriesMarker<Time>[] | null = null;
+let capturedLogicalRange: { from: number; to: number } | null = null;
 
 vi.mock("lightweight-charts", async () => {
   const actual: any = await vi.importActual("lightweight-charts");
@@ -184,4 +184,26 @@ it("handles startMs/endMs beyond candle range gracefully", () => {
   );
 
   expect(capturedLogicalRange).toEqual({ from: 9, to: 19 });
+});
+
+it("handles malformed fitToRange (startMs > endMs) safely without setting logical range", () => {
+  const fitToRange = { startMs: 2_000_000, endMs: 1_000_000 };
+
+  render(
+    <CandleChart
+      symbol="XAUUSDc"
+      tf="M1"
+      settings={DEFAULT_SETTINGS}
+      candles={mockCandles}
+      onHover={() => {}}
+      onNowVisibleChange={() => {}}
+      onRequestOlder={() => {}}
+      lastBarMs={2_140_000}
+      live={null}
+      nowVisible={true}
+      fitToRange={fitToRange}
+    />
+  );
+
+  expect(capturedLogicalRange).toBeNull();
 });
