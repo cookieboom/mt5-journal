@@ -34,3 +34,47 @@ export function fmtSpan(ms: number): string {
   if (hours > 0) return `${hours}h ${mins}m`;
   return `${mins}m`;
 }
+
+export type MeasureState =
+  | { phase: "idle" }
+  | { phase: "measuring"; anchor: Point; cursor: Point }
+  | { phase: "frozen"; anchor: Point; cursor: Point };
+
+export type MeasureEvent =
+  | { t: "start"; anchor: Point }
+  | { t: "move"; cursor: Point }
+  | { t: "release" }
+  | { t: "clear" };
+
+export const IDLE: MeasureState = { phase: "idle" };
+
+// Pure transition. `move`/`release` outside `measuring` are no-ops; `start`
+// always (re)opens a fresh measurement; `clear` always returns to idle.
+export function measureReducer(s: MeasureState, e: MeasureEvent): MeasureState {
+  switch (e.t) {
+    case "start":
+      return { phase: "measuring", anchor: e.anchor, cursor: e.anchor };
+    case "move":
+      return s.phase === "measuring" ? { ...s, cursor: e.cursor } : s;
+    case "release":
+      return s.phase === "measuring"
+        ? { phase: "frozen", anchor: s.anchor, cursor: s.cursor }
+        : s;
+    case "clear":
+      return IDLE;
+  }
+}
+
+export const DBLCLICK_MS = 350;
+export const DBLCLICK_PX = 5;
+
+// The second mousedown of a double-click, held: within DBLCLICK_MS of the last
+// pointerup and within DBLCLICK_PX of where it happened.
+export function isDoubleClickHold(
+  prevUpMs: number | null, prevX: number, prevY: number,
+  nowMs: number, nowX: number, nowY: number,
+): boolean {
+  if (prevUpMs === null) return false;
+  if (nowMs - prevUpMs > DBLCLICK_MS) return false;
+  return Math.hypot(nowX - prevX, nowY - prevY) < DBLCLICK_PX;
+}
