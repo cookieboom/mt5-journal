@@ -25,5 +25,5 @@ export function useLiveForming(symbol: string, tf: Timeframe, enabled: boolean) 
     : "";
   const { data } = useApi<LiveCandle>(path, enabled ? POLL_MS : undefined);
   const forming: Candle | null = enabled && data ? data.forming : null;
-  return { forming, live: !!data?.live };
+  return { forming, live: enabled && !!data?.live };
 }
