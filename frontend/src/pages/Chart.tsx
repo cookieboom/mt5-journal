@@ -137,7 +137,7 @@ export default function Chart() {
 
   useEffect(() => {
     if (!replayOpen || !replayPrefs.prefs.competitiveMode) return;
-    const count = replay.positions.length;
+    const count = replay.positions.filter((p) => p.status !== "closed").length;
     if (prevPosCount.current > 0 && count === 0 && !evalPause) {
       // all positions closed, trigger evaluation pause
       setEvalPause({ pnl: replay.sessionSummary?.total_r || 0, isSkip: false });
@@ -146,7 +146,7 @@ export default function Chart() {
       }, 3000);
     }
     prevPosCount.current = count;
-  }, [replay.positions.length, replayOpen, replayPrefs.prefs.competitiveMode, evalPause, nextCompetitiveRound, replay.sessionSummary]);
+  }, [replay.positions, replayOpen, replayPrefs.prefs.competitiveMode, evalPause, nextCompetitiveRound, replay.sessionSummary]);
 
   const cursor = replay.cursorMsc;
   // Keep loaded bars ahead of the advancing reveal cursor (no-op once covered).

@@ -99,9 +99,11 @@ def step_bar(positions: list[PositionState], bar: Bar) -> list[FillEvent]:
             tp_hit = p.tp > 0 and bar.low <= p.tp
 
         if sl_hit:                              # stop-first when both are hit
-            events.append(_close(p, p.sl, bar.time_msc, "sl"))
+            exit_price = p.sl if bar.low <= p.sl <= bar.high else bar.open
+            events.append(_close(p, exit_price, bar.time_msc, "sl"))
         elif tp_hit:
-            events.append(_close(p, p.tp, bar.time_msc, "tp"))
+            exit_price = p.tp if bar.low <= p.tp <= bar.high else bar.open
+            events.append(_close(p, exit_price, bar.time_msc, "tp"))
 
     return events
 
