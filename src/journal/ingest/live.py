@@ -71,6 +71,7 @@ from ..execute import (
     recover_interrupted,
     reject,
 )
+from ..store import live_store
 from ..store.candle_queue import claim_next_request, requeue_orphaned
 from ..store.db import now_ms
 from .candle_fill import fulfill_request
@@ -303,6 +304,11 @@ def live_cycle(
                 "live: candle request %d failed — marked failed, will not auto-retry "
                 "this exact row (a new request re-queues)", candle_request_id
             )
+
+    # (5) liveness beacon — ALWAYS, even with no positions/watches, so the web can
+    # tell "journal live is running" from "data is just old". Empty open_positions
+    # cannot serve as a heartbeat (no rows when nothing is open).
+    live_store.beat(conn, now_ms())
 
     return LiveReport(
         account_login=login,

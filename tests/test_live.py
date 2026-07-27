@@ -25,6 +25,7 @@ from journal.ingest.live import live_cycle, live_loop
 from journal.store.db import connect
 
 _LOGIN = 257223861
+_MSC_FLOOR = 10**12
 
 
 @pytest.fixture
@@ -448,3 +449,15 @@ def test_live_cycle_fulfils_one_candle_request(conn):
         "SELECT status FROM candle_requests WHERE id = ?", (r.candle_request_id,)
     ).fetchone()
     assert row["status"] == "done"
+
+
+# ---------------------------------------------------------------- heartbeat
+
+
+def test_live_cycle_writes_heartbeat(conn):
+    from journal.store import live_store as ls
+    client = FakeLiveClient([[]])          # no positions is fine
+    assert ls.read_heartbeat(conn) is None
+    live_cycle(client, conn, _LOGIN)
+    beat = ls.read_heartbeat(conn)
+    assert beat is not None and beat >= _MSC_FLOOR  # real ms, always written
