@@ -3,13 +3,14 @@ import { useSearchParams } from "react-router-dom";
 import { useApi } from "../lib/api";
 import { clampBars, parseSelection } from "../lib/chartPrefs";
 import { useChartPrefs } from "../hooks/useChartPrefs";
-import type { Sym, Timeframe } from "../lib/candles";
+import { mergeForming, type Sym, type Timeframe } from "../lib/candles";
 import type { HoverBar, LiveData } from "../lib/types";
 import { clipToCursor, replayLines, type TrainingSummary } from "../lib/replay";
 import { useReplaySession, type ReplayConfig } from "../hooks/useReplaySession";
 import { useReplayPrefs } from "../hooks/useReplayPrefs";
 import type { ReplayFormPrefs } from "../lib/replayPrefs";
 import { useLiveStatus } from "../hooks/useLiveStatus";
+import { useLiveForming } from "../hooks/useLiveForming";
 import ChartToolbar from "../components/ChartToolbar";
 import LiveDot from "../components/LiveDot";
 import CandleChart from "../components/CandleChart";
@@ -56,6 +57,11 @@ export default function Chart() {
   const data = useChartData(symbol, tf, bars.initialBars, bars.maxBars, replayAnchor);
   const hasBars = data.candles.length > 0;
 
+  // Realtime forming bar — normal mode only (never in replay/training, which is
+  // historical). enabled flips the watch + poll off the instant replay opens.
+  const liveEnabled = !replayOpen && !configOpen;
+  const { forming } = useLiveForming(symbol, tf, liveEnabled);
+
   const setSelection = (next: { symbol?: Sym; tf?: Timeframe }) => {
     const p = new URLSearchParams(params);
     p.set("symbol", next.symbol ?? symbol);
@@ -88,7 +94,7 @@ export default function Chart() {
   }, [replayOpen, cursor, data.loadUpTo]);
   const shownCandles = replayOpen && cursor !== null
     ? clipToCursor(data.candles, cursor)
-    : data.candles;
+    : mergeForming(data.candles, forming);
   // Memoized: CandleChart's overlay effect re-runs on identity change of this
   // prop, so an inline replayLines(...) here would thrash price lines every render.
   const overlay = useMemo(
