@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
-import { useApi } from "../lib/api";
+import { useApi, postJson } from "../lib/api";
 import { clampBars, parseSelection } from "../lib/chartPrefs";
 import { useChartPrefs } from "../hooks/useChartPrefs";
 import { mergeForming, type Sym, type Timeframe, timeframeMs } from "../lib/candles";
@@ -262,15 +262,24 @@ export default function Chart() {
             </div>
           )}
 
-          {!replayOpen && hasBars && (
-            <CoverageRibbon
-              bars={shownCandles}
-              missing={data.missing}
-              window={[shownCandles[0]?.time_msc ?? Date.now(), shownCandles[shownCandles.length - 1]?.time_msc ?? Date.now()]}
-              tf={tf}
-              onBackfill={() => data.retry()}
-            />
-          )}
+          {!replayOpen && hasBars && (() => {
+            const coverageWindow: [number, number] = [
+              shownCandles[0]?.time_msc ?? Date.now(),
+              shownCandles[shownCandles.length - 1]?.time_msc ?? Date.now(),
+            ];
+            return (
+              <CoverageRibbon
+                bars={shownCandles}
+                missing={data.missing}
+                window={coverageWindow}
+                tf={tf}
+                onBackfill={async () => {
+                  await postJson("/api/backfill", { symbol, timeframe: tf, from_ms: coverageWindow[0], to_ms: coverageWindow[1] });
+                  data.retry();
+                }}
+              />
+            );
+          })()}
 
           {evalPause && (
             <div className="absolute inset-0 bg-black/80 flex flex-col items-center justify-center z-50 text-center">

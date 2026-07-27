@@ -22,4 +22,15 @@ describe("classifyGaps", () => {
     const segs = classifyGaps(bars, [], [0, 600_000], "M5");
     expect(segs.some((s) => s.kind === "closed")).toBe(true);
   });
+  it("marks a slot with a bar as covered even if it overlaps a missing range (live forming bar)", () => {
+    // journal live never records coverage for the still-forming bucket, so
+    // `missing` perpetually includes [current_forming_bucket, now]. The slot
+    // where the live forming bar is drawn DOES have a bar and must not be
+    // painted as an unfetched hole.
+    const bars = [bar(0)];
+    const segs = classifyGaps(bars, [[0, 300_000]], [0, 0], "M5");
+    const covering = segs.find((s) => s.from <= 0 && s.to >= 0);
+    expect(covering?.kind).toBe("covered");
+    expect(segs.some((s) => s.kind === "unfetched")).toBe(false);
+  });
 });
