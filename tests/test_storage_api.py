@@ -109,3 +109,121 @@ def test_storage_rebuild(client: TestClient):
     data = response.json()
     assert data["status"] == "ok"
     assert data["trades_rebuilt"] == 1
+
+
+def test_storage_candles_completeness(client: TestClient, db_path: Path):
+    conn = connect(db_path)
+    # Add a second coverage range with a gap: [1000, 5000] and [8000, 10000]
+    conn.execute(
+        "UPDATE candle_coverage SET to_msc = 5000 WHERE symbol = 'XAUUSDc' AND timeframe = 'M1'"
+    )
+    conn.execute(
+        "INSERT INTO candle_coverage (symbol, timeframe, from_msc, to_msc) "
+        "VALUES ('XAUUSDc', 'M1', 8000, 10000)"
+    )
+    conn.commit()
+    conn.close()
+
+    response = client.get("/api/storage/candles/completeness?symbol=XAUUSDc&tf=M1")
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["symbol"] == "XAUUSDc"
+    assert data["timeframe"] == "M1"
+    assert data["from_ms"] == 1000
+    assert data["to_ms"] == 10000
+    assert len(data["covered_ranges"]) == 2
+    assert data["covered_ranges"][0] == {"from_ms": 1000, "to_ms": 5000}
+    assert data["covered_ranges"][1] == {"from_ms": 8000, "to_ms": 10000}
+    assert len(data["gaps"]) == 1
+    assert data["gaps"][0]["from_ms"] == 5001
+    assert data["gaps"][0]["to_ms"] == 7999
+    assert "duration_hours" in data["gaps"][0]
+    assert data["total_bars"] == 1
+    assert "coverage_percent" in data
+
+
+def test_storage_candles_fetch(client: TestClient, db_path: Path):
+    payload = {
+        "symbol": "XAUUSDc",
+        "timeframe": "M1",
+        "from_ms": 20000,
+        "to_ms": 30000,
+    }
+    response = client.post("/api/storage/candles/fetch", json=payload)
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["status"] == "queued"
+    assert "request_id" in data
+    assert data["request_id"] > 0
+
+    conn = connect(db_path)
+    row = conn.execute(
+        "SELECT * FROM candle_requests WHERE id = ?", (data["request_id"],)
+    ).fetchone()
+    assert row is not None
+    assert row["symbol"] == "XAUUSDc"
+    assert row["from_msc"] == 20000
+    assert row["to_msc"] == 30000
+    conn.close()
+
+
+def test_storage_candles_fill_gaps(client: TestClient, db_path: Path):
+    conn = connect(db_path)
+    conn.execute("DELETE FROM candle_requests")
+    conn.execute(
+        "UPDATE candle_coverage SET to_msc = 5000 WHERE symbol = 'XAUUSDc' AND timeframe = 'M1'"
+    )
+    conn.execute(
+        "INSERT INTO candle_coverage (symbol, timeframe, from_msc, to_msc) "
+        "VALUES ('XAUUSDc', 'M1', 8000, 10000)"
+    )
+    conn.commit()
+    conn.close()
+
+    response = client.post("/api/storage/candles/fill-gaps", json={"symbol": "XAUUSDc", "tf": "M1"})
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["status"] == "queued"
+    assert data["requests_count"] == 1
+
+    conn = connect(db_path)
+    rows = conn.execute("SELECT * FROM candle_requests").fetchall()
+    assert len(rows) == 1
+    assert rows[0]["from_msc"] == 5001
+    assert rows[0]["to_msc"] == 7999
+    conn.close()
+
+
+def test_storage_candles_prune(client: TestClient, db_path: Path):
+    conn = connect(db_path)
+    # Insert old candle (older than 180 days, e.g. 200 days ago)
+    old_time = 1000
+    # Insert newer candle (e.g. now_ms - 1 day)
+    from journal.store.db import now_ms
+    new_time = now_ms() - 86400 * 1000
+
+    conn.execute(
+        "INSERT INTO candles (symbol, timeframe, time_msc, open, high, low, close, tick_volume) "
+        "VALUES ('XAUUSDc', 'M1', ?, 2000.0, 2005.0, 1995.0, 2002.0, 10)",
+        (new_time,),
+    )
+    conn.execute(
+        "INSERT INTO candle_coverage (symbol, timeframe, from_msc, to_msc) "
+        "VALUES ('XAUUSDc', 'M1', ?, ?)",
+        (new_time, new_time + 60000),
+    )
+    conn.commit()
+    conn.close()
+
+    response = client.post("/api/storage/candles/prune", json={"symbol": "XAUUSDc", "older_than_days": 180})
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["status"] == "ok"
+    assert data["deleted_bars"] == 1
+
+    conn = connect(db_path)
+    remaining = conn.execute("SELECT time_msc FROM candles WHERE symbol = 'XAUUSDc'").fetchall()
+    assert len(remaining) == 1
+    assert remaining[0]["time_msc"] == new_time
+    conn.close()
+
