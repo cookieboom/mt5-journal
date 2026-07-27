@@ -687,6 +687,54 @@ def create_app(db_path: str | None = None) -> FastAPI:
 
         return JSONResponse({"status": "ok", "deleted_bars": deleted_bars})
 
+    @app.get("/api/storage/candles/export")
+    def api_storage_candles_export(
+        symbol: str = Query(...),
+        tf: str | None = Query(None),
+        timeframe: str | None = Query(None),
+        from_ms: int | None = Query(None),
+        to_ms: int | None = Query(None),
+        format: str = Query("json"),
+        conn: sqlite3.Connection = Depends(get_conn),
+    ):
+        tf = tf or timeframe or "M1"
+        if not symbol:
+            return JSONResponse({"error": "symbol required"}, status_code=400)
+
+        f_ms = 0 if from_ms is None else from_ms
+        t_ms = 9999999999999 if to_ms is None else to_ms
+
+        bars = cs.load_bars(conn, symbol, tf, f_ms, t_ms)
+
+        if format.lower() == "csv":
+            lines = ["time_msc,open,high,low,close,tick_volume"]
+            for b in bars:
+                lines.append(f"{b.time_msc},{b.open},{b.high},{b.low},{b.close},{b.tick_volume}")
+            csv_text = "\n".join(lines) + "\n"
+            return Response(
+                content=csv_text,
+                media_type="text/csv",
+                headers={"Content-Disposition": f'attachment; filename="{symbol}_{tf}_candles.csv"'},
+            )
+
+        bar_dicts = [
+            {
+                "time_msc": b.time_msc,
+                "open": b.open,
+                "high": b.high,
+                "low": b.low,
+                "close": b.close,
+                "tick_volume": b.tick_volume,
+            }
+            for b in bars
+        ]
+        return JSONResponse({
+            "symbol": symbol,
+            "timeframe": tf,
+            "count": len(bar_dicts),
+            "bars": bar_dicts,
+        })
+
     # --------------------------------------------------------------- SPA (React)
     # The built SPA is the ONLY UI (Jinja retired, Phase 5). Assets mount at
     # /assets when a build exists; a catch-all — registered LAST — returns the SPA

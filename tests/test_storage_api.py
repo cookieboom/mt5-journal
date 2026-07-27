@@ -227,3 +227,37 @@ def test_storage_candles_prune(client: TestClient, db_path: Path):
     assert remaining[0]["time_msc"] == new_time
     conn.close()
 
+
+def test_storage_candles_export_csv_and_json(client: TestClient, db_path: Path):
+    # Test JSON export format (default format)
+    response_json = client.get("/api/storage/candles/export?symbol=XAUUSDc&tf=M1&format=json")
+    assert response_json.status_code == 200, response_json.text
+    data = response_json.json()
+    assert data["symbol"] == "XAUUSDc"
+    assert data["timeframe"] == "M1"
+    assert data["count"] == 1
+    assert len(data["bars"]) == 1
+    bar = data["bars"][0]
+    assert bar["time_msc"] == 1000
+    assert bar["open"] == 2000.0
+    assert bar["high"] == 2005.0
+    assert bar["low"] == 1995.0
+    assert bar["close"] == 2002.0
+    assert bar["tick_volume"] == 10
+
+    # Test CSV export format
+    response_csv = client.get("/api/storage/candles/export?symbol=XAUUSDc&tf=M1&format=csv")
+    assert response_csv.status_code == 200, response_csv.text
+    assert "text/csv" in response_csv.headers["content-type"]
+    assert response_csv.headers["content-disposition"] == 'attachment; filename="XAUUSDc_M1_candles.csv"'
+    csv_lines = response_csv.text.strip().splitlines()
+    assert len(csv_lines) == 2
+    assert csv_lines[0] == "time_msc,open,high,low,close,tick_volume"
+    assert csv_lines[1] == "1000,2000.0,2005.0,1995.0,2002.0,10"
+
+    # Test query params: timeframe alias and from_ms / to_ms filtering out of range
+    response_empty = client.get("/api/storage/candles/export?symbol=XAUUSDc&timeframe=M1&from_ms=5000&to_ms=10000&format=json")
+    assert response_empty.status_code == 200
+    assert response_empty.json()["count"] == 0
+
+
