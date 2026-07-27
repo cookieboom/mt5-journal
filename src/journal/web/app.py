@@ -204,6 +204,13 @@ def create_app(db_path: str | None = None) -> FastAPI:
             return JSONResponse({"error": str(e)}, status_code=400)
         return JSONResponse(payload)
 
+    @app.get("/api/coverage")
+    def api_coverage(
+        symbol: str, timeframe: str, from_ms: int, to_ms: int,
+        conn: sqlite3.Connection = Depends(get_conn),
+    ):
+        return JSONResponse(api.coverage_payload(conn, symbol, timeframe, from_ms, to_ms))
+
     @app.post("/api/watch")
     def api_watch(body=Body(...), conn: sqlite3.Connection = Depends(get_conn)):
         """Web upserts a demand-driven live watch; `journal live` serves it."""

@@ -418,6 +418,16 @@ def test_register_watch_rejects_bad_timeframe(conn):
         api.register_watch(conn, "XAUUSDc", "M7")
 
 
+def test_coverage_payload_reports_covered_and_missing(conn):
+    from journal.web import api
+    from journal.store import candles_store as cs
+    cs.record_coverage(conn, "XAUUSDc", "M5", 0, 300_000)
+    conn.commit()
+    p = api.coverage_payload(conn, "XAUUSDc", "M5", 0, 600_000)
+    assert [0, 300_000] in p["covered"]
+    assert [300_001, 600_000] in p["missing"]
+
+
 def test_live_candle_payload_null_when_no_forming(conn):
     from journal.web import api
     p = api.live_candle_payload(conn, "XAUUSDc", "M5", now_msc=1_700_000_000_000)

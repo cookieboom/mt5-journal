@@ -201,3 +201,15 @@ def candles_payload(
         "missing": [[lo, hi] for lo, hi in missing],
         "pending": pending,
     }
+
+
+def coverage_payload(conn: sqlite3.Connection, symbol: str, timeframe: str,
+                     from_ms: int, to_ms: int) -> dict:
+    """Covered vs still-missing ranges for [from_ms, to_ms] — feeds the health
+    panel/ribbon over an explicit period. Pure DB read, no bridge."""
+    covered = cs.read_coverage(conn, symbol, timeframe)
+    missing = cs.missing_ranges(covered, (from_ms, to_ms))
+    return {
+        "covered": [[lo, hi] for lo, hi in covered if hi >= from_ms and lo <= to_ms],
+        "missing": [[lo, hi] for lo, hi in missing],
+    }
