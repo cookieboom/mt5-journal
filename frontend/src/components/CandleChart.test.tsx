@@ -36,14 +36,19 @@ vi.mock("lightweight-charts", async () => {
 });
 
 const DEFAULT_SETTINGS: ChartSettings = {
+  version: 1,
   chartType: "candle",
   theme: "dark",
   grid: true,
   crosshair: "normal",
-  priceScale: "normal",
+  priceScale: "linear",
   autoScale: true,
   lastPriceLine: true,
   liveOverlay: true,
+  defaultSymbol: "XAUUSDc",
+  defaultTimeframe: "M5",
+  initialBars: 300,
+  maxBars: 3000,
   colors: { up: "#34d399", down: "#fb7185", wick: "#9a97c4" },
 };
 

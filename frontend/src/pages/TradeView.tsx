@@ -9,7 +9,8 @@ import AnnotationForm from "../components/AnnotationForm";
 import TagEditor from "../components/TagEditor";
 import { money, rmult, price, wib, dur } from "../lib/format";
 import { tradeLines, navNeighbors, pickTf } from "../lib/tradeView";
-import { timeframeMs, type Sym } from "../lib/candles";
+import type { SeriesMarker, Time } from "lightweight-charts";
+import { timeframeMs, toSeconds, type Sym } from "../lib/candles";
 import { clipToCursor } from "../lib/replay";
 
 function Fact({ label, children }: { label: string; children: React.ReactNode }) {
@@ -46,6 +47,39 @@ export default function TradeView() {
   }, [t?.close_time_msc, tf, chart.loadUpTo]);
 
   const overlay = useMemo(() => (t ? tradeLines(t) : undefined), [t]);
+
+  const markers = useMemo(() => {
+    if (!t) return undefined;
+    const m: SeriesMarker<Time>[] = [];
+    const isBuy = t.direction.toLowerCase() === "buy";
+    const upColor = settings.colors.up;
+    const downColor = settings.colors.down;
+
+    // Entry Marker
+    m.push({
+      time: toSeconds(t.open_time_msc) as Time,
+      position: isBuy ? "belowBar" : "aboveBar",
+      color: isBuy ? upColor : downColor,
+      shape: isBuy ? "arrowUp" : "arrowDown",
+    });
+
+    // Exit Marker
+    if (t.close_time_msc != null) {
+      m.push({
+        time: toSeconds(t.close_time_msc) as Time,
+        position: isBuy ? "aboveBar" : "belowBar",
+        color: isBuy ? downColor : upColor,
+        shape: isBuy ? "arrowDown" : "arrowUp",
+      });
+    }
+
+    return m;
+  }, [t, settings.colors]);
+
+  const fitToRange = useMemo(() => {
+    if (!t) return undefined;
+    return { startMs: t.open_time_msc, endMs: t.close_time_msc ?? t.open_time_msc };
+  }, [t]);
 
   // --- Optional playback reveal (Task 10) -------------------------------
   // Pure visual reveal: no evaluator, no fills. cursor === null means "show
@@ -96,7 +130,9 @@ export default function TradeView() {
             <CandleChart symbol={t.symbol as Sym} tf={tf} settings={settings}
               candles={shown} overlayLines={overlay} lastBarMs={chart.lastBarMs}
               onHover={() => {}} onNowVisibleChange={() => {}} onRequestOlder={chart.loadOlder}
-              live={null} nowVisible={false} />
+              live={null} nowVisible={false}
+              fitToRange={fitToRange}
+              markers={markers} />
           ) : (
             <div className="glass h-full flex items-center justify-center text-muted text-sm">
               {chart.status === "gaveup"

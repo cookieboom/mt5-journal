@@ -3,6 +3,14 @@ import { MemoryRouter, Routes, Route, useLocation } from "react-router-dom";
 import { it, expect, vi, beforeEach } from "vitest";
 import TradeView from "./TradeView";
 
+export const candleChartMock = vi.fn();
+vi.mock("../components/CandleChart", () => ({
+  default: (props: any) => {
+    candleChartMock(props);
+    return <div data-testid="candle-chart" />;
+  },
+}));
+
 // jsdom has no matchMedia/canvas text metrics — lightweight-charts (used by
 // CandleChart) needs both to size its price axis. Stub minimally so the real
 // chart can mount without throwing; we don't assert anything about its pixels.
@@ -166,3 +174,18 @@ it("play reveals bars up to a moving cursor", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Reset" }));
   expect(await screen.findByTestId("bar-count")).toHaveTextContent("3"); // back to full window
 });
+
+it("computes fitToRange and markers and passes them to CandleChart", async () => {
+  render(<MemoryRouter initialEntries={["/trades/2/view"]}>
+    <Routes><Route path="/trades/:id/view" element={<TradeView />} /></Routes>
+  </MemoryRouter>);
+  await screen.findByText("XAUUSD");
+  expect(candleChartMock).toHaveBeenCalled();
+  const lastCallProps = candleChartMock.mock.calls[candleChartMock.mock.calls.length - 1][0];
+  expect(lastCallProps.fitToRange).toEqual({ startMs: 10_000, endMs: 20_000 });
+  expect(lastCallProps.markers).toEqual([
+    { time: 10, position: "belowBar", color: "#34d399", shape: "arrowUp" },
+    { time: 20, position: "aboveBar", color: "#fb7185", shape: "arrowDown" },
+  ]);
+});
+
