@@ -1,5 +1,5 @@
 import {
-  forwardRef, useEffect, useImperativeHandle, useRef,
+  forwardRef, useEffect, useImperativeHandle, useRef, useState, useCallback,
 } from "react";
 import {
   createChart, CandlestickSeries, BarSeries, LineSeries, AreaSeries,
@@ -11,6 +11,11 @@ import type { ChartSettings } from "../lib/chartPrefs";
 import type { Candle, HoverBar, LiveData } from "../lib/types";
 import { wib } from "../lib/format";
 import type { ChartHandle } from "../pages/Chart";
+import MeasureOverlay, { type ProjectedPoint } from "./MeasureOverlay";
+import {
+  measureReducer, computeMetrics, isDoubleClickHold, IDLE,
+  type MeasureState, type Point,
+} from "../lib/measure";
 
 const DARK = {
   bg: "transparent", text: "#9a97c4", grid: "rgba(255,255,255,0.06)",
@@ -74,6 +79,24 @@ const CandleChart = forwardRef<ChartHandle, {
   const chartTypeFirstRun = useRef(true);
   const cbs = useRef(props);
   cbs.current = props;
+
+  const [measure, setMeasure] = useState<MeasureState>(IDLE);
+  const lastUp = useRef<{ ms: number; x: number; y: number } | null>(null);
+  const dragging = useRef(false);
+
+  // Pointer pixel (relative to the pane) → data coordinates, using the current
+  // series/timeScale. candles give a gap-aware bar time from the logical index.
+  const toPoint = useCallback((px: number, py: number): Point | null => {
+    const c = chart.current, s = series.current;
+    if (!c || !s) return null;
+    const price = s.coordinateToPrice(py);
+    const logical = c.timeScale().coordinateToLogical(px);
+    if (price === null || logical === null) return null;
+    const cand = cbs.current.candles;
+    const idx = Math.max(0, Math.min(cand.length - 1, Math.round(logical as number)));
+    const barTimeMs = cand.length ? cand[idx].time_msc : 0;
+    return { price: price as number, logical: logical as number, barTimeMs };
+  }, []);
 
   // Create the chart once.
   useEffect(() => {
@@ -142,6 +165,73 @@ const CandleChart = forwardRef<ChartHandle, {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Double-click-then-hold measurement gesture. Pure logic lives in measure.ts;
+  // here we only translate DOM events ↔ chart coordinates and suppress panning
+  // while dragging so the drag measures instead of scrolling the chart.
+  useEffect(() => {
+    const node = el.current;
+    const c = chart.current;
+    if (!node || !c) return;
+
+    const rel = (e: PointerEvent) => {
+      const r = node.getBoundingClientRect();
+      return { x: e.clientX - r.left, y: e.clientY - r.top };
+    };
+
+    const onDown = (e: PointerEvent) => {
+      const { x, y } = rel(e);
+      const prev = lastUp.current;
+      if (prev && isDoubleClickHold(prev.ms, prev.x, prev.y, e.timeStamp, x, y)) {
+        const anchor = toPoint(x, y);
+        if (!anchor) return;
+        dragging.current = true;
+        c.applyOptions({ handleScroll: false, handleScale: false });
+        setMeasure((s) => measureReducer(s, { t: "start", anchor }));
+        e.preventDefault();
+      } else {
+        // A plain press clears any frozen measurement.
+        setMeasure((s) => (s.phase === "frozen" ? measureReducer(s, { t: "clear" }) : s));
+      }
+    };
+
+    const onMove = (e: PointerEvent) => {
+      if (!dragging.current) return;
+      const { x, y } = rel(e);
+      const cur = toPoint(x, y);
+      if (cur) setMeasure((s) => measureReducer(s, { t: "move", cursor: cur }));
+    };
+
+    const onUp = (e: PointerEvent) => {
+      const { x, y } = rel(e);
+      lastUp.current = { ms: e.timeStamp, x, y };
+      if (dragging.current) {
+        dragging.current = false;
+        c.applyOptions({ handleScroll: true, handleScale: true });
+        setMeasure((s) => measureReducer(s, { t: "release" }));
+      }
+    };
+
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMeasure((s) => measureReducer(s, { t: "clear" }));
+    };
+
+    node.addEventListener("pointerdown", onDown);
+    node.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      node.removeEventListener("pointerdown", onDown);
+      node.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [toPoint]);
+
+  // Data identity changed → the stored data coordinates may no longer line up.
+  useEffect(() => {
+    setMeasure((s) => (s.phase === "idle" ? s : IDLE));
+  }, [props.symbol, props.tf, props.settings.chartType]);
 
   // Re-apply live-appliable settings when they change (no full re-create; chart
   // type is handled by its own recreate effect below).
@@ -242,7 +332,35 @@ const CandleChart = forwardRef<ChartHandle, {
     jumpToNow: () => chart.current?.timeScale().scrollToRealTime(),
   }));
 
-  return <div ref={el} className="w-full h-full" />;
+  const theme = props.settings.theme === "light" ? LIGHT : DARK;
+  const project = (p: Point): ProjectedPoint | null => {
+    const c = chart.current, s = series.current;
+    if (!c || !s) return null;
+    const x = c.timeScale().logicalToCoordinate(p.logical as never);
+    const y = s.priceToCoordinate(p.price);
+    if (x === null || y === null) return null;
+    return { x: x as number, y: y as number };
+  };
+  let overlay: JSX.Element | null = null;
+  if (measure.phase !== "idle") {
+    const a = project(measure.anchor);
+    const cur = project(measure.cursor);
+    if (a && cur) {
+      overlay = (
+        <MeasureOverlay
+          anchor={a} cursor={cur}
+          metrics={computeMetrics(measure.anchor, measure.cursor)}
+          upColor={theme.up} downColor={theme.down}
+        />
+      );
+    }
+  }
+
+  return (
+    <div ref={el} className="w-full h-full relative">
+      {overlay}
+    </div>
+  );
 });
 
 export default CandleChart;
