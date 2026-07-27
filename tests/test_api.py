@@ -403,6 +403,21 @@ def test_training_session_create_and_summary(conn):
     assert summary["n"] == 0 and summary["total_r"] == 0
 
 
+def test_register_watch_makes_it_active(conn):
+    from journal.web import api
+    from journal.store import live_store as ls
+    out = api.register_watch(conn, "XAUUSDc", "M5", ttl_ms=30_000, now_msc=1_700_000_000_000)
+    assert out == {"ok": True}
+    assert ls.active_watches(conn, 1_700_000_010_000) == [("XAUUSDc", "M5")]
+
+
+def test_register_watch_rejects_bad_timeframe(conn):
+    import pytest
+    from journal.web import api
+    with pytest.raises(ValueError):
+        api.register_watch(conn, "XAUUSDc", "M7")
+
+
 def test_training_routes_smoke(tmp_path):
     from fastapi.testclient import TestClient
     from journal.web.app import create_app

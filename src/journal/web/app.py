@@ -198,6 +198,14 @@ def create_app(db_path: str | None = None) -> FastAPI:
             return JSONResponse({"error": str(e)}, status_code=400)
         return JSONResponse(payload)
 
+    @app.post("/api/watch")
+    def api_watch(body=Body(...), conn: sqlite3.Connection = Depends(get_conn)):
+        """Web upserts a demand-driven live watch; `journal live` serves it."""
+        try:
+            return JSONResponse(api.register_watch(conn, body["symbol"], body["timeframe"]))
+        except (KeyError, ValueError) as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+
     @app.get("/api/chart/prefs")
     def api_get_chart_prefs(conn: sqlite3.Connection = Depends(get_conn)):
         """Chart settings blob, cross-browser. `prefs` is null until first save;

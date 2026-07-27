@@ -140,6 +140,20 @@ def trade_detail_payload(conn: sqlite3.Connection, position_id: int) -> dict | N
     return None if ctx is None else to_jsonable(ctx)
 
 
+def register_watch(conn: sqlite3.Connection, symbol: str, timeframe: str, *,
+                   ttl_ms: int = 30_000, now_msc: int | None = None) -> dict:
+    """Web-side: upsert a demand-driven live watch. `journal live` serves it."""
+    from ..adapter.base import TIMEFRAMES
+    from ..store import live_store
+    from ..store.db import now_ms
+
+    if timeframe not in TIMEFRAMES:
+        raise ValueError(f"unknown timeframe {timeframe!r}; expected one of {list(TIMEFRAMES)}")
+    now = now_ms() if now_msc is None else now_msc
+    live_store.upsert_watch(conn, symbol, timeframe, now, ttl_ms)
+    return {"ok": True}
+
+
 def candles_payload(
     conn: sqlite3.Connection, symbol: str, timeframe: str,
     from_ms: int, to_ms: int, *, max_bars: int = 5000,
