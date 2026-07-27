@@ -103,6 +103,20 @@ def live_status_payload(
     return {"live": age < stale_ms, "beat_msc": beat, "age_ms": age}
 
 
+def live_candle_payload(conn: sqlite3.Connection, symbol: str, timeframe: str, *,
+                        now_msc: int | None = None) -> dict:
+    """The forming bar (or None) plus liveness — the FE poll for a live chart."""
+    from ..store import live_store
+
+    status = live_status_payload(conn, now_msc=now_msc)
+    c = live_store.read_forming(conn, symbol, timeframe)
+    forming = None if c is None else {
+        "time_msc": c.time_msc, "o": c.open, "h": c.high, "l": c.low,
+        "c": c.close, "v": c.tick_volume,
+    }
+    return {"forming": forming, "beat_msc": status["beat_msc"], "live": status["live"]}
+
+
 def commands_payload(conn: sqlite3.Connection) -> dict:
     """Header + the trade-command audit log (newest first) for /api/commands.
     Wraps `views.commands_context`; the retcode NAME (never the bare int) and any

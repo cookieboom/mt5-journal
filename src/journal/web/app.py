@@ -97,6 +97,12 @@ def create_app(db_path: str | None = None) -> FastAPI:
     def api_live_status(conn: sqlite3.Connection = Depends(get_conn)):
         return JSONResponse(api.live_status_payload(conn))
 
+    @app.get("/api/candles/live")
+    def api_candles_live(
+        symbol: str, timeframe: str, conn: sqlite3.Connection = Depends(get_conn)
+    ):
+        return JSONResponse(api.live_candle_payload(conn, symbol, timeframe))
+
     @app.get("/api/commands")
     def api_commands(conn: sqlite3.Connection = Depends(get_conn)):
         try:

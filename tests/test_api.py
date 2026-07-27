@@ -418,6 +418,27 @@ def test_register_watch_rejects_bad_timeframe(conn):
         api.register_watch(conn, "XAUUSDc", "M7")
 
 
+def test_live_candle_payload_null_when_no_forming(conn):
+    from journal.web import api
+    p = api.live_candle_payload(conn, "XAUUSDc", "M5", now_msc=1_700_000_000_000)
+    assert p["forming"] is None and p["live"] is False
+
+
+def test_live_candle_payload_returns_forming_and_liveness(conn):
+    from journal.web import api
+    from journal.store import live_store as ls
+    from journal.adapter.base import Candle
+    ls.beat(conn, 1_700_000_000_000)
+    ls.upsert_forming(conn, "XAUUSDc", "M5",
+                      Candle(time_msc=1_700_000_040_000, open=1, high=2, low=0.5,
+                             close=1.5, tick_volume=9, spread=2, real_volume=0),
+                      1_700_000_040_000)
+    p = api.live_candle_payload(conn, "XAUUSDc", "M5", now_msc=1_700_000_003_000)
+    assert p["live"] is True
+    assert p["forming"] == {"time_msc": 1_700_000_040_000, "o": 1, "h": 2,
+                            "l": 0.5, "c": 1.5, "v": 9}
+
+
 def test_training_routes_smoke(tmp_path):
     from fastapi.testclient import TestClient
     from journal.web.app import create_app
