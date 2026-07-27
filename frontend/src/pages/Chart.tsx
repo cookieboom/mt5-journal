@@ -16,6 +16,7 @@ import LiveDot from "../components/LiveDot";
 import CandleChart from "../components/CandleChart";
 import CoverageRibbon from "../components/CoverageRibbon";
 import ChartInfoPanel from "../components/ChartInfoPanel";
+import DataHealthPanel from "../components/DataHealthPanel";
 import ReplayConfigModal from "../components/ReplayConfigModal";
 import ReplayControls from "../components/ReplayControls";
 import ReplayOrderTicket from "../components/ReplayOrderTicket";
@@ -197,6 +198,7 @@ export default function Chart() {
               missing={data.missing}
               window={[shownCandles[0]?.time_msc ?? Date.now(), shownCandles[shownCandles.length - 1]?.time_msc ?? Date.now()]}
               tf={tf}
+              onBackfill={() => data.retry()}
             />
           )}
         </div>
@@ -214,17 +216,27 @@ export default function Chart() {
               <ReplaySummary title="Kumulatif" s={career ?? null} />
             </>
           ) : (
-            <div className="glass w-full p-3">
-              <ChartInfoPanel
-                symbol={symbol}
+            <>
+              <div className="glass w-full p-3">
+                <ChartInfoPanel
+                  symbol={symbol}
+                  tf={tf}
+                  candles={data.candles}
+                  hovered={hovered}
+                  live={live ?? null}
+                  currency={currency}
+                  chartType={settings.chartType}
+                />
+              </div>
+              <DataHealthPanel
+                bars={shownCandles}
+                missing={data.missing}
+                window={[shownCandles[0]?.time_msc ?? Date.now(), shownCandles[shownCandles.length - 1]?.time_msc ?? Date.now()]}
                 tf={tf}
-                candles={data.candles}
-                hovered={hovered}
-                live={live ?? null}
-                currency={currency}
-                chartType={settings.chartType}
+                symbol={symbol}
+                onBackfilled={() => data.retry()}
               />
-            </div>
+            </>
           )}
         </aside>
       </div>
