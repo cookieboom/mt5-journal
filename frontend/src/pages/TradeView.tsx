@@ -55,9 +55,18 @@ export default function TradeView() {
     const upColor = settings.colors.up;
     const downColor = settings.colors.down;
 
+    const findTime = (ms: number) => {
+      const c = chart.candles;
+      if (!c.length) return toSeconds(ms) as Time;
+      for (let i = c.length - 1; i >= 0; i--) {
+        if (c[i].time_msc <= ms) return toSeconds(c[i].time_msc) as Time;
+      }
+      return toSeconds(c[0].time_msc) as Time;
+    };
+
     // Entry Marker
     m.push({
-      time: toSeconds(t.open_time_msc) as Time,
+      time: findTime(t.open_time_msc),
       position: isBuy ? "belowBar" : "aboveBar",
       color: isBuy ? upColor : downColor,
       shape: isBuy ? "arrowUp" : "arrowDown",
@@ -66,7 +75,7 @@ export default function TradeView() {
     // Exit Marker
     if (t.close_time_msc != null) {
       m.push({
-        time: toSeconds(t.close_time_msc) as Time,
+        time: findTime(t.close_time_msc),
         position: isBuy ? "aboveBar" : "belowBar",
         color: isBuy ? downColor : upColor,
         shape: isBuy ? "arrowDown" : "arrowUp",
@@ -74,7 +83,7 @@ export default function TradeView() {
     }
 
     return m;
-  }, [t, settings.colors]);
+  }, [t, settings.colors, chart.candles]);
 
   const fitToRange = useMemo(() => {
     if (!t) return undefined;

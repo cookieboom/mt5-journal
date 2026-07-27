@@ -185,7 +185,7 @@ it("computes fitToRange and markers and passes them to CandleChart", async () =>
   expect(lastCallProps.fitToRange).toEqual({ startMs: 10_000, endMs: 20_000 });
   expect(lastCallProps.markers).toEqual([
     { time: 10, position: "belowBar", color: "#34d399", shape: "arrowUp" },
-    { time: 20, position: "aboveBar", color: "#fb7185", shape: "arrowDown" },
+    { time: 10, position: "aboveBar", color: "#fb7185", shape: "arrowDown" },
   ]);
 });
 

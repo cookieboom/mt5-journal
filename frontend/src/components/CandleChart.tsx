@@ -345,16 +345,24 @@ const CandleChart = forwardRef<ChartHandle, {
     }
   }, [props.markers, props.settings.chartType]);
 
+  const lastFittedTrade = useRef<{ startMs: number; endMs: number; fullyFitted: boolean } | null>(null);
+
   // Smart fit auto-focus
   useEffect(() => {
     if (!chart.current || !series.current || !props.fitToRange || props.candles.length === 0) return;
     const { startMs, endMs } = props.fitToRange;
+
+    const prev = lastFittedTrade.current;
+    if (prev && prev.startMs === startMs && prev.endMs === endMs && prev.fullyFitted) {
+      return;
+    }
 
     // Find the logical index (array index) of the start and end bars
     let startIndex = props.candles.findIndex(c => c.time_msc >= startMs);
     if (startIndex === -1) startIndex = props.candles.length - 1;
 
     let endIndex = props.candles.findIndex(c => c.time_msc >= endMs);
+    const fullyFitted = endIndex !== -1;
     if (endIndex === -1) endIndex = props.candles.length - 1;
 
     // Pad context: 10 bars before entry, 5 bars after exit
@@ -374,6 +382,8 @@ const CandleChart = forwardRef<ChartHandle, {
       from: paddedStart,
       to: paddedEnd,
     });
+
+    lastFittedTrade.current = { startMs, endMs, fullyFitted };
   }, [props.fitToRange, props.candles.length, props.settings.chartType]);
 
   // Live SL/TP/entry overlay — only when the current symbol has open positions
