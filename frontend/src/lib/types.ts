@@ -220,3 +220,6 @@ export interface PriceLineSpec {
 }
 
 export type LiveStatus = { live: boolean; beat_msc: number | null; age_ms: number | null };
+
+// /api/candles/live response — the single realtime forming bar for a symbol+tf.
+export type LiveCandle = { forming: Candle | null; beat_msc: number | null; live: boolean };

@@ -83,6 +83,18 @@ export function liveLines(pos: LivePosition): { price: number; color: string; ti
   return out;
 }
 
+// Merge the single realtime forming bar into a sorted candle array: replace the
+// last bar if it shares time_msc, append if it is newer, ignore if older (a late
+// poll must never rewrite history). Returns a new array; never mutates input.
+export function mergeForming(candles: Candle[], forming: Candle | null): Candle[] {
+  if (!forming) return candles;
+  if (candles.length === 0) return [forming];
+  const last = candles[candles.length - 1];
+  if (forming.time_msc === last.time_msc) return [...candles.slice(0, -1), forming];
+  if (forming.time_msc > last.time_msc) return [...candles, forming];
+  return candles;
+}
+
 export async function fetchCandles(
   symbol: string, tf: Timeframe, fromMs: number, toMs: number,
 ): Promise<CandlesResponse> {
