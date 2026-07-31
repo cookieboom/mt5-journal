@@ -134,16 +134,24 @@ const CandleChart = forwardRef<ChartHandle, {
   } | null => {
     const s = series.current;
     if (!s) return null;
+    let best: {
+      positionId: number; kind: LineKind; price: number;
+      direction: "buy" | "sell"; entryPrice: number | null;
+    } | null = null;
+    let bestDist = Infinity;
     for (const meta of linesMeta.current) {
       const py = s.priceToCoordinate(meta.line.options().price);
-      if (py !== null && Math.abs((py as number) - y) <= HIT_THRESHOLD_PX) {
-        return {
+      if (py === null) continue;
+      const dist = Math.abs((py as number) - y);
+      if (dist <= HIT_THRESHOLD_PX && dist < bestDist) {
+        bestDist = dist;
+        best = {
           positionId: meta.positionId, kind: meta.kind, price: meta.line.options().price,
           direction: meta.direction, entryPrice: meta.entryPrice,
         };
       }
     }
-    return null;
+    return best;
   }, []);
 
   // Always restore pan/zoom and reset drag state, regardless of which path
@@ -230,6 +238,8 @@ const CandleChart = forwardRef<ChartHandle, {
       chart.current = null;
       series.current = null;
       priceLines.current = [];
+      linesMeta.current = [];
+      ghostLine.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -426,6 +436,8 @@ const CandleChart = forwardRef<ChartHandle, {
     if (!c || !series.current) return;
     for (const pl of priceLines.current) series.current.removePriceLine(pl);
     priceLines.current = [];
+    linesMeta.current = [];
+    ghostLine.current = null;
     c.removeSeries(series.current);
     markersPrimitive.current = null;
     const s = addSeriesFor(c, props.settings);

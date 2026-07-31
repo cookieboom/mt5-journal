@@ -479,7 +479,11 @@ def create_app(db_path: str | None = None) -> FastAPI:
     @app.get("/api/training/sessions/{session_id}/stats")
     def api_training_session_stats(session_id: int,
                                    conn: sqlite3.Connection = Depends(get_conn)):
-        return JSONResponse(api.to_jsonable(training.get_session_stats(conn, session_id)))
+        try:
+            out = training.get_session_stats(conn, session_id)
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        return JSONResponse(api.to_jsonable(out))
 
     # -------------------------------------------------------- storage & maintenance
     @app.get("/api/storage/overview")

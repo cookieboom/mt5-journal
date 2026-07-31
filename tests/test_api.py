@@ -483,3 +483,5 @@ def test_training_routes_smoke(tmp_path):
     assert client.get("/api/training/summary").json()["n"] == 0
     assert client.delete(f"/api/training/sessions/{sid}").json()["ok"] is True
     assert client.get(f"/api/training/sessions/{sid}").status_code == 404
+    r = client.get(f"/api/training/sessions/{sid}/stats")
+    assert r.status_code == 400, r.text

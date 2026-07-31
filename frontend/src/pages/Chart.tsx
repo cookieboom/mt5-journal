@@ -180,7 +180,7 @@ export default function Chart() {
     }
     const kind: "sl" | "tp" = change.sl !== undefined ? "sl" : "tp";
     const price = (change.sl ?? change.tp)!;
-    setSltpDialog({ positionId, kind, price, removing: price === 0 });
+    setSltpDialog({ positionId, kind, price, removing: Math.abs(price) < 1e-9 });
   }, [replayOpen, replay]);
   const currentClose = shownCandles.length ? shownCandles[shownCandles.length - 1].c : null;
   const atEnd = !!replay.session && cursor !== null && cursor >= replay.session.range_end_msc;

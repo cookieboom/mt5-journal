@@ -8,10 +8,22 @@ it("pre-fills the dragged price and confirms with it unchanged", () => {
     onConfirm={onConfirm} onCancel={() => {}} />);
 
   const input = screen.getByLabelText(/SL/i) as HTMLInputElement;
-  expect(input.value).toBe("1900.5");
+  // Pre-fill is rounded to 5 decimals (matches ghostTitle's convention) —
+  // the raw drag value never had this many trailing zeros, but the
+  // resulting numeric value round-trips to the same price.
+  expect(input.value).toBe("1900.50000");
 
   fireEvent.click(screen.getByText(/konfirmasi/i));
   expect(onConfirm).toHaveBeenCalledWith(1900.5);
+});
+
+it("rounds an unrounded drag price to 5 decimals for the pre-fill", () => {
+  const onConfirm = vi.fn();
+  render(<SltpConfirmDialog positionId={5} kind="sl" price={2403.7561278343201}
+    onConfirm={onConfirm} onCancel={() => {}} />);
+
+  const input = screen.getByLabelText(/SL/i) as HTMLInputElement;
+  expect(input.value).toBe("2403.75613");
 });
 
 it("sends the edited value, not the original drag value", () => {
@@ -26,11 +38,12 @@ it("sends the edited value, not the original drag value", () => {
   expect(onConfirm).toHaveBeenCalledWith(1955.25);
 });
 
-it("shows removal copy and disables the price field when removing", () => {
+it("shows removal copy and omits the price field when removing", () => {
   render(<SltpConfirmDialog positionId={5} kind="sl" price={0} removing
     onConfirm={() => {}} onCancel={() => {}} />);
 
   expect(screen.getByText(/tanpa stop-loss/i)).toBeTruthy();
+  expect(screen.queryByLabelText(/SL/i)).toBeNull();
 });
 
 it("calls onCancel and never onConfirm when Batal is clicked", () => {

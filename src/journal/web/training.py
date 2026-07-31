@@ -304,6 +304,9 @@ def get_session_stats(conn: sqlite3.Connection, session_id: int) -> dict:
     """SL/TP hit statistics for a training session. Lazily initializes the
     stats row on first read (a session created before this feature existed
     has none yet)."""
+    if ts.get_session(conn, session_id) is None:
+        raise ValueError(f"no training session {session_id}")
+
     stats = conn.execute(
         "SELECT * FROM training_session_stats WHERE session_id = ?", (session_id,)
     ).fetchone()

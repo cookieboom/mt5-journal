@@ -196,6 +196,11 @@ def test_open_position_buy_sl_above_entry_raises(conn):
 # ---------------------------------------------------------------- session stats tests
 
 
+def test_get_session_stats_nonexistent_session_raises(conn):
+    with pytest.raises(ValueError, match="no training session"):
+        training.get_session_stats(conn, 99999)
+
+
 def test_get_session_stats_initializes_if_missing(conn):
     session_id = _create_test_session(conn)
 

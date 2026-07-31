@@ -9,7 +9,12 @@ export default function SltpConfirmDialog(props: {
   onConfirm: (price: number) => void;
   onCancel: () => void;
 }) {
-  const [value, setValue] = useState(String(props.price));
+  // props.price originates from chart.priceToCoordinate/coordinateToPrice's
+  // unrounded linear pixel->price mapping — round the initial pre-fill to 5
+  // decimals (matches lib/sltpDrag.ts's ghostTitle convention for the same
+  // kind of value). Only the initial value is rounded; edits afterward are
+  // untouched.
+  const [value, setValue] = useState(props.price.toFixed(5));
   const [fieldError, setFieldError] = useState<string | null>(null);
   const label = props.kind === "sl" ? "SL" : "TP";
 
