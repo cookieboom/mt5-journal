@@ -435,6 +435,17 @@ CREATE INDEX IF NOT EXISTS idx_training_positions_session
 CREATE INDEX IF NOT EXISTS idx_training_positions_status
     ON training_positions (status);
 
+-- Session-level SL/TP hit-rate stats (migration 008). 0 rows for a fresh DB;
+-- get_session_stats() lazily creates a row on first read.
+CREATE TABLE IF NOT EXISTS training_session_stats (
+  session_id INTEGER PRIMARY KEY REFERENCES training_sessions(id) ON DELETE CASCADE,
+  total_closed INTEGER NOT NULL DEFAULT 0,
+  sl_hits INTEGER NOT NULL DEFAULT 0,
+  tp_hits INTEGER NOT NULL DEFAULT 0,
+  manual_closes INTEGER NOT NULL DEFAULT 0,
+  updated_at_msc INTEGER NOT NULL
+);
+
 -- ---------------------------------------------------------------- live monitor (Spec C)
 
 -- Single-row liveness beacon. `journal live` overwrites beat_msc every cycle.

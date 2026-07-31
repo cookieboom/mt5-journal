@@ -68,9 +68,9 @@ def _make_v1(path) -> None:
 # ------------------------------------------------------------------ version
 
 
-def test_schema_version_is_7():
-    """Spec C adds live_heartbeat/live_watches/live_candles (migration 007)."""
-    assert SCHEMA_VERSION == 7
+def test_schema_version_is_8():
+    """Advanced SL/TP adds training_session_stats (migration 008)."""
+    assert SCHEMA_VERSION == 8
 
 
 def test_fresh_db_has_training_tables(tmp_path):
@@ -91,6 +91,17 @@ def test_fresh_db_has_candle_store_tables(tmp_path):
             "SELECT name FROM sqlite_master WHERE type='table'"
         ).fetchall()}
         assert {"candle_coverage", "candle_requests"} <= names
+    finally:
+        conn.close()
+
+
+def test_fresh_db_has_training_session_stats_table(tmp_path):
+    conn = connect(tmp_path / "fresh.db")
+    try:
+        cols = {r[1] for r in conn.execute(
+            "PRAGMA table_info(training_session_stats)").fetchall()}
+        assert cols == {"session_id", "total_closed", "sl_hits", "tp_hits",
+                        "manual_closes", "updated_at_msc"}
     finally:
         conn.close()
 
@@ -173,7 +184,7 @@ def test_migrate_reports_what_it_applied(tmp_path):
     conn.row_factory = sqlite3.Row
     try:
         applied = migrate(conn)
-        assert applied == [2, 3, 4, 5, 6, 7]
+        assert applied == [2, 3, 4, 5, 6, 7, 8]
     finally:
         conn.close()
 
