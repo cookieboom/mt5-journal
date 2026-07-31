@@ -46,3 +46,21 @@ export async function postJson<T>(
     return { ok: false, error: String(e) };
   }
 }
+
+export async function patchJson<T>(
+  path: string,
+  body: unknown,
+): Promise<{ ok: boolean; data?: T; error?: string }> {
+  try {
+    const r = await fetch(path, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const j = await r.json();
+    if (!r.ok) return { ok: false, error: (j && j.error) ?? `HTTP ${r.status}` };
+    return { ok: true, data: j as T };
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+}

@@ -1,6 +1,6 @@
 // Typed fetch wrappers for /api/training/*. Impure; the pure display helpers are
 // in lib/replay.ts. The backend is authoritative for all fills/scores.
-import { postJson } from "./api";
+import { postJson, patchJson } from "./api";
 import type { Sym, Timeframe } from "./candles";
 import type { StepEvent, TrainingPosition, TrainingSession, TrainingSummary } from "./replay";
 
@@ -46,6 +46,10 @@ export function openPosition(id: number, body: {
 
 export function closePosition(id: number, pid: number) {
   return postJson<TrainingPosition>(`/api/training/sessions/${id}/positions/${pid}/close`, {});
+}
+
+export function modifySltp(pid: number, body: { sl?: number; tp?: number }) {
+  return patchJson<{ position: TrainingPosition }>(`/api/training/positions/${pid}/sltp`, body);
 }
 
 export function endSession(id: number) {

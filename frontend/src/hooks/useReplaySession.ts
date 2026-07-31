@@ -114,6 +114,12 @@ export function useReplaySession() {
     await refresh();
   }, [session, refresh]);
 
+  const modifySltp = useCallback(async (pid: number, change: { sl?: number; tp?: number }) => {
+    const r = await replayApi.modifySltp(pid, change);
+    if (!r.ok) { setError(r.error ?? "gagal mengubah SL/TP"); return; }
+    await refresh();
+  }, [refresh]);
+
   const end = useCallback(async () => {
     const id = _sid();
     if (id === null) return;
@@ -139,6 +145,6 @@ export function useReplaySession() {
     session, positions, events, sessionSummary, status, error, playing,
     cursorMsc: session?.cursor_msc ?? null,
     anchorMsc,
-    start, step, play, pause, jump, reset, open, close, end, discard,
+    start, step, play, pause, jump, reset, open, close, modifySltp, end, discard,
   };
 }
