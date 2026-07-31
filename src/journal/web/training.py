@@ -161,6 +161,23 @@ def _to_state(r: sqlite3.Row) -> ev.PositionState:
     )
 
 
+def _update_session_stats(conn: sqlite3.Connection, session_id: int,
+                          exit_reason: str) -> None:
+    """Update training_session_stats after a position closes. Routes exit_reason
+    to sl_hits, tp_hits, or manual_closes counter."""
+    conn.execute(
+        "INSERT OR IGNORE INTO training_session_stats (session_id, updated_at_msc) VALUES (?, ?)",
+        (session_id, now_ms()),
+    )
+    column = {"sl": "sl_hits", "tp": "tp_hits"}.get(exit_reason, "manual_closes")
+    conn.execute(
+        f"UPDATE training_session_stats SET {column} = {column} + 1, "
+        "total_closed = total_closed + 1, updated_at_msc = ? WHERE session_id = ?",
+        (now_ms(), session_id),
+    )
+    conn.commit()
+
+
 def _resolve_close(conn: sqlite3.Connection, symbol: str, timeframe: str,
                    state: ev.PositionState) -> None:
     """Persist a just-closed position with money, R, and MAE/MFE. Reuses the same
@@ -191,17 +208,7 @@ def _resolve_close(conn: sqlite3.Connection, symbol: str, timeframe: str,
     session_id = conn.execute(
         "SELECT session_id FROM training_positions WHERE id = ?", (state.id,)
     ).fetchone()["session_id"]
-    conn.execute(
-        "INSERT OR IGNORE INTO training_session_stats (session_id, updated_at_msc) VALUES (?, ?)",
-        (session_id, now_ms()),
-    )
-    column = {"sl": "sl_hits", "tp": "tp_hits"}.get(state.exit_reason, "manual_closes")
-    conn.execute(
-        f"UPDATE training_session_stats SET {column} = {column} + 1, "
-        "total_closed = total_closed + 1, updated_at_msc = ? WHERE session_id = ?",
-        (now_ms(), session_id),
-    )
-    conn.commit()
+    _update_session_stats(conn, session_id, state.exit_reason)
 
 
 def step(conn: sqlite3.Connection, session_id: int, n: int = 1) -> dict:
@@ -249,6 +256,7 @@ def end_session(conn: sqlite3.Connection, session_id: int) -> dict:
         ts.mark_close(conn, r["id"], exit_msc=s["cursor_msc"], exit_price=None,
                       exit_reason="eod", net_profit=None, r_multiple=None,
                       mae=None, mfe=None, mae_r=None, mfe_r=None)
+        _update_session_stats(conn, session_id, "eod")
     ts.set_session_status(conn, session_id, "ended")
     return session_view(conn, session_id)
 

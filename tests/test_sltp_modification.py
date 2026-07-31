@@ -315,3 +315,19 @@ def test_manual_close_increments_manual_counter(conn):
 
     stats = training.get_session_stats(conn, session_id)
     assert stats["manual_closes"] == 1
+
+
+def test_end_session_eod_close_updates_stats(conn):
+    """end_session closing open positions via EOD must update training_session_stats."""
+    session_id = _create_test_session(conn)
+    pos_id = _create_test_position(conn, session_id, sl=1.2450, tp=1.2650)
+
+    # Position is open; end_session should close it via EOD and update stats
+    training.end_session(conn, session_id)
+
+    stats = training.get_session_stats(conn, session_id)
+    assert stats["total_closed"] == 1
+    # EOD is not sl or tp, so it goes to manual_closes
+    assert stats["manual_closes"] == 1
+    assert stats["sl_hits"] == 0
+    assert stats["tp_hits"] == 0
