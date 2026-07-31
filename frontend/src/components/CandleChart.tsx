@@ -7,7 +7,7 @@ import {
   type IChartApi, type ISeriesApi, type IPriceLine, type UTCTimestamp, type SeriesType,
   type SeriesMarker, type Time,
 } from "lightweight-charts";
-import { toSeconds, isNowVisible, LINE_COLORS, type Sym, type Timeframe } from "../lib/candles";
+import { toSeconds, isNowVisible, LINE_COLORS, liveLines, type Sym, type Timeframe } from "../lib/candles";
 import type { ChartSettings } from "../lib/chartPrefs";
 import type { Candle, HoverBar, LiveData } from "../lib/types";
 import { wib } from "../lib/format";
@@ -97,9 +97,15 @@ const CandleChart = forwardRef<ChartHandle, {
   const [measure, setMeasure] = useState<MeasureState>(IDLE);
   const lastUp = useRef<{ ms: number; x: number; y: number } | null>(null);
   const dragging = useRef(false);
-  const sltpDragging = useRef<{ positionId: number; kind: LineKind; startPrice: number } | null>(null);
+  const sltpDragging = useRef<{
+    positionId: number; kind: LineKind; startPrice: number;
+    direction: "buy" | "sell"; entryPrice: number | null;
+  } | null>(null);
   const [sltpGhost, setSltpGhost] = useState<{ price: number; kind: "sl" | "tp" } | null>(null);
-  const linesMeta = useRef<{ line: IPriceLine; positionId: number; kind: LineKind }[]>([]);
+  const linesMeta = useRef<{
+    line: IPriceLine; positionId: number; kind: LineKind;
+    direction: "buy" | "sell"; entryPrice: number | null;
+  }[]>([]);
   const ghostLine = useRef<IPriceLine | null>(null);
   const [, bumpProjection] = useReducer((c: number) => c + 1, 0);
 
@@ -117,14 +123,24 @@ const CandleChart = forwardRef<ChartHandle, {
     return { price: price as number, logical: logical as number, barTimeMs };
   }, []);
 
-  // Pixel y → nearest draggable line within HIT_THRESHOLD_PX, if any.
-  const hitTestLine = useCallback((y: number): { positionId: number; kind: LineKind; price: number } | null => {
+  // Pixel y → nearest draggable line within HIT_THRESHOLD_PX, if any. Carries
+  // the source position's direction/entryPrice captured at draw time (from
+  // linesMeta) — NOT looked up from draggablePositions, which is undefined
+  // by construction on the live-fallback path. This is what lets an
+  // entry-line drag resolve to sl/tp correctly on both paths.
+  const hitTestLine = useCallback((y: number): {
+    positionId: number; kind: LineKind; price: number;
+    direction: "buy" | "sell"; entryPrice: number | null;
+  } | null => {
     const s = series.current;
     if (!s) return null;
     for (const meta of linesMeta.current) {
       const py = s.priceToCoordinate(meta.line.options().price);
       if (py !== null && Math.abs((py as number) - y) <= HIT_THRESHOLD_PX) {
-        return { positionId: meta.positionId, kind: meta.kind, price: meta.line.options().price };
+        return {
+          positionId: meta.positionId, kind: meta.kind, price: meta.line.options().price,
+          direction: meta.direction, entryPrice: meta.entryPrice,
+        };
       }
     }
     return null;
@@ -261,7 +277,10 @@ const CandleChart = forwardRef<ChartHandle, {
       } else {
         const hit = hitTestLine(y);
         if (hit && cbs.current.onSlTpChange) {
-          sltpDragging.current = { positionId: hit.positionId, kind: hit.kind, startPrice: hit.price };
+          sltpDragging.current = {
+            positionId: hit.positionId, kind: hit.kind, startPrice: hit.price,
+            direction: hit.direction, entryPrice: hit.entryPrice,
+          };
           c.applyOptions({ handleScroll: false, handleScale: false });
           const pt = toPoint(x, y);
           if (pt) setSltpGhost({ price: pt.price, kind: hit.kind === "tp" ? "tp" : "sl" });
@@ -279,8 +298,11 @@ const CandleChart = forwardRef<ChartHandle, {
         const pt = toPoint(x, y);
         if (!pt) return;
         const drag = sltpDragging.current;
-        const pos = cbs.current.draggablePositions?.find((p) => p.id === drag.positionId);
-        const kind = drag.kind === "entry" && pos ? resolveDragTarget(pos, pt.price)
+        const kind = drag.kind === "entry"
+          ? resolveDragTarget(
+              { id: drag.positionId, direction: drag.direction, entry_price: drag.entryPrice, sl: 0, tp: 0 },
+              pt.price,
+            )
           : (drag.kind as "sl" | "tp");
         setSltpGhost({ price: pt.price, kind });
         return;
@@ -302,12 +324,15 @@ const CandleChart = forwardRef<ChartHandle, {
         sltpDragging.current = null;
         setSltpGhost(null);
         const pt = toPoint(x, y);
-        const pos = cbs.current.draggablePositions?.find((p) => p.id === drag.positionId);
         // Skip the no-op case: a plain click (press+release with no real
         // movement) must not fire a "change" to the same value it already
         // had — same float-tolerance convention as rule 5 elsewhere.
         if (pt && cbs.current.onSlTpChange && Math.abs(pt.price - drag.startPrice) > 1e-9) {
-          const target = drag.kind === "entry" && pos ? resolveDragTarget(pos, pt.price)
+          const target = drag.kind === "entry"
+            ? resolveDragTarget(
+                { id: drag.positionId, direction: drag.direction, entry_price: drag.entryPrice, sl: 0, tp: 0 },
+                pt.price,
+              )
             : (drag.kind as "sl" | "tp");
           cbs.current.onSlTpChange(drag.positionId, { [target]: pt.price } as { sl?: number; tp?: number });
         }
@@ -491,20 +516,20 @@ const CandleChart = forwardRef<ChartHandle, {
     linesMeta.current = [];
 
     const addLine = (positionId: number, kind: LineKind, price: number | null,
-                     color: string, title: string) => {
+                     color: string, title: string, direction: "buy" | "sell", entryPrice: number | null) => {
       if (price === null || price === undefined || Math.abs(price) < 1e-9) return;
       const line = s.createPriceLine({
         price, color, lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title,
       });
       priceLines.current.push(line);
-      linesMeta.current.push({ line, positionId, kind });
+      linesMeta.current.push({ line, positionId, kind, direction, entryPrice });
     };
 
     if (props.draggablePositions !== undefined) {
       for (const pos of props.draggablePositions) {
-        addLine(pos.id, "entry", pos.entry_price, LINE_COLORS.entry, `entry #${pos.id}`);
-        addLine(pos.id, "sl", pos.sl, LINE_COLORS.sl, `SL #${pos.id}`);
-        addLine(pos.id, "tp", pos.tp, LINE_COLORS.tp, `TP #${pos.id}`);
+        addLine(pos.id, "entry", pos.entry_price, LINE_COLORS.entry, `entry #${pos.id}`, pos.direction, pos.entry_price);
+        addLine(pos.id, "sl", pos.sl, LINE_COLORS.sl, `SL #${pos.id}`, pos.direction, pos.entry_price);
+        addLine(pos.id, "tp", pos.tp, LINE_COLORS.tp, `TP #${pos.id}`, pos.direction, pos.entry_price);
       }
       return;
     }
@@ -526,9 +551,9 @@ const CandleChart = forwardRef<ChartHandle, {
     if (!props.settings.liveOverlay || !props.nowVisible || !props.live || props.live.live.empty) return;
     const mine = props.live.live.positions.filter((p) => p.symbol === props.symbol);
     for (const pos of mine) {
-      addLine(pos.position_id, "entry", pos.open_price, LINE_COLORS.entry, `entry #${pos.position_id}`);
-      addLine(pos.position_id, "sl", pos.sl, LINE_COLORS.sl, `SL #${pos.position_id}`);
-      addLine(pos.position_id, "tp", pos.tp, LINE_COLORS.tp, `TP #${pos.position_id}`);
+      for (const line of liveLines(pos)) {
+        addLine(pos.position_id, line.kind, line.price, line.color, line.title, pos.direction, pos.open_price);
+      }
     }
   }, [props.live, props.nowVisible, props.symbol, props.settings.liveOverlay,
       props.settings.chartType, props.overlayLines, props.draggablePositions]);
@@ -542,8 +567,7 @@ const CandleChart = forwardRef<ChartHandle, {
     if (ghostLine.current) { s.removePriceLine(ghostLine.current); ghostLine.current = null; }
     if (sltpGhost) {
       const drag = sltpDragging.current;
-      const pos = drag && cbs.current.draggablePositions?.find((p) => p.id === drag.positionId);
-      const entryFallback = pos?.entry_price ?? null;
+      const entryFallback = drag?.entryPrice ?? null;
       const title = ghostTitle(sltpGhost.kind, entryFallback, sltpGhost.price);
       const color = (sltpGhost.kind === "tp" ? LINE_COLORS.tp : LINE_COLORS.sl) + "80";
       ghostLine.current = s.createPriceLine({

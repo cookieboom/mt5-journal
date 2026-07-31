@@ -72,14 +72,18 @@ export function isNowVisible(
 
 export const LINE_COLORS = { sl: "#fb7185", tp: "#34d399", entry: "#9a97c4" };
 
-export function liveLines(pos: LivePosition): { price: number; color: string; title: string }[] {
-  const out: { price: number; color: string; title: string }[] = [];
-  const add = (v: number | null, color: string, title: string) => {
-    if (v !== null && v !== undefined && Math.abs(v) > 1e-9) out.push({ price: v, color, title });
+export type LiveLineKind = "entry" | "sl" | "tp";
+
+export function liveLines(
+  pos: LivePosition,
+): { kind: LiveLineKind; price: number; color: string; title: string }[] {
+  const out: { kind: LiveLineKind; price: number; color: string; title: string }[] = [];
+  const add = (kind: LiveLineKind, v: number | null, color: string, title: string) => {
+    if (v !== null && v !== undefined && Math.abs(v) > 1e-9) out.push({ kind, price: v, color, title });
   };
-  add(pos.open_price, LINE_COLORS.entry, `entry #${pos.position_id}`);
-  add(pos.sl, LINE_COLORS.sl, `SL #${pos.position_id}`);
-  add(pos.tp, LINE_COLORS.tp, `TP #${pos.position_id}`);
+  add("entry", pos.open_price, LINE_COLORS.entry, `entry #${pos.position_id}`);
+  add("sl", pos.sl, LINE_COLORS.sl, `SL #${pos.position_id}`);
+  add("tp", pos.tp, LINE_COLORS.tp, `TP #${pos.position_id}`);
   return out;
 }
 

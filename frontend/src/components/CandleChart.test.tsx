@@ -5,6 +5,7 @@ import type { Candle } from "../lib/types";
 import type { ChartSettings } from "../lib/chartPrefs";
 import type { SeriesMarker, Time, UTCTimestamp } from "lightweight-charts";
 import type { DraggablePosition } from "../lib/sltpDrag";
+import type { LiveData, LivePosition } from "../lib/types";
 
 let capturedMarkers: SeriesMarker<Time>[] | null = null;
 let capturedLogicalRange: { from: number; to: number } | null = null;
@@ -312,4 +313,64 @@ it("does not confuse a plain drag-a-line with the Spec-B measure gesture", () =>
   fireEvent.pointerUp(window, { clientX: 50, clientY: 190 });
 
   expect(onSlTpChange).toHaveBeenCalledTimes(1);
+});
+
+// Live-fallback path: draggablePositions is deliberately NOT passed here —
+// this is the exact Task-10-dependency path (live position lines become
+// draggable automatically whenever onSlTpChange is passed and
+// draggablePositions is undefined). Uses the same entry=105/sl=100/tp=110
+// values as draggablePos above so the mock's fixed pixel<->price mapping
+// (y=200<->100, y=150<->105, y=100<->110) applies identically.
+const liveBuyPos: LivePosition = {
+  position_id: 9, symbol: "XAUUSDc", symbol_base: "XAUUSD",
+  direction: "buy", volume: 0.1, open_price: 105, price_current: 105,
+  sl: 100, tp: 110, profit: 0, observed_msc: 1,
+};
+const liveDataFor = (pos: LivePosition): LiveData => ({
+  header: { login: 0, currency: "USC", offset_s: 0 },
+  live: {
+    positions: [pos], count: 1, total_floating: 0, total_volume: pos.volume,
+    age_s: 0, stale: false, empty: false,
+  },
+});
+
+it("dragging a LIVE position's SL line (draggablePositions undefined) calls onSlTpChange", () => {
+  const onSlTpChange = vi.fn();
+  const { container } = render(
+    <CandleChart
+      symbol="XAUUSDc" tf="M1" settings={DEFAULT_SETTINGS} candles={mockCandles}
+      onHover={() => {}} onNowVisibleChange={() => {}} onRequestOlder={() => {}}
+      lastBarMs={2_140_000} live={liveDataFor(liveBuyPos)} nowVisible={true}
+      onSlTpChange={onSlTpChange}
+    />
+  );
+  const node = container.querySelectorAll("div > div")[1] as HTMLElement;
+
+  // SL line at y=200 (price 100). Drag to y=180 (price 102).
+  fireEvent.pointerDown(node, { clientX: 50, clientY: 200 });
+  fireEvent.pointerMove(window, { clientX: 50, clientY: 180 });
+  fireEvent.pointerUp(window, { clientX: 50, clientY: 180 });
+
+  expect(onSlTpChange).toHaveBeenCalledWith(9, { sl: 102 });
+});
+
+it("dragging a LIVE position's ENTRY line resolves to sl/tp by direction, never { entry }", () => {
+  const onSlTpChange = vi.fn();
+  const { container } = render(
+    <CandleChart
+      symbol="XAUUSDc" tf="M1" settings={DEFAULT_SETTINGS} candles={mockCandles}
+      onHover={() => {}} onNowVisibleChange={() => {}} onRequestOlder={() => {}}
+      lastBarMs={2_140_000} live={liveDataFor(liveBuyPos)} nowVisible={true}
+      onSlTpChange={onSlTpChange}
+    />
+  );
+  const node = container.querySelectorAll("div > div")[1] as HTMLElement;
+
+  // Entry line at y=150 (price 105). Drag up to y=130 (price 107) — above
+  // entry for a "buy" position, so this must resolve to tp, not { entry }.
+  fireEvent.pointerDown(node, { clientX: 50, clientY: 150 });
+  fireEvent.pointerMove(window, { clientX: 50, clientY: 130 });
+  fireEvent.pointerUp(window, { clientX: 50, clientY: 130 });
+
+  expect(onSlTpChange).toHaveBeenCalledWith(9, { tp: 107 });
 });

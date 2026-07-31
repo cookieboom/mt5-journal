@@ -60,12 +60,15 @@ describe("candles helpers", () => {
     // entry drawn (2405); SL skipped (0 = none set); TP skipped (null = unknown)
     expect(lines.map((l) => l.price)).toEqual([2405]);
     expect(lines[0].color).toBe(LINE_COLORS.entry);
+    expect(lines[0].kind).toBe("entry");
 
     const full = liveLines({ ...base, sl: 2398, tp: 2412 });
     expect(full.map((l) => l.price).sort()).toEqual([2398, 2405, 2412]);
     const byTitle = Object.fromEntries(full.map((l) => [l.title.split(" ")[0], l.color]));
     expect(byTitle.SL).toBe(LINE_COLORS.sl);
     expect(byTitle.TP).toBe(LINE_COLORS.tp);
+    const byKind = Object.fromEntries(full.map((l) => [l.kind, l.price]));
+    expect(byKind).toEqual({ entry: 2405, sl: 2398, tp: 2412 });
   });
 });
 
