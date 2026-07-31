@@ -58,15 +58,27 @@ Each consuming page supplies its own commit semantics:
 - **Replay (`Chart.tsx`, training mode):** `onSlTpChange` calls
   `training.modify_sltp` (PATCH `/api/training/positions/{id}/sltp`)
   immediately — no confirmation, matches existing training UX (fake money).
-- **Live page:** `onSlTpChange` opens a confirmation dialog
-  (`SltpConfirmDialog.tsx`) showing the dragged price in an **editable**
-  number input (drag is pixel-imprecise; typing corrects it) before calling
-  the existing `onAction("sltp", { sl, tp })` → `trade_commands` queue path.
+- **Live page (`Live.tsx`):** `Live.tsx` already runs every action (Close /
+  Tutup sebagian / Tambah / the current SL/TP form) through a two-step
+  preview→confirm flow: `onAction` POSTs `/api/live/{id}/{action}/preview`
+  (server re-validates, writes nothing) → the existing generic
+  `ConfirmModal.tsx` shows a read-only summary (`preview.intent`) → confirming
+  POSTs the real enqueue. `ConfirmModal` has no editable fields — it's reused
+  as-is by every action kind and must stay that way.
+  `onSlTpChange` therefore opens a **new, small precision-edit dialog first**
+  (`SltpConfirmDialog.tsx`) — pre-filled with the dragged price in an
+  **editable** number input (drag is pixel-imprecise; typing corrects it).
+  Confirming it calls the *same* `onAction(pos.position_id, "sltp", { sl, tp })`
+  the old form used, which then runs the existing preview→`ConfirmModal`→
+  enqueue pipeline unchanged. Net effect for the user: drag → small precision
+  popup → existing generic confirm → sent. Cancelling the precision popup
+  never calls `onAction` at all (no preview fetched, matches "writes nothing
+  until confirmed").
   The plain-number SL/TP inputs + "Ubah SL/TP…" button are **removed** from
   `LivePositionCard`; Close / Tutup sebagian / Tambah stay as-is.
-- Double-click on a SL/TP line double-click on a **live** position also
-  routes through the same confirm dialog (explicit copy: "Hapus SL? Posisi
-  jadi tanpa stop-loss.").
+- Double-click on a SL/TP line on a **live** position also opens
+  `SltpConfirmDialog` (pre-filled with `sl: 0` or `tp: 0`, copy: "Hapus SL?
+  Posisi jadi tanpa stop-loss."), then the same existing `ConfirmModal` step.
 
 This mirrors the existing pattern in the codebase (Spec B's `measure.ts`
 gesture logic lives in the shared component, business semantics live in the
@@ -87,11 +99,16 @@ requested (user's call — the dialog is judged sufficient).
   existing Spec-B measure-gesture pointer handlers on the same node (a
   pointerdown that hits a SL/TP/entry line takes drag-position priority; only
   falls through to measure-gesture if it doesn't hit a line).
-- **`SltpConfirmDialog.tsx`** (new) — live-only confirmation dialog, editable
-  price field, Confirm/Cancel.
-- **`training.py`** (existing, reused from the Kiro branch — technically
-  correct, kept) — `modify_sltp`, `get_session_stats`, migration 008
-  `training_session_stats`. **New addition this round:** direction-sanity
+- **`SltpConfirmDialog.tsx`** (new) — live-only precision-edit dialog
+  (editable price field, Confirm/Cancel), sits *in front of* the existing
+  generic `ConfirmModal` (untouched) rather than replacing or extending it.
+- **`training.py`** — **does not currently exist on `main`.** The Kiro branch
+  (`feature/advanced-sltp-management`) had a technically-correct
+  `modify_sltp`/`get_session_stats`/migration 008, but that whole branch was
+  scrapped and `main` never merged it — so this is net-new work on `main`,
+  built via this project's TDD process, using the Kiro version as a verified
+  reference (not a blind rewrite; its logic was already checked and is
+  reused verbatim except for the fix below). **New addition this round:** direction-sanity
   validation (buy: `sl < entry_price < tp`; sell: reversed), currently
   missing in both `modify_sltp` and the older `open_position` — fixed in
   both for consistency. Validation only applies to values actually being
@@ -111,9 +128,10 @@ state refreshed via `useReplaySession`.
 
 **Live:** drag release → `CandleChart` calls `onSlTpChange` → Live page opens
 `SltpConfirmDialog` (pre-filled, editable) → user confirms → `onAction("sltp",
-{sl, tp})` → existing `trade_commands` enqueue → `journal live` drains queue
-→ bridge sends order to broker → next poll reflects the change on
-`LivePositionCard`/chart.
+{sl, tp})` → **existing** preview fetch (`/api/live/{id}/sltp/preview`) →
+**existing** `ConfirmModal` (summary text, second confirm) → **existing**
+enqueue POST → `trade_commands` → `journal live` drains queue → bridge sends
+order to broker → next poll reflects the change on `LivePositionCard`/chart.
 
 ## Error Handling
 
@@ -139,8 +157,8 @@ state refreshed via `useReplaySession`.
   pre-filled price before confirming sends the *edited* value, not the
   original drag value.
 - **Gate before any commit:** full pytest + full vitest + `tsc --noEmit` +
-  `journal rebuild` (no new migration touches `trades`; migration 008 is
-  reused as-is, rule 6 unaffected).
+  `journal rebuild` (migration 008 only adds `training_session_stats`, which
+  `journal rebuild` never touches — rule 6 unaffected).
 - **PENDING HUMAN (cannot be automated):** live drag → broker round-trip
   smoke test with the MT5 bridge container running, confirming the order is
   actually sent and `stops_level` is honored end-to-end — same category as
