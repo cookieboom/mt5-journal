@@ -117,6 +117,7 @@ export function useReplaySession() {
   const modifySltp = useCallback(async (pid: number, change: { sl?: number; tp?: number }) => {
     const r = await replayApi.modifySltp(pid, change);
     if (!r.ok) { setError(r.error ?? "gagal mengubah SL/TP"); return; }
+    setError(null);
     await refresh();
   }, [refresh]);
 
