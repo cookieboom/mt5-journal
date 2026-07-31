@@ -19,3 +19,5 @@ graphify-out/
 
 # Vitest local run cache
 .vite/
+
+.worktrees/
