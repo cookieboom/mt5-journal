@@ -5,7 +5,7 @@ import { clampBars, parseSelection } from "../lib/chartPrefs";
 import { useChartPrefs } from "../hooks/useChartPrefs";
 import { mergeForming, type Sym, type Timeframe, timeframeMs } from "../lib/candles";
 import type { HoverBar, LiveData } from "../lib/types";
-import { clipToCursor, replayLines, type TrainingSummary } from "../lib/replay";
+import { clipToCursor, type TrainingSummary } from "../lib/replay";
 import { useReplaySession, type ReplayConfig } from "../hooks/useReplaySession";
 import { useReplayPrefs } from "../hooks/useReplayPrefs";
 import type { ReplayFormPrefs } from "../lib/replayPrefs";
@@ -157,11 +157,21 @@ export default function Chart() {
     ? clipToCursor(data.candles, cursor)
     : mergeForming(data.candles, forming);
   // Memoized: CandleChart's overlay effect re-runs on identity change of this
-  // prop, so an inline replayLines(...) here would thrash price lines every render.
-  const overlay = useMemo(
-    () => (replayOpen ? replayLines(replay.positions) : undefined),
+  // prop, so an inline map(...) here would thrash price lines every render.
+  const draggableReplay = useMemo(
+    () => (replayOpen
+      ? replay.positions
+          .filter((p) => p.status !== "closed")
+          .map((p) => ({ id: p.id, direction: p.direction, entry_price: p.entry_price, sl: p.sl, tp: p.tp }))
+      : undefined),
     [replayOpen, replay.positions],
   );
+  const handleSlTpChange = useCallback((positionId: number, change: { sl?: number; tp?: number }) => {
+    if (replayOpen) {
+      replay.modifySltp(positionId, change);
+    }
+    // Live-mode handling added in Task 10.
+  }, [replayOpen, replay]);
   const currentClose = shownCandles.length ? shownCandles[shownCandles.length - 1].c : null;
   const atEnd = !!replay.session && cursor !== null && cursor >= replay.session.range_end_msc;
 
@@ -218,7 +228,8 @@ export default function Chart() {
               tf={tf}
               settings={settings}
               candles={shownCandles}
-              overlayLines={overlay}
+              draggablePositions={draggableReplay}
+              onSlTpChange={handleSlTpChange}
               lastBarMs={data.lastBarMs}
               onHover={setHovered}
               onNowVisibleChange={setNowVisible}
