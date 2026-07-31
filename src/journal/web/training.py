@@ -20,6 +20,37 @@ from ..domain import replay_eval as ev
 from ..store import candle_queue
 from ..store import candles_store as cs
 from ..store import training_store as ts
+from ..store.db import now_ms
+
+
+def _check_direction(direction: str, entry_price: float | None,
+                     sl: float | None, tp: float | None) -> None:
+    """Reject SL/TP on the wrong side of entry for the position's direction.
+    Skips whichever side is None (unchanged) or 0 (removed, rule 4) — there's
+    nothing to be inconsistent with. If entry_price is unknown yet (position
+    still pending), falls back to checking sl vs tp against each other."""
+    def is_set(v: float | None) -> bool:
+        return v is not None and abs(v) > 1e-9
+
+    ref = entry_price if entry_price is not None else None
+    if ref is None:
+        if is_set(sl) and is_set(tp):
+            if direction == "buy" and not (sl < tp):
+                raise ValueError("SL must be below TP for a buy position")
+            if direction == "sell" and not (sl > tp):
+                raise ValueError("SL must be above TP for a sell position")
+        return
+
+    if is_set(sl):
+        if direction == "buy" and not (sl < ref):
+            raise ValueError("SL must be below entry price for a buy position")
+        if direction == "sell" and not (sl > ref):
+            raise ValueError("SL must be above entry price for a sell position")
+    if is_set(tp):
+        if direction == "buy" and not (tp > ref):
+            raise ValueError("TP must be above entry price for a buy position")
+        if direction == "sell" and not (tp < ref):
+            raise ValueError("TP must be below entry price for a sell position")
 
 
 def _row(row: sqlite3.Row | None) -> dict | None:
@@ -103,6 +134,7 @@ def open_position(conn: sqlite3.Connection, session_id: int, *, direction: str,
         raise ValueError(f"session {session_id} is not active")
     if volume <= 0:
         raise ValueError("volume must be > 0")
+    _check_direction(direction, None, sl, tp)
     pid = ts.insert_position(conn, session_id=session_id, direction=direction,
                              volume=volume, decision_msc=s["cursor_msc"],
                              sl=sl, tp=tp)
@@ -156,6 +188,20 @@ def _resolve_close(conn: sqlite3.Connection, symbol: str, timeframe: str,
     ts.mark_close(conn, state.id, exit_msc=state.exit_msc, exit_price=state.exit_price,
                   exit_reason=state.exit_reason, net_profit=net, r_multiple=r,
                   mae=mae, mfe=mfe, mae_r=mae_r, mfe_r=mfe_r)
+    session_id = conn.execute(
+        "SELECT session_id FROM training_positions WHERE id = ?", (state.id,)
+    ).fetchone()["session_id"]
+    conn.execute(
+        "INSERT OR IGNORE INTO training_session_stats (session_id, updated_at_msc) VALUES (?, ?)",
+        (session_id, now_ms()),
+    )
+    column = {"sl": "sl_hits", "tp": "tp_hits"}.get(state.exit_reason, "manual_closes")
+    conn.execute(
+        f"UPDATE training_session_stats SET {column} = {column} + 1, "
+        "total_closed = total_closed + 1, updated_at_msc = ? WHERE session_id = ?",
+        (now_ms(), session_id),
+    )
+    conn.commit()
 
 
 def step(conn: sqlite3.Connection, session_id: int, n: int = 1) -> dict:
@@ -209,3 +255,79 @@ def end_session(conn: sqlite3.Connection, session_id: int) -> dict:
 
 def career_summary(conn: sqlite3.Connection) -> dict:
     return ts.career_summary(conn)
+
+
+def modify_sltp(
+    conn: sqlite3.Connection,
+    position_id: int,
+    sl: float | None = None,
+    tp: float | None = None,
+) -> dict:
+    """Modify SL/TP of an open training position. sl/tp: None = leave
+    unchanged, 0 = remove (rule 4), any other value = set."""
+    pos = conn.execute(
+        "SELECT * FROM training_positions WHERE id = ?", (position_id,)
+    ).fetchone()
+    if not pos:
+        raise ValueError(f"position {position_id} not found")
+    if pos["status"] == "closed":
+        raise ValueError(f"position {position_id} already closed")
+
+    _check_direction(pos["direction"], pos["entry_price"], sl, tp)
+
+    updates, params = [], []
+    if sl is not None:
+        updates.append("sl = ?")
+        params.append(sl)
+    if tp is not None:
+        updates.append("tp = ?")
+        params.append(tp)
+    if updates:
+        params.append(position_id)
+        conn.execute(f"UPDATE training_positions SET {', '.join(updates)} WHERE id = ?", params)
+        conn.commit()
+
+    return _row(conn.execute(
+        "SELECT * FROM training_positions WHERE id = ?", (position_id,)
+    ).fetchone())
+
+
+def get_session_stats(conn: sqlite3.Connection, session_id: int) -> dict:
+    """SL/TP hit statistics for a training session. Lazily initializes the
+    stats row on first read (a session created before this feature existed
+    has none yet)."""
+    stats = conn.execute(
+        "SELECT * FROM training_session_stats WHERE session_id = ?", (session_id,)
+    ).fetchone()
+    if not stats:
+        conn.execute(
+            "INSERT INTO training_session_stats (session_id, updated_at_msc) VALUES (?, ?)",
+            (session_id, now_ms()),
+        )
+        conn.commit()
+        stats = {"total_closed": 0, "sl_hits": 0, "tp_hits": 0, "manual_closes": 0}
+
+    total = stats["total_closed"]
+    sl_rate = stats["sl_hits"] / total if total > 0 else None
+    tp_rate = stats["tp_hits"] / total if total > 0 else None
+
+    avg_r_sl = conn.execute(
+        "SELECT AVG(r_multiple) FROM training_positions "
+        "WHERE session_id = ? AND exit_reason = 'sl'", (session_id,),
+    ).fetchone()[0]
+    avg_r_tp = conn.execute(
+        "SELECT AVG(r_multiple) FROM training_positions "
+        "WHERE session_id = ? AND exit_reason = 'tp'", (session_id,),
+    ).fetchone()[0]
+
+    return {
+        "session_id": session_id,
+        "total_closed": total,
+        "sl_hits": stats["sl_hits"],
+        "tp_hits": stats["tp_hits"],
+        "manual_closes": stats["manual_closes"],
+        "sl_hit_rate": sl_rate,
+        "tp_hit_rate": tp_rate,
+        "avg_r_per_sl": avg_r_sl,
+        "avg_r_per_tp": avg_r_tp,
+    }
