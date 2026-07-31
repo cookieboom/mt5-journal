@@ -1,12 +1,14 @@
-import { render } from "@testing-library/react";
+import { render, fireEvent } from "@testing-library/react";
 import { it, expect, vi, beforeEach } from "vitest";
 import CandleChart from "./CandleChart";
 import type { Candle } from "../lib/types";
 import type { ChartSettings } from "../lib/chartPrefs";
 import type { SeriesMarker, Time, UTCTimestamp } from "lightweight-charts";
+import type { DraggablePosition } from "../lib/sltpDrag";
 
 let capturedMarkers: SeriesMarker<Time>[] | null = null;
 let capturedLogicalRange: { from: number; to: number } | null = null;
+let capturedPriceLines: { price: number; color: string; title: string }[] = [];
 
 vi.mock("lightweight-charts", async () => {
   const actual: any = await vi.importActual("lightweight-charts");
@@ -22,6 +24,16 @@ vi.mock("lightweight-charts", async () => {
           capturedMarkers = m;
           return origSetMarkers ? origSetMarkers.apply(s, [m]) : null;
         };
+        const origCreatePriceLine = s.createPriceLine;
+        s.createPriceLine = (opts: any) => {
+          capturedPriceLines.push({ price: opts.price, color: opts.color, title: opts.title });
+          return origCreatePriceLine ? origCreatePriceLine.call(s, opts) : { applyOptions: () => {}, options: () => opts, remove: () => {} };
+        };
+        // Deterministic pixel<->price mapping for hit-test/drag math:
+        // y=200 <-> price=100 (SL line), y=100 <-> price=110 (TP line),
+        // y=150 <-> price=105 (entry line); 1px = 0.1 price unit elsewhere.
+        s.priceToCoordinate = (price: number) => 200 - (price - 100) * 10;
+        s.coordinateToPrice = (y: number) => 100 + (200 - y) / 10;
         return s;
       };
       const ts = chart.timeScale();
@@ -30,6 +42,14 @@ vi.mock("lightweight-charts", async () => {
         capturedLogicalRange = range;
         return origSetVisibleLogicalRange ? origSetVisibleLogicalRange.apply(ts, [range]) : null;
       };
+      // jsdom gives the chart pane zero layout width, so the real
+      // coordinateToLogical always returns null — which makes toPoint()
+      // (price-axis coord AND time-axis coord both required) null for any
+      // pixel, even though the price-axis stubs above are enough on their
+      // own for the pointer-drag tests. Stub it to something total (any
+      // finite logical index) so toPoint() only fails on genuine price-axis
+      // nulls, matching real-browser behavior where both axes resolve.
+      ts.coordinateToLogical = (x: number) => x;
       return chart;
     },
   };
@@ -55,6 +75,7 @@ const DEFAULT_SETTINGS: ChartSettings = {
 beforeEach(() => {
   capturedMarkers = null;
   capturedLogicalRange = null;
+  capturedPriceLines = [];
 
   vi.stubGlobal("matchMedia", vi.fn().mockImplementation((query: string) => ({
     matches: false, media: query, onchange: null,
@@ -206,4 +227,89 @@ it("handles malformed fitToRange (startMs > endMs) safely without setting logica
   );
 
   expect(capturedLogicalRange).toBeNull();
+});
+
+const draggablePos: DraggablePosition = { id: 1, direction: "buy", entry_price: 105, sl: 100, tp: 110 };
+
+it("renders draggable SL/TP/entry lines when draggablePositions is provided", () => {
+  render(
+    <CandleChart
+      symbol="XAUUSDc" tf="M1" settings={DEFAULT_SETTINGS} candles={mockCandles}
+      onHover={() => {}} onNowVisibleChange={() => {}} onRequestOlder={() => {}}
+      lastBarMs={2_140_000} live={null} nowVisible={true}
+      draggablePositions={[draggablePos]}
+    />
+  );
+
+  const prices = capturedPriceLines.map((l) => l.price).sort((a, b) => a - b);
+  expect(prices).toEqual([100, 105, 110]);
+});
+
+it("dragging the SL line to a new pixel position calls onSlTpChange with the new price", () => {
+  const onSlTpChange = vi.fn();
+  const { container } = render(
+    <CandleChart
+      symbol="XAUUSDc" tf="M1" settings={DEFAULT_SETTINGS} candles={mockCandles}
+      onHover={() => {}} onNowVisibleChange={() => {}} onRequestOlder={() => {}}
+      lastBarMs={2_140_000} live={null} nowVisible={true}
+      draggablePositions={[draggablePos]}
+      onSlTpChange={onSlTpChange}
+    />
+  );
+  // The pointer listeners are attached to the inner chart-container div (the
+  // one with the `el` ref), which is the second "div > div" match — the
+  // first match is CandleChart's own outer positioning wrapper. Events fired
+  // on a wrong (ancestor) node would never reach the inner listeners, since
+  // DOM events bubble up, not down.
+  const node = container.querySelectorAll("div > div")[1] as HTMLElement;
+
+  // SL line is at y=200 (price 100, per the mock mapping). Press there,
+  // move to y=180 (price 102), release.
+  fireEvent.pointerDown(node, { clientX: 50, clientY: 200 });
+  fireEvent.pointerMove(window, { clientX: 50, clientY: 180 });
+  fireEvent.pointerUp(window, { clientX: 50, clientY: 180 });
+
+  expect(onSlTpChange).toHaveBeenCalledWith(1, { sl: 102 });
+});
+
+it("double-clicking an existing SL line calls onSlTpChange with sl: 0 (remove)", () => {
+  const onSlTpChange = vi.fn();
+  const { container } = render(
+    <CandleChart
+      symbol="XAUUSDc" tf="M1" settings={DEFAULT_SETTINGS} candles={mockCandles}
+      onHover={() => {}} onNowVisibleChange={() => {}} onRequestOlder={() => {}}
+      lastBarMs={2_140_000} live={null} nowVisible={true}
+      draggablePositions={[draggablePos]}
+      onSlTpChange={onSlTpChange}
+    />
+  );
+  const node = container.querySelectorAll("div > div")[1] as HTMLElement;
+
+  fireEvent.pointerDown(node, { clientX: 50, clientY: 200 });
+  fireEvent.pointerUp(window, { clientX: 50, clientY: 200 });
+  fireEvent.pointerDown(node, { clientX: 51, clientY: 201 });   // within 350ms/5px -> double-click-hold
+
+  expect(onSlTpChange).toHaveBeenCalledWith(1, { sl: 0 });
+});
+
+it("does not confuse a plain drag-a-line with the Spec-B measure gesture", () => {
+  const onSlTpChange = vi.fn();
+  const { container } = render(
+    <CandleChart
+      symbol="XAUUSDc" tf="M1" settings={DEFAULT_SETTINGS} candles={mockCandles}
+      onHover={() => {}} onNowVisibleChange={() => {}} onRequestOlder={() => {}}
+      lastBarMs={2_140_000} live={null} nowVisible={true}
+      draggablePositions={[draggablePos]}
+      onSlTpChange={onSlTpChange}
+    />
+  );
+  const node = container.querySelectorAll("div > div")[1] as HTMLElement;
+
+  // A single (non-double) press-and-drag on the SL line must go through the
+  // drag-a-line path, not fall through into the idle "clear frozen measure" branch.
+  fireEvent.pointerDown(node, { clientX: 50, clientY: 200 });
+  fireEvent.pointerMove(window, { clientX: 50, clientY: 190 });
+  fireEvent.pointerUp(window, { clientX: 50, clientY: 190 });
+
+  expect(onSlTpChange).toHaveBeenCalledTimes(1);
 });
