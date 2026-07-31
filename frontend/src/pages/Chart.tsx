@@ -205,6 +205,10 @@ export default function Chart() {
         />
         <LiveDot status={liveStatus} />
       </div>
+      {liveCmd.toast && <div className="glass p-3 mb-3 text-[12px] text-cyan">{liveCmd.toast}</div>}
+      {liveCmd.error && !liveCmd.preview && (
+        <div className="glass p-3 mb-3 text-[12px] text-neg">Ditolak: {liveCmd.error}</div>
+      )}
       {replayOpen && (
         <div className="mb-3 flex items-center justify-between">
           <ReplayControls
