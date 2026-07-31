@@ -463,6 +463,24 @@ def create_app(db_path: str | None = None) -> FastAPI:
     def api_training_summary(conn: sqlite3.Connection = Depends(get_conn)):
         return JSONResponse(api.to_jsonable(training.career_summary(conn)))
 
+    @app.patch("/api/training/positions/{position_id}/sltp")
+    def api_training_modify_sltp(
+        position_id: int,
+        sl: float | None = Body(None),
+        tp: float | None = Body(None),
+        conn: sqlite3.Connection = Depends(get_conn),
+    ):
+        try:
+            position = training.modify_sltp(conn, position_id, sl, tp)
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        return JSONResponse({"position": api.to_jsonable(position)})
+
+    @app.get("/api/training/sessions/{session_id}/stats")
+    def api_training_session_stats(session_id: int,
+                                   conn: sqlite3.Connection = Depends(get_conn)):
+        return JSONResponse(api.to_jsonable(training.get_session_stats(conn, session_id)))
+
     # -------------------------------------------------------- storage & maintenance
     @app.get("/api/storage/overview")
     def api_storage_overview(conn: sqlite3.Connection = Depends(get_conn)):
