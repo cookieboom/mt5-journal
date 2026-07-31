@@ -11,6 +11,9 @@ import { useReplayPrefs } from "../hooks/useReplayPrefs";
 import type { ReplayFormPrefs } from "../lib/replayPrefs";
 import { useLiveStatus } from "../hooks/useLiveStatus";
 import { useLiveForming } from "../hooks/useLiveForming";
+import { useLiveCommand } from "../hooks/useLiveCommand";
+import SltpConfirmDialog from "../components/SltpConfirmDialog";
+import ConfirmModal from "../components/ConfirmModal";
 import ChartToolbar from "../components/ChartToolbar";
 import LiveDot from "../components/LiveDot";
 import CandleChart from "../components/CandleChart";
@@ -39,6 +42,10 @@ export default function Chart() {
   const { data: live } = useApi<LiveData>("/api/live", 2500);
   const currency = live?.header.currency ?? "USC";
   const { status: liveStatus } = useLiveStatus();
+  const liveCmd = useLiveCommand();
+  const [sltpDialog, setSltpDialog] = useState<
+    { positionId: number; kind: "sl" | "tp"; price: number; removing?: boolean } | null
+  >(null);
 
   // --- Replay/training mode --------------------------------------------
   // Phase C isolation: this whole block only reads `settings` (for rendering)
@@ -169,8 +176,11 @@ export default function Chart() {
   const handleSlTpChange = useCallback((positionId: number, change: { sl?: number; tp?: number }) => {
     if (replayOpen) {
       replay.modifySltp(positionId, change);
+      return;
     }
-    // Live-mode handling added in Task 10.
+    const kind: "sl" | "tp" = change.sl !== undefined ? "sl" : "tp";
+    const price = (change.sl ?? change.tp)!;
+    setSltpDialog({ positionId, kind, price, removing: price === 0 });
   }, [replayOpen, replay]);
   const currentClose = shownCandles.length ? shownCandles[shownCandles.length - 1].c : null;
   const atEnd = !!replay.session && cursor !== null && cursor >= replay.session.range_end_msc;
@@ -348,6 +358,28 @@ export default function Chart() {
           )}
         </aside>
       </div>
+      {sltpDialog && (
+        <SltpConfirmDialog
+          positionId={sltpDialog.positionId}
+          kind={sltpDialog.kind}
+          price={sltpDialog.price}
+          removing={sltpDialog.removing}
+          onConfirm={(price) => {
+            setSltpDialog(null);
+            liveCmd.request(sltpDialog.positionId, "sltp", { [sltpDialog.kind]: price });
+          }}
+          onCancel={() => setSltpDialog(null)}
+        />
+      )}
+      {liveCmd.preview && (
+        <ConfirmModal
+          preview={liveCmd.preview}
+          submitting={liveCmd.submitting}
+          error={liveCmd.error}
+          onConfirm={liveCmd.confirm}
+          onCancel={liveCmd.cancel}
+        />
+      )}
     </div>
   );
 }
