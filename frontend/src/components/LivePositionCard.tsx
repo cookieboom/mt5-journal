@@ -10,8 +10,6 @@ export default function LivePositionCard({
   currency: string;
   onAction: (action: ActionKind, body: CommandBody) => void;
 }) {
-  const [sl, setSl] = useState("");
-  const [tp, setTp] = useState("");
   const [vol, setVol] = useState("");
   const [fieldError, setFieldError] = useState<string | null>(null);
   // "" = leave unchanged (null); a typed number (incl. 0) = that value;
@@ -42,23 +40,6 @@ export default function LivePositionCard({
       </div>
 
       <div className="flex flex-wrap gap-3 items-end text-[12px]">
-        <div className="flex gap-2 items-end">
-          <label className="flex flex-col text-muted text-[10px]">SL
-            <input className="bg-white/5 rounded px-2 py-1 w-24 text-ink num" value={sl}
-              onChange={(e) => setSl(e.target.value)} placeholder="kosong=tetap · 0=hapus" /></label>
-          <label className="flex flex-col text-muted text-[10px]">TP
-            <input className="bg-white/5 rounded px-2 py-1 w-24 text-ink num" value={tp}
-              onChange={(e) => setTp(e.target.value)} placeholder="kosong=tetap · 0=hapus" /></label>
-          <button className="px-3 py-1.5 rounded bg-violet/20 ring-1 ring-violet/40 text-ink"
-            onClick={() => {
-              const slV = optNum(sl), tpV = optNum(tp);
-              // Guard: a non-empty-but-invalid entry must never reach onAction —
-              // NaN would serialize to null and be silently read as "unchanged".
-              if (Number.isNaN(slV) || Number.isNaN(tpV)) { setFieldError("angka tidak valid"); return; }
-              setFieldError(null);
-              onAction("sltp", { sl: slV, tp: tpV });
-            }}>Ubah SL/TP…</button>
-        </div>
         <button className="px-3 py-1.5 rounded bg-neg/15 ring-1 ring-neg/35 text-ink"
           onClick={() => { setFieldError(null); onAction("close", {}); }}>Tutup {pos.volume} lot…</button>
         <div className="flex gap-2 items-end">
