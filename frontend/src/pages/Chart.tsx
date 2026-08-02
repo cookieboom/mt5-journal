@@ -160,11 +160,34 @@ export default function Chart() {
   useEffect(() => {
     if (replayOpen && cursor !== null) data.loadUpTo(cursor);
   }, [replayOpen, cursor, data.loadUpTo]);
-  const shownCandles = replayOpen && cursor !== null
-    ? clipToCursor(data.candles, cursor)
-    : mergeForming(data.candles, forming);
-  // Memoized: CandleChart's overlay effect re-runs on identity change of this
-  // prop, so an inline map(...) here would thrash price lines every render.
+
+  // Live mode: useChartData's own poll loop stops once its initial window is
+  // fully covered (status "ready") — nothing else ever asks the backend for
+  // bars that close afterward. mergeForming below can only bridge a SINGLE
+  // bar against data.candles, so once the forming bar (polled forever by
+  // useLiveForming) rolls over more than once since page load, the bar(s) in
+  // between are lost and a gap opens between the frozen historical tail and
+  // the live bar. Mirror replay's cursor-follow above: advance the loaded
+  // window to the forming bar's time so newly closed bars get pulled in.
+  const formingMs = forming?.time_msc ?? null;
+  useEffect(() => {
+    if (!replayOpen && formingMs !== null) data.loadUpTo(formingMs);
+  }, [replayOpen, formingMs, data.loadUpTo]);
+  // Memoized: CandleChart's data-push effect (and the overlay effect below)
+  // re-run on identity change of `candles`/`draggablePositions`. An inline
+  // recompute here handed CandleChart a new array on every unrelated Chart.tsx
+  // render (hover, nowVisible, ...) — series.setData() can itself shift the
+  // visible range, which calls back up through onNowVisibleChange/
+  // onRequestOlder into more Chart.tsx state, re-triggering this same render.
+  // Once data.candles actually started changing over time (live tail-follow
+  // below) that became a tight synchronous cascade — "Maximum update depth
+  // exceeded". Memoizing on the real inputs breaks the cascade.
+  const shownCandles = useMemo(
+    () => (replayOpen && cursor !== null
+      ? clipToCursor(data.candles, cursor)
+      : mergeForming(data.candles, forming, timeframeMs(tf))),
+    [replayOpen, cursor, data.candles, forming, tf],
+  );
   const draggableReplay = useMemo(
     () => (replayOpen
       ? replay.positions

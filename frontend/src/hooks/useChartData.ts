@@ -165,21 +165,40 @@ export function useChartData(
   // cursor never outruns the loaded bars. No-op once the target is already
   // covered. Fetches a FORWARD_CHUNK past the target so stepping doesn't fire a
   // request per bar. Mirrors loadOlder: never touches pollRef/timer/status
-  // (only its own error path), and toRef advances only on success so a failed
-  // fetch is retried by the next cursor advance rather than skipping a gap.
+  // (only its own error path).
+  // The FORWARD_CHUNK lookahead is only valid up to real "now" — replay data
+  // beyond the cursor already exists, but live data beyond "now" doesn't.
+  // Clamping here keeps toRef.current from ever being set into a future that
+  // hasn't happened yet: without it, live's tail-follow (Chart.tsx) would set
+  // toRef.current to targetMs + 200 bars on its first call, then its own
+  // `targetMs <= toRef.current` guard above would silently block every later
+  // bridge until wall-clock time caught up to that fictitious point (hours,
+  // for M1) — the historical window would freeze again after one bar.
+  // toRef.current only ever advances up to what `missing` confirms is
+  // actually covered, never blindly to the requested `to`. In live mode the
+  // just-closed bar can still be `missing`/`pending` here — `journal live`
+  // promotes a closed bar into `candles` on its own ~1-5s cycle, which races
+  // the frontend's poll. Advancing past an unconfirmed span anyway would
+  // drop that bar forever, since the next call's `from` starts exactly where
+  // this one left off and nothing else ever re-requests bars behind toRef.
+  // Leaving toRef short of `to` means the next rollover naturally retries
+  // the same gap instead.
   const loadUpTo = useCallback(async (targetMs: number) => {
     if (loadingNewerRef.current) return;
     if (targetMs <= toRef.current) return;    // already loaded past the cursor
     loadingNewerRef.current = true;
     const gen = genRef.current;
     const from = toRef.current;
-    const to = targetMs + timeframeMs(tf) * FORWARD_CHUNK;
+    const to = Math.min(targetMs + timeframeMs(tf) * FORWARD_CHUNK, Date.now());
     try {
       const resp = await fetchCandles(symbol, tf, from, to);
       if (!alive.current || gen !== genRef.current) return;
-      toRef.current = to;
       setCandles((prev) => capCandles(mergeCandles(prev, resp.candles), maxBars));
       setError(null);
+      const missing = resp.missing as [number, number][];
+      setMissing(missing);
+      const coveredTo = missing.length ? Math.min(to, missing[0][0]) : to;
+      if (coveredTo > toRef.current) toRef.current = coveredTo;
     } catch (e) {
       if (alive.current && gen === genRef.current) { setError(String(e)); setStatus("error"); }
     } finally {

@@ -150,3 +150,102 @@ it("a live SL/TP drag previews before it enqueues — never skips straight to th
   expect(postsTo(fetchMock, "/api/live/5/sltp/preview")).toBe(1);
   expect(postsTo(fetchMock, "/api/live/5/sltp")).toBe(1);
 });
+
+// Reproduces the reported bug: the live bar (useLiveForming, polled every 5s
+// forever) keeps advancing, but data.candles (useChartData) only refetches
+// while its initial window has gaps — once that settles to "ready" nothing
+// ever asks the backend for bars that close afterward. mergeForming can only
+// ever bridge a SINGLE bar against a stale data.candles, so after the forming
+// bar rolls over more than once since page load, the bar(s) in between vanish
+// and a permanent gap opens between the frozen historical tail and the live
+// bar. The fix must make live mode pull newly closed bars forward, the same
+// way replay already does via data.loadUpTo(cursor).
+it("live mode keeps the historical window advancing so it never gaps behind the live bar", async () => {
+  vi.useFakeTimers();
+  const T0 = 1_700_000_000_000;
+  vi.setSystemTime(T0);
+  const M5 = 5 * 60_000;
+
+  let formingMs = T0; // mutated mid-test to simulate the live bar rolling over
+  const candlesCalls: { from: string | null; to: string | null }[] = [];
+
+  const fetchMock = vi.fn((url: string) => {
+    if (url.startsWith("/api/candles/live")) {
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({
+          forming: { time_msc: formingMs, o: 1900, h: 1901, l: 1899, c: 1900.5, v: 1 },
+          beat_msc: formingMs, live: true,
+        }),
+      });
+    }
+    if (url.startsWith("/api/candles")) {
+      const q = new URL(url, "http://localhost").searchParams;
+      candlesCalls.push({ from: q.get("from"), to: q.get("to") });
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({
+          symbol: "XAUUSDc", timeframe: "M5",
+          candles: [{ time_msc: T0 - M5, o: 1900, h: 1905, l: 1895, c: 1900, v: 5 }],
+          missing: [], pending: false,
+        }),
+      });
+    }
+    if (url.startsWith("/api/live-status")) {
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ live: true, beat_msc: T0, age_ms: 100 }) });
+    }
+    if (url.startsWith("/api/live")) {
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({
+          header: { login: 0, currency: "USC", offset_s: 0 },
+          live: { positions: [], count: 0, total_floating: 0, total_volume: 0, age_s: 1, stale: false, empty: true },
+        }),
+      });
+    }
+    if (url.startsWith("/api/watch")) {
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ ok: true }) });
+    }
+    return Promise.resolve({ ok: true, json: () => Promise.resolve({ prefs: null }) });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+
+  try {
+    render(
+      <MemoryRouter initialEntries={["/chart"]}>
+        <Routes><Route path="/chart" element={<Chart />} /></Routes>
+      </MemoryRouter>,
+    );
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(candlesCalls.length).toBe(1); // initial historical fetch only
+
+    // First bar close after page load: the live feed moves one bar forward,
+    // and real time actually elapses by the same amount (realistic — a
+    // synthetic jump with the clock left behind would hide the overshoot bug
+    // below, since it only manifests once wall-clock time has caught up).
+    formingMs = T0 + M5;
+    await act(async () => { await vi.advanceTimersByTimeAsync(M5); });
+    expect(candlesCalls.length).toBe(2);
+    const first = candlesCalls[1];
+    expect(Number(first.from)).toBe(T0); // toRef.current from the initial window
+    // The bridging fetch must not overshoot past real "now" — a forward-chunk
+    // lookahead (fine for replay, where the range already exists) would jump
+    // toRef.current e.g. 200 bars into a future that hasn't happened yet for
+    // live data, permanently blocking every later bridge until wall-clock
+    // time caught up to that fictitious point.
+    expect(Number(first.to)).toBe(T0 + M5);
+
+    // Second bar close, sometime later. This is exactly where the overshoot
+    // bug froze the historical window: toRef.current stuck far in the
+    // future, so this bridge would silently never fire.
+    formingMs = T0 + 2 * M5;
+    await act(async () => { await vi.advanceTimersByTimeAsync(M5); });
+    expect(candlesCalls.length).toBe(3);
+    const second = candlesCalls[2];
+    expect(Number(second.from)).toBe(Number(first.to));
+    expect(Number(second.to)).toBe(T0 + 2 * M5);
+  } finally {
+    vi.useRealTimers();
+  }
+});

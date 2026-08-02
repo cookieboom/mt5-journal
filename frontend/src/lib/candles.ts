@@ -88,14 +88,26 @@ export function liveLines(
 }
 
 // Merge the single realtime forming bar into a sorted candle array: replace the
-// last bar if it shares time_msc, append if it is newer, ignore if older (a late
-// poll must never rewrite history). Returns a new array; never mutates input.
-export function mergeForming(candles: Candle[], forming: Candle | null): Candle[] {
+// last bar if it shares time_msc, append if it is EXACTLY one bar-interval
+// newer, ignore otherwise. Returns a new array; never mutates input.
+//
+// The moment a bar closes, `forming` (the live poll) advances to the next
+// bucket immediately — but `candles` (data.candles, via loadUpTo) only picks
+// up the just-closed bar once its own async fetch resolves, a bit later.
+// During that gap forming.time_msc sits MORE than one interval ahead of the
+// last historical bar. Appending it anyway would splice the brand-new,
+// barely-started next bar's tiny OHLC directly after the OLD last bar —
+// visually indistinguishable from "the just-closed bar's shape changing the
+// instant it becomes historical," since the wrong bar is shown in that slot
+// until the fetch resolves and this runs again. Requiring an exact
+// one-interval gap makes that state a no-op (just show `candles` as-is)
+// instead of a wrong bar.
+export function mergeForming(candles: Candle[], forming: Candle | null, intervalMs: number): Candle[] {
   if (!forming) return candles;
   if (candles.length === 0) return [forming];
   const last = candles[candles.length - 1];
   if (forming.time_msc === last.time_msc) return [...candles.slice(0, -1), forming];
-  if (forming.time_msc > last.time_msc) return [...candles, forming];
+  if (forming.time_msc === last.time_msc + intervalMs) return [...candles, forming];
   return candles;
 }
 

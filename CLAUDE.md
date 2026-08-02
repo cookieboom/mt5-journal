@@ -116,7 +116,10 @@ Phase 5 cutover)
 
 Currently on: **Frontend React rework COMPLETE — the SPA is the sole UI, served
 at `/` (Jinja retired, Phase 5 cutover). M9 live-bridge smoke still pending a
-human run — see docs/HANDOFF.md**
+human run — see docs/HANDOFF.md. Draggable SL/TP chart lines (replay
+instant-commit + live precision-dialog → ConfirmModal) MERGED to main
+2026-08-01 (`13fc345`); in-browser visual pass with the MT5 bridge running
+still pending a human run — see memory `sltp-drag-2026-08-01`.**
 
 ## graphify
 

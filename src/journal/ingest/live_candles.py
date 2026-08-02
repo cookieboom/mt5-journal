@@ -29,6 +29,7 @@ def serve_watches(client: MT5Client, conn: sqlite3.Connection, now_msc: int,
         frm = now_msc - (lookback_bars + 1) * size
         bars = client.copy_rates_range(symbol, tf, _ms_to_dt(frm), _ms_to_dt(now_msc))
         cur_bucket = bucket_start(now_msc, tf)
+        closed: list = []
         for c in bars:
             if c.time_msc is None:
                 continue
@@ -37,9 +38,28 @@ def serve_watches(client: MT5Client, conn: sqlite3.Connection, now_msc: int,
                 written += 1
             else:
                 cs.insert_candle(conn, symbol, tf, c)             # closed → promote
-        # Record coverage over the CLOSED span we just fetched, unconditionally —
-        # even a zero-bar fetch (e.g. a watch left open across a weekend/holiday)
-        # must be remembered, so a genuinely-empty closed slice is never re-fetched.
-        cs.record_coverage(conn, symbol, tf, frm, cur_bucket - 1)
+                closed.append(c)
+        if not closed:
+            # A watch left open across a weekend/holiday: the bridge has no
+            # closed bar for the whole window. That must still be remembered
+            # as covered, or the same genuinely-empty slice gets re-fetched
+            # every live cycle forever.
+            cs.record_coverage(conn, symbol, tf, frm, cur_bucket - 1)
+        else:
+            # copy_rates_range can legitimately come back SPARSE near the live
+            # edge — the broker/bridge hasn't finalized every recent minute
+            # yet — without the window being genuinely empty. Recording
+            # coverage over the full [frm, cur_bucket-1] span regardless would
+            # hide that hole forever: insert_candle's OR IGNORE never gets a
+            # second chance once coverage falsely claims the span complete,
+            # so candle_queue never re-fetches the missing bar. Only claim the
+            # run actually verified contiguous.
+            closed.sort(key=lambda c: c.time_msc)
+            lo = hi = closed[0].time_msc
+            for c in closed[1:]:
+                if c.time_msc - hi > size:
+                    break
+                hi = c.time_msc
+            cs.record_coverage(conn, symbol, tf, lo, hi + size - 1)
         conn.commit()
     return written

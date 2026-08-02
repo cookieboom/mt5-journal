@@ -528,3 +528,51 @@ def test_serve_watches_records_coverage_when_bridge_returns_no_bars(conn):
 
     assert written == 0
     assert cs.read_coverage(conn, "XAUUSDc", tf) != []
+
+
+def test_serve_watches_does_not_cover_a_hole_in_a_sparse_bridge_response(conn):
+    # copy_rates_range can legitimately come back SPARSE near the live edge —
+    # the broker/bridge hasn't finalized every recent minute yet — without the
+    # window being genuinely empty (that's the weekend/holiday case above,
+    # already covered). Blanket-recording coverage over [frm, cur_bucket-1]
+    # regardless would hide the hole forever: insert_candle's OR IGNORE never
+    # gets a second chance once coverage falsely claims the span is complete,
+    # so candle_queue never re-fetches the missing bar. This reproduces the
+    # reported bug: the live chart's freshly-promoted tail showed scattered
+    # 1-bar gaps while `Data health` still claimed 100% covered.
+    from journal.ingest.live_candles import serve_watches
+    from journal.store import live_store as ls
+    from journal.store import candles_store as cs
+    from journal.adapter.base import Candle
+
+    tf = "M5"; size = 300_000
+    now = 1_700_000_000_000
+    now = now - (now % size) + 120_000          # 2 min into the current bucket
+    cur_bucket = now - (now % size)
+    bar_a = cur_bucket - 3 * size                # verified contiguous run...
+    bar_b = cur_bucket - 2 * size                # ...ends here
+    # bar at cur_bucket - 1*size is MISSING from this response (the hole)
+
+    def _c(t):
+        return Candle(time_msc=t, open=1, high=2, low=0.5, close=1.5,
+                      tick_volume=5, spread=2, real_volume=0)
+
+    class C(FakeLiveClient):
+        def copy_rates_range(self, symbol, timeframe, date_from, date_to):
+            return [_c(bar_a), _c(bar_b)]  # skips cur_bucket - 1*size entirely
+
+    client = C([[]])
+    ls.upsert_watch(conn, "XAUUSDc", tf, now, ttl_ms=30_000)
+    serve_watches(client, conn, now)
+
+    # Both returned bars are promoted regardless (insert never depends on
+    # coverage verdicts).
+    assert len(cs.read_candles(conn, "XAUUSDc", tf, bar_a, bar_a)) == 1
+    assert len(cs.read_candles(conn, "XAUUSDc", tf, bar_b, bar_b)) == 1
+
+    # The hole (the bucket right before cur_bucket) must NOT be silently
+    # claimed as covered — it must still show up as missing so a later
+    # candle_queue fill can actually recover it.
+    hole_start = cur_bucket - size
+    missing = cs.missing_ranges(cs.read_coverage(conn, "XAUUSDc", tf), (hole_start, cur_bucket - 1))
+    assert missing == [(hole_start, cur_bucket - 1)]
