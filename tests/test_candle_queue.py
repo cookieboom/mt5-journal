@@ -38,7 +38,7 @@ def test_fulfill_fills_and_marks_done(tmp_path):
     conn = connect(tmp_path / "t.db")
     q.request_candles(conn, "XAUUSDc", "M1", 0, 3*M1)
     req = q.claim_next_request(conn)
-    bars = fulfill_request(FakeRates([_c(BASE + M1)]), conn, req)
+    bars = fulfill_request(FakeRates([_c(BASE + M1)]), conn, req, BASE + 100 * M1)
     assert bars == 1
     row = conn.execute("SELECT status, bars_written FROM candle_requests WHERE id=?", (req["id"],)).fetchone()
     assert row["status"] == "done" and row["bars_written"] == 1

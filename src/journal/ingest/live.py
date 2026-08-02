@@ -299,7 +299,7 @@ def live_cycle(
     if req is not None:
         candle_request_id = int(req["id"])
         try:
-            candle_bars_written = fulfill_request(client, conn, req)
+            candle_bars_written = fulfill_request(client, conn, req, observed_msc)
         except Exception:
             log.exception(
                 "live: candle request %d failed — marked failed, will not auto-retry "

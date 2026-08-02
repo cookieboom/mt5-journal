@@ -24,10 +24,12 @@ def _c(t):
     return Candle(time_msc=t, open=1, high=2, low=0.5, close=1.5,
                   tick_volume=1, spread=1, real_volume=1)
 
+NOW = BASE + 100 * M1   # far past the fetched range in all of the tests below
+
 def test_fill_fetches_gap_inserts_and_records_coverage(tmp_path):
     conn = connect(tmp_path / "t.db")
     client = FakeRates({(BASE, BASE+3*M1): [_c(BASE+M1), _c(BASE+2*M1)]})
-    n = fill_range(client, conn, "XAUUSDc", "M1", BASE, BASE+3*M1)
+    n = fill_range(client, conn, "XAUUSDc", "M1", BASE, BASE+3*M1, NOW)
     assert n == 2
     assert [r["time_msc"] for r in cs.read_candles(conn, "XAUUSDc", "M1", BASE, BASE+3*M1)] == [BASE+M1, BASE+2*M1]
     assert cs.read_coverage(conn, "XAUUSDc", "M1") == [(BASE, BASE+3*M1)]
@@ -35,18 +37,40 @@ def test_fill_fetches_gap_inserts_and_records_coverage(tmp_path):
 def test_fill_records_coverage_for_empty_range(tmp_path):
     conn = connect(tmp_path / "t.db")
     client = FakeRates({})  # market closed: no bars
-    n = fill_range(client, conn, "XAUUSDc", "M1", BASE, BASE+3*M1)
+    n = fill_range(client, conn, "XAUUSDc", "M1", BASE, BASE+3*M1, NOW)
     assert n == 0
     assert cs.read_coverage(conn, "XAUUSDc", "M1") == [(BASE, BASE+3*M1)]  # remembered as fetched
 
 def test_fill_is_idempotent(tmp_path):
     conn = connect(tmp_path / "t.db")
     client = FakeRates({(BASE, BASE+3*M1): [_c(BASE+M1)]})
-    fill_range(client, conn, "XAUUSDc", "M1", BASE, BASE+3*M1)
+    fill_range(client, conn, "XAUUSDc", "M1", BASE, BASE+3*M1, NOW)
     client.calls.clear()
-    n2 = fill_range(client, conn, "XAUUSDc", "M1", BASE, BASE+3*M1)  # already covered
+    n2 = fill_range(client, conn, "XAUUSDc", "M1", BASE, BASE+3*M1, NOW)  # already covered
     assert n2 == 0
     assert client.calls == []   # no gap → no bridge call
+
+def test_fill_does_not_freeze_the_still_forming_bucket(tmp_path):
+    """The live edge: `to_ms` reaches into the CURRENT bucket (real bug seen
+    2026-08-01 — a chart's forward-loader requests up to Date.now(), the bridge
+    answers with that bucket's partial-so-far OHLC, and the old code inserted it
+    as if closed. INSERT OR IGNORE then means the real closed bar, fetched on a
+    later cycle, can never overwrite that frozen partial snapshot — the bar
+    stays visually broken forever."""
+    from journal.domain.resample import bucket_start
+    conn = connect(tmp_path / "t.db")
+    base = bucket_start(BASE, "M1")                        # bar-aligned start
+    now = base + M1 + 30_000                               # 30s into the 2nd bucket
+    partial = Candle(time_msc=base+M1, open=1, high=1.1, low=0.9, close=1.05,
+                     tick_volume=1, spread=1, real_volume=1)   # forming, NOT closed
+    client = FakeRates({(base, now): [_c(base), partial]})
+    n = fill_range(client, conn, "XAUUSDc", "M1", base, now, now)
+    assert n == 1                                          # only the closed `base` bar
+    assert [r["time_msc"] for r in cs.read_candles(conn, "XAUUSDc", "M1", base, now)] == [base]
+    # coverage must stop short of the still-forming bucket, so a later cycle
+    # (once it has actually closed) is asked for it again instead of treating
+    # this partial fetch as the final word.
+    assert cs.read_coverage(conn, "XAUUSDc", "M1") == [(base, base+M1-1)]
 
 
 class ConcurrentWriter:
@@ -88,5 +112,5 @@ def test_fill_does_not_hold_write_lock_across_bridge_fetches(tmp_path):
     cs.record_coverage(conn, "XAUUSDc", "M1", BASE + M1, BASE + 2 * M1)
     conn.commit()
     client = ConcurrentWriter(db, {})
-    fill_range(client, conn, "XAUUSDc", "M1", BASE, BASE + 3 * M1)
+    fill_range(client, conn, "XAUUSDc", "M1", BASE, BASE + 3 * M1, NOW)
     assert client.lock_errors == []   # a concurrent enqueue must never be locked out

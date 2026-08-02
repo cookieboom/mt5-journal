@@ -382,11 +382,12 @@ def candles_warm(
     an offline session). Needs the live bridge. Idempotent."""
     from .adapter.live import LiveMT5Client
     from .ingest.candle_fill import fill_range
+    from .store.db import now_ms
 
     client = LiveMT5Client()
     conn = connect(db)
     try:
-        n = fill_range(client, conn, symbol, timeframe, from_ms, to_ms)
+        n = fill_range(client, conn, symbol, timeframe, from_ms, to_ms, now_ms())
     finally:
         conn.close()
     typer.echo("== candles-warm ==")
