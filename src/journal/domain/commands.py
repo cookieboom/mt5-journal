@@ -299,12 +299,21 @@ def build_request(
     position_id = _get(position, "position_id")
 
     if kind == "modify_sltp":
+        # MT5's TRADE_ACTION_SLTP has no partial-update semantics: a field the
+        # bridge omits from the request defaults to 0.0 on the broker side,
+        # which MT5 reads as "clear this level" (rule 4 / trap 6). So the side
+        # the human did NOT touch must be carried forward from the position's
+        # CURRENT level, not left None — otherwise setting only the SL wipes a
+        # live TP. `None` still survives through untouched when the current
+        # level is itself unknown (NULL); there is nothing to fill in with.
+        sl_out = sl if sl is not None else _get(position, "sl")
+        tp_out = tp if tp is not None else _get(position, "tp")
         return TradeRequest(
             action=TradeAction.SLTP,
             position_id=position_id,
             symbol=symbol,
-            sl=sl,
-            tp=tp,
+            sl=sl_out,
+            tp=tp_out,
             # No volume and no filling: a modify is not a fill.
         )
 

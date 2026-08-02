@@ -328,11 +328,24 @@ def test_modify_sltp_uses_the_sltp_action_and_no_volume():
     assert req.tp == 3320.0
 
 
-def test_modify_sltp_passes_none_through_untouched():
-    """None must survive as None all the way to `_to_bridge_request`, which
-    omits it. Coercing it to 0.0 anywhere along the way silently clears a live
-    stop-loss."""
-    req = build_request("modify_sltp", _buy(), _SPEC, tp=3320.0)
+def test_modify_sltp_fills_the_untouched_side_from_the_current_position():
+    """MT5's TRADE_ACTION_SLTP request has no partial-update semantics: a field
+    the bridge omits from the request dict is a field MqlTradeRequest defaults
+    to 0.0, which MT5 reads as "clear this level" (trap 6). So the side the
+    human did NOT drag must be filled in from the position's CURRENT sl/tp, not
+    left as None — otherwise dragging just the SL wipes a live TP at the
+    broker. This was the actual bug: live chart, drag one line, the other
+    vanishes."""
+    req = build_request("modify_sltp", _buy(sl=3290.0, tp=0.0), _SPEC, tp=3320.0)
+    assert req.sl == 3290.0
+    assert req.tp == 3320.0
+
+
+def test_modify_sltp_leaves_a_field_none_when_the_position_level_is_unknown():
+    """Rule 4: NULL means unknown, not 0. If the current sl/tp is itself
+    unknown (NULL, not 0.0) there is nothing to fill in with — None must still
+    survive through untouched rather than being coerced to 0."""
+    req = build_request("modify_sltp", _buy(sl=None), _SPEC, tp=3320.0)
     assert req.sl is None
 
 
