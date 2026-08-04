@@ -554,3 +554,22 @@ per-symbol session hours (BTC 24/7, EUR ≈24h×5d, XAU ≈23h×5d — doc §7) 
 chart timeframe selection (duration ladder, ≤60 trade-bars, floor M1 — M3,
 CURRENT STATE above) · chart cache identity (`position_id`, never `trades.id`
 — M3, CURRENT STATE above).
+
+## PENDING HUMAN — risk-based auto lot sizing (2026-08-04)
+
+Automated gates are green; none of them touched a real broker. Before trusting
+this with size:
+
+1. Start the MT5 bridge and `uv run journal live`. Confirm `journal doctor`
+   reports the account and a recent tick.
+2. On `/chart`, drag the SL line below the current price. Confirm the panel
+   shows a lot, a risk in USC, and a Buy label — and that dragging above the
+   price flips it to Sell.
+3. Set the risk to the smallest workable value and open ONE position on the
+   smallest symbol. Confirm: the ConfirmModal shows the intent sentence; the
+   command appears in the audit log; `journal live` sends it; MT5 shows the
+   position WITH the SL attached from the first tick.
+4. Confirm the realised risk matches the panel's figure within the entry
+   slippage, using `risk_amount` on the resulting trade after `journal sync`.
+5. Try to open with an SL far enough away to exceed 5% of balance. Confirm the
+   panel refuses and no command row is written.
