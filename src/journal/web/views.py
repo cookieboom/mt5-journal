@@ -19,7 +19,9 @@ from ..analytics.report import build_report
 from ..analytics.sessions import session_of
 from ..analytics.weekly import build_weekly, iso_week_bounds_ms
 from ..annotate import get_annotation, list_tags
-from ..domain.commands import build_request
+from ..domain import risk
+from ..domain.commands import CommandError, build_request, validate
+from ..domain.risk import risk_amount
 from ..store.db import now_ms, one_account_login
 from . import format as fmt
 
@@ -495,3 +497,116 @@ def preview_command(
         "symbol": pos["symbol"],
         "fields": {"sl": sl, "tp": tp, "volume": volume},
     }
+
+
+# ---------------------------------------------------------- risk sizing (M9+)
+
+
+def size_order(
+    conn: sqlite3.Connection, login: int, *,
+    symbol: str, entry: float | None, sl: float | None, tp: float | None,
+    risk_mode: str, risk_value: float | None,
+) -> dict:
+    """Derive a lot size from a stop distance and a risk budget.
+
+    Writes nothing. Returns the numbers the panel shows PLUS the reason it
+    cannot, so a half-finished drag renders an explanation instead of an HTTP
+    error. `error` non-null always means `volume` is null: there is no partial
+    answer here, and a number the human could act on must never appear beside a
+    refusal.
+
+    The reported `risk_usc` is the risk of the ROUNDED lot — what will actually
+    be at stake — which is always at or below the budget, never above it.
+
+    This is arithmetic on numbers the human supplied. It does not choose the
+    symbol, the side, the stop, or the moment (rule 9).
+    """
+    out = {
+        "volume": None, "risk_usc": None, "risk_pct": None,
+        "distance": None, "rr": None, "direction": None, "error": None,
+    }
+
+    spec = conn.execute(
+        "SELECT * FROM symbol_specs WHERE symbol = ?", (symbol,)
+    ).fetchone()
+    if spec is None:
+        out["error"] = (
+            f"Spesifikasi simbol {symbol} belum ada di database — "
+            f"jalankan `journal sync` dulu."
+        )
+        return out
+
+    balance = execute.account_balance(conn, login)
+
+    direction = risk.direction_for_sl(entry, sl)
+    if direction is None:
+        out["error"] = (
+            "SL harus berada di atas atau di bawah harga sekarang — "
+            "tarik garisnya menjauh dari harga."
+        )
+        return out
+    out["direction"] = direction
+    out["distance"] = abs(entry - sl)
+
+    # Budget in account currency (USC). Percent mode needs a balance; fixed
+    # mode does not — but the ceiling check downstream needs one either way.
+    if risk_mode == "pct":
+        if balance is None:
+            out["error"] = (
+                "Balance akun belum diketahui — jalankan `journal sync` dulu, "
+                "atau isi risiko dalam USC."
+            )
+            return out
+        if risk_value is None or risk_value <= 0:
+            out["error"] = "Risiko harus lebih besar dari 0."
+            return out
+        budget = balance * risk_value / 100.0
+    elif risk_mode == "usc":
+        if risk_value is None or risk_value <= 0:
+            out["error"] = "Risiko harus lebih besar dari 0."
+            return out
+        budget = risk_value
+    else:
+        out["error"] = f"Mode risiko tidak dikenal: {risk_mode!r}."
+        return out
+
+    raw = risk.volume_for_risk(
+        entry, sl, spec["tick_size"], spec["tick_value"], budget
+    )
+    volume = risk.floor_to_step(raw, spec["volume_step"])
+    if volume is None:
+        out["error"] = (
+            "Ukuran lot tidak bisa dihitung — tick_size/tick_value/volume_step "
+            "simbol belum diketahui. Jalankan `journal sync` dulu."
+        )
+        return out
+
+    # A budget too thin for this stop distance floors to 0 lot. `validate`'s
+    # own zero-volume message is generic ("isi volume-nya") — meant for a human
+    # who forgot to type a number, not for a budget that computed to nothing.
+    # Say what actually happened instead of quietly clamping up to volume_min.
+    if volume <= 1e-9:
+        vmin = spec["volume_min"]
+        out["error"] = (
+            f"Budget risiko terlalu kecil untuk jarak SL ini — ukuran lot "
+            f"dibulatkan ke bawah menjadi 0"
+            + (f" (di bawah volume minimum broker {vmin:g} lot)." if vmin else ".")
+        )
+        return out
+
+    # One refusal path for everything a real order would be refused for, so the
+    # panel can never show a lot the confirm step would then reject.
+    pos, _ = execute.load_open_context(conn, login, symbol, direction, entry)
+    try:
+        validate("open", pos, spec, sl=sl, tp=tp, volume=volume, balance=balance)
+    except CommandError as e:
+        out["error"] = str(e)
+        return out
+
+    realised = risk_amount(entry, sl, spec["tick_size"], spec["tick_value"], volume)
+    out["volume"] = volume
+    out["risk_usc"] = realised
+    out["risk_pct"] = (realised / balance * 100.0) if balance else None
+    if tp is not None and abs(tp) > 1e-9:
+        out["rr"] = abs(tp - entry) / out["distance"]
+    return out

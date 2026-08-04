@@ -32,10 +32,11 @@ def conn(tmp_path):
     c.close()
 
 
-def _seed_account(conn, currency="USC"):
+def _seed_account(conn, currency="USC", balance=None):
     conn.execute(
-        "INSERT INTO accounts (login, currency, first_seen_at) VALUES (?, ?, 1)",
-        (_LOGIN, currency),
+        "INSERT INTO accounts (login, currency, balance, first_seen_at) "
+        "VALUES (?, ?, ?, 1)",
+        (_LOGIN, currency, balance),
     )
     conn.commit()
 
@@ -223,12 +224,14 @@ def test_weekly_context_attributes_by_close(conn):
 def _seed_spec(
     conn, symbol="XAUUSDc", *, trade_mode=4,
     volume_min=0.01, volume_max=100.0, volume_step=0.01,
+    tick_size=0.001, tick_value=0.1,
 ):
     conn.execute(
         "INSERT INTO symbol_specs (symbol, symbol_base, fetched_at, "
-        "volume_min, volume_max, volume_step, trade_mode) "
-        "VALUES (?, ?, 1, ?, ?, ?, ?)",
-        (symbol, symbol[:-1], volume_min, volume_max, volume_step, trade_mode),
+        "volume_min, volume_max, volume_step, trade_mode, tick_size, tick_value) "
+        "VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?)",
+        (symbol, symbol[:-1], volume_min, volume_max, volume_step, trade_mode,
+         tick_size, tick_value),
     )
     conn.commit()
 
@@ -571,3 +574,105 @@ def test_api_trade_png_prefs_route_precedes_position_id_catchall():
     # handler, not be captured by /api/trades/{position_id}.
     assert _resolve(app, "GET", "/api/trades/png-prefs") == "api_get_trade_png_prefs"
     assert _resolve(app, "PUT", "/api/trades/png-prefs") == "api_put_trade_png_prefs"
+
+
+# ------------------------------------------------------ /api/size (no httpx)
+# Same reason as /api/candles above: no TestClient/httpx. `_size` calls the
+# plain route function directly (bypassing FastAPI's Depends wiring) and
+# returns the parsed JSON body, mirroring `_endpoint`/`json.loads` elsewhere
+# in this file.
+
+
+def _size(conn, **body):
+    app = create_app(":memory:")
+    fn = _endpoint(app, "api_size")
+    defaults = {"symbol": None, "entry": None, "sl": None, "tp": None,
+                "risk_mode": "pct", "risk_value": None}
+    defaults.update(body)
+    resp = fn(conn=conn, **defaults)
+    assert resp.status_code == 200
+    return json.loads(resp.body)
+
+
+def test_size_returns_the_reference_lot(conn):
+    _seed_account(conn, balance=100_000.0)   # 100000 USC = $1000
+    _seed_spec(conn)
+    d = _size(conn, symbol="XAUUSDc", entry=4035.0, sl=4030.0, tp=4045.0,
+              risk_mode="usc", risk_value=50.0)
+    assert d["error"] is None
+    assert abs(d["volume"] - 0.10) < 1e-9
+    assert abs(d["risk_usc"] - 50.0) < 1e-6
+    assert d["direction"] == "buy"
+    assert abs(d["distance"] - 5.0) < 1e-9
+    assert abs(d["rr"] - 2.0) < 1e-9          # (4045-4035) / (4035-4030)
+
+
+def test_size_percent_mode_reads_the_balance(conn):
+    _seed_account(conn, balance=100_000.0)
+    _seed_spec(conn)
+    # 0.05% of 100000 USC = 50 USC -> the same 0.10 lot.
+    d = _size(conn, symbol="XAUUSDc", entry=4035.0, sl=4030.0, tp=None,
+              risk_mode="pct", risk_value=0.05)
+    assert d["error"] is None
+    assert abs(d["volume"] - 0.10) < 1e-9
+    assert abs(d["risk_pct"] - 0.05) < 1e-6
+    assert d["rr"] is None                     # no TP set
+
+
+def test_size_reports_the_realised_risk_of_the_rounded_lot(conn):
+    """The lot is floored to the broker's step, so the risk actually taken is
+    slightly BELOW the budget. Report what will happen, not what was asked."""
+    _seed_account(conn, balance=100_000.0)
+    _seed_spec(conn)
+    d = _size(conn, symbol="XAUUSDc", entry=4035.0, sl=4030.0, tp=None,
+              risk_mode="usc", risk_value=68.0)     # -> 0.136 lot -> floor 0.13
+    assert abs(d["volume"] - 0.13) < 1e-9
+    assert abs(d["risk_usc"] - 65.0) < 1e-6         # 0.13 lot, not 68
+    assert d["risk_usc"] <= 68.0 + 1e-9
+
+
+def test_size_refuses_a_stop_at_the_price(conn):
+    _seed_account(conn, balance=100_000.0)
+    _seed_spec(conn)
+    d = _size(conn, symbol="XAUUSDc", entry=4035.0, sl=4035.0, tp=None,
+              risk_mode="usc", risk_value=50.0)
+    assert d["volume"] is None
+    assert d["error"]                            # human-readable, non-empty
+    assert d["direction"] is None
+
+
+def test_size_refuses_a_budget_too_small_for_the_distance(conn):
+    """0.4 USC over a 5-point XAUUSDc stop sizes to 0.0008 lot, which floors to
+    0 — below volume_min. Say so; do not clamp up to the minimum."""
+    _seed_account(conn, balance=100_000.0)
+    _seed_spec(conn)
+    d = _size(conn, symbol="XAUUSDc", entry=4035.0, sl=4030.0, tp=None,
+              risk_mode="usc", risk_value=0.4)
+    assert d["volume"] is None
+    assert "minimum" in d["error"] or "kecil" in d["error"]
+
+
+def test_size_refuses_over_the_risk_ceiling(conn):
+    _seed_account(conn, balance=1000.0)          # 1000 USC; 5% = 50 USC
+    _seed_spec(conn)
+    d = _size(conn, symbol="XAUUSDc", entry=4035.0, sl=4030.0, tp=None,
+              risk_mode="usc", risk_value=80.0)
+    assert d["volume"] is None
+    assert "5" in d["error"]
+
+
+def test_size_refuses_an_unknown_symbol(conn):
+    _seed_account(conn, balance=100_000.0)
+    d = _size(conn, symbol="GBPUSDc", entry=1.25, sl=1.24, tp=None,
+              risk_mode="usc", risk_value=50.0)
+    assert d["volume"] is None
+    assert "sync" in d["error"]
+
+
+def test_size_refuses_percent_mode_with_an_unknown_balance(conn):
+    _seed_account(conn, balance=None)
+    _seed_spec(conn)
+    d = _size(conn, symbol="XAUUSDc", entry=4035.0, sl=4030.0, tp=None,
+              risk_mode="pct", risk_value=1.0)
+    assert d["volume"] is None
+    assert "sync" in d["error"] or "balance" in d["error"]

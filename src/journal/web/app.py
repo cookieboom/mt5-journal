@@ -265,6 +265,28 @@ def create_app(db_path: str | None = None) -> FastAPI:
         ts = prefs_store.set_replay_prefs(conn, prefs)
         return JSONResponse({"ok": True, "updated_ms": ts})
 
+    # --- risk-based sizing (writes nothing). Shared by replay and live: the
+    # panel asks here on every drag, and the live open path recomputes from the
+    # same function, so a lot the client "knows" is never trusted.
+    @app.post("/api/size")
+    def api_size(
+        symbol: str = Body(...),
+        entry: float | None = Body(None),
+        sl: float | None = Body(None),
+        tp: float | None = Body(None),
+        risk_mode: str = Body("pct"),
+        risk_value: float | None = Body(None),
+        conn: sqlite3.Connection = Depends(get_conn),
+    ):
+        try:
+            login = views.account_header(conn)["login"]
+        except RuntimeError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        return JSONResponse(api.to_jsonable(views.size_order(
+            conn, login, symbol=symbol, entry=entry, sl=sl, tp=tp,
+            risk_mode=risk_mode, risk_value=risk_value,
+        )))
+
     # --- two-step trade command (M9 safety: preview writes nothing; enqueue
     # inserts ONE pending row; `journal live` executes. Validation lives in
     # domain/commands via preview_command/enqueue and is re-run at enqueue.)
