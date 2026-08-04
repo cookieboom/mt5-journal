@@ -102,6 +102,27 @@ src/journal/
 - Touching the schema → read `src/journal/store/schema.sql`. Schema changes need
   a migration file; do not edit `schema.sql` in place once data exists.
 
+## Pipeline
+
+**New feature** (anything touching more than one file):
+
+1. Brainstorm → spec in `docs/specs/<name>.md`. No code yet.
+2. Numbered task list; one task = one commit-able unit.
+3. Branch + worktree per spec. Never build on `main`.
+4. Per task: failing test first (rule 7), then code, then `uv run pytest`.
+5. Whole-branch review before merge; fix wave; re-review until clean.
+6. Merge only when Definition of done holds. Fast-forward, no force-push.
+
+**Bug fix**:
+
+1. Reproduce as a failing test. No repro → no fix.
+2. Root cause, not symptom: grep every caller of the function you are about to
+   touch. The fix goes at the shared choke point, not in each caller.
+3. Full `uv run pytest`, not just the new test — the fix moved a shared path.
+4. Single-file, single-cause → straight to `main`. Otherwise branch.
+
+Skip the ceremony for typos, comments, and one-line constants.
+
 ## Definition of done
 
 A task is done when: tests pass, you have pasted the actual pytest output, and
