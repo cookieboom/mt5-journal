@@ -12,6 +12,7 @@ import type { ReplayFormPrefs } from "../lib/replayPrefs";
 import { useLiveStatus } from "../hooks/useLiveStatus";
 import { useLiveForming } from "../hooks/useLiveForming";
 import { useLiveCommand } from "../hooks/useLiveCommand";
+import { useRiskSizing } from "../hooks/useRiskSizing";
 import SltpConfirmDialog from "../components/SltpConfirmDialog";
 import ConfirmModal from "../components/ConfirmModal";
 import ChartToolbar from "../components/ChartToolbar";
@@ -22,10 +23,11 @@ import ChartInfoPanel from "../components/ChartInfoPanel";
 import DataHealthPanel from "../components/DataHealthPanel";
 import ReplayConfigModal from "../components/ReplayConfigModal";
 import ReplayControls from "../components/ReplayControls";
-import ReplayOrderTicket from "../components/ReplayOrderTicket";
 import ReplayPositions from "../components/ReplayPositions";
 import ReplaySummary from "../components/ReplaySummary";
+import RiskSizePanel from "../components/RiskSizePanel";
 import { useChartData } from "../hooks/useChartData";
+import { PLANNED_ID } from "../lib/sltpDrag";
 
 export interface ChartHandle { jumpToNow: () => void }
 
@@ -206,6 +208,14 @@ export default function Chart() {
     [replayOpen, replay.positions],
   );
   const handleSlTpChange = useCallback((positionId: number, change: { sl?: number; tp?: number }) => {
+    // A planned order is not a position: its "commit" is local state, and the
+    // real command only leaves on the button. Instant, no dialog — the human is
+    // still choosing.
+    if (positionId === PLANNED_ID) {
+      if (change.sl !== undefined) setPlannedSl(change.sl === 0 ? null : change.sl);
+      if (change.tp !== undefined) setPlannedTp(change.tp === 0 ? null : change.tp);
+      return;
+    }
     if (replayOpen) {
       replay.modifySltp(positionId, change);
       return;
@@ -216,6 +226,21 @@ export default function Chart() {
   }, [replayOpen, replay]);
   const currentClose = shownCandles.length ? shownCandles[shownCandles.length - 1].c : null;
   const atEnd = !!replay.session && cursor !== null && cursor >= replay.session.range_end_msc;
+
+  // The order being sized. `entry` is whatever price the chart is showing now:
+  // the forming bar's close in live, the cursor bar's close in replay. Both are
+  // already computed for the info panel — this reuses them rather than adding a
+  // second notion of "current price".
+  const [plannedSl, setPlannedSl] = useState<number | null>(null);
+  const [plannedTp, setPlannedTp] = useState<number | null>(null);
+  const plannedEntry = currentClose ?? null;
+  const sizing = useRiskSizing({
+    symbol, entry: plannedEntry, sl: plannedSl, tp: plannedTp,
+  });
+  const plannedOrder = plannedEntry === null ? null : {
+    entry: plannedEntry, sl: plannedSl, tp: plannedTp,
+    direction: sizing.result?.direction ?? null,
+  };
 
   const competitive = replayPrefs.prefs.competitiveMode;
   const { data: career } = useApi<TrainingSummary>(
@@ -285,6 +310,7 @@ export default function Chart() {
               settings={settings}
               candles={shownCandles}
               draggablePositions={draggableReplay}
+              plannedOrder={plannedOrder}
               onSlTpChange={handleSlTpChange}
               lastBarMs={data.lastBarMs}
               onHover={setHovered}
@@ -367,7 +393,23 @@ export default function Chart() {
         <aside className="w-[240px] shrink-0 hidden lg:flex lg:flex-col gap-3 overflow-y-auto">
           {replayOpen ? (
             <>
-              <ReplayOrderTicket disabled={!replay.session || atEnd} onSubmit={replay.open} />
+              <RiskSizePanel
+                disabled={!replay.session || atEnd}
+                currency={currency}
+                prefs={sizing.prefs}
+                onPrefsChange={sizing.setPrefs}
+                entry={plannedEntry}
+                sl={plannedSl}
+                tp={plannedTp}
+                onSlChange={setPlannedSl}
+                onTpChange={setPlannedTp}
+                result={sizing.result}
+                loading={sizing.loading}
+                onSubmit={(o) => replay.open({
+                  direction: o.direction, volume: o.volume,
+                  sl: plannedSl ?? 0, tp: plannedTp ?? 0,
+                })}
+              />
               <ReplayPositions
                 positions={replay.positions}
                 currentClose={currentClose}
@@ -385,6 +427,23 @@ export default function Chart() {
             </>
           ) : (
             <>
+              <RiskSizePanel
+                disabled={!live || live.live.empty === undefined}
+                currency={currency}
+                prefs={sizing.prefs}
+                onPrefsChange={sizing.setPrefs}
+                entry={plannedEntry}
+                sl={plannedSl}
+                tp={plannedTp}
+                onSlChange={setPlannedSl}
+                onTpChange={setPlannedTp}
+                result={sizing.result}
+                loading={sizing.loading}
+                onSubmit={() => liveCmd.request(null, "open", {
+                  symbol, entry: plannedEntry, sl: plannedSl, tp: plannedTp,
+                  risk_mode: sizing.prefs.mode, risk_value: sizing.prefs.value,
+                })}
+              />
               <div className="glass w-full p-3">
                 <ChartInfoPanel
                   symbol={symbol}

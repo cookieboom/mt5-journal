@@ -90,13 +90,20 @@ export interface CommandRow {
 export interface CommandsData { header: Header; commands: CommandRow[]; }
 
 export interface PreviewResult {
-  intent: string; position_id: number; kind: string; symbol: string;
+  // null for an "open": no position exists yet to attach an id to.
+  intent: string; position_id: number | null; kind: string; symbol: string;
   fields: { sl: number | null; tp: number | null; volume: number | null };
 }
 
 // A trade action: the URL segment and the command body it carries.
-export type ActionKind = "sltp" | "close" | "close-partial" | "add-volume";
-export interface CommandBody { sl?: number | null; tp?: number | null; volume?: number | null; }
+export type ActionKind = "sltp" | "close" | "close-partial" | "add-volume" | "open";
+export interface CommandBody {
+  sl?: number | null; tp?: number | null; volume?: number | null;
+  // "open" only: no position exists yet, so the command carries what would
+  // otherwise come from the position row.
+  symbol?: string; entry?: number | null;
+  risk_mode?: RiskPrefs["mode"]; risk_value?: number;
+}
 
 export interface TradeRow {
   position_id: number;

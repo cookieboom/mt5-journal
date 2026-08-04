@@ -14,11 +14,13 @@
 // to CandleChart, and CandleChart really is a forwardRef component — the mock
 // must be one too, or React silently calls it with undefined props instead of
 // the real ones (confirmed by hand: a plain function-component mock breaks).
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
-import { it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import React from "react";
 import Chart from "./Chart";
+import * as api from "../lib/api";
+import type { SizeResult } from "../lib/types";
 
 const mockCandleChart = vi.fn();
 vi.mock("../components/CandleChart", () => ({
@@ -28,9 +30,71 @@ vi.mock("../components/CandleChart", () => ({
   }),
 }));
 
-function stubFetch() {
+// The panel's own sizing math lives entirely on the server (useRiskSizing just
+// relays POST /api/size). Mocking the hook lets a test hand the panel a ready
+// SizeResult on the very first render instead of re-driving a real SL drag +
+// debounce through it — the drag path itself is CandleChart's concern, already
+// covered by CandleChart.test.tsx and the SL/TP seam test above.
+const riskSizing = vi.hoisted(() => ({ result: null as SizeResult | null }));
+vi.mock("../hooks/useRiskSizing", () => ({
+  useRiskSizing: () => ({
+    prefs: { mode: "pct" as const, value: 1 },
+    setPrefs: vi.fn(),
+    result: riskSizing.result,
+    loading: false,
+  }),
+}));
+
+// A real session comes from POST /api/training/sessions, an async round trip —
+// racy to depend on from a test that clicks "Buy" right after mount. Mocking
+// the session hook lets a test hand the panel an already-active session
+// synchronously; `openMock` stands in for the module's real
+// replayApi.openPosition(session_id, order) call so a submit can be asserted
+// without a network round trip. Session lifecycle itself (create/step/close)
+// is ReplayControls/useReplaySession's own concern, untouched here.
+const replaySession = vi.hoisted(() => ({
+  session: null as any,
+  positions: [] as any[],
+  sessionSummary: null as any,
+  cursorMsc: null as number | null,
+  anchorMsc: null as number | null,
+  open: vi.fn(),
+}));
+vi.mock("../hooks/useReplaySession", () => ({
+  useReplaySession: () => ({
+    session: replaySession.session,
+    positions: replaySession.positions,
+    events: [],
+    sessionSummary: replaySession.sessionSummary,
+    status: replaySession.session ? "ready" : "idle",
+    error: null,
+    playing: false,
+    cursorMsc: replaySession.cursorMsc,
+    anchorMsc: replaySession.anchorMsc,
+    start: vi.fn(),
+    step: vi.fn().mockResolvedValue([]),
+    play: vi.fn(),
+    pause: vi.fn(),
+    jump: vi.fn(),
+    reset: vi.fn(),
+    open: replaySession.open,
+    close: vi.fn(),
+    modifySltp: vi.fn(),
+    end: vi.fn(),
+    discard: vi.fn().mockResolvedValue(undefined),
+  }),
+}));
+
+// `extra` lets a test answer additional routes (training sessions, live open)
+// without duplicating every background-hook stub below it — checked first, so
+// it may also override a route already handled further down.
+function stubFetch(extra?: (url: string, method: string) => { ok: boolean; json: () => Promise<any> } | undefined) {
   const fetchMock = vi.fn((url: string, opts?: RequestInit) => {
     const method = opts?.method ?? "GET";
+    if (extra) {
+      const r = extra(url, method);
+      if (r) return Promise.resolve(r);
+    }
 
     // ---- the two seam endpoints under test (checked before the generic
     // /api/live branch below, since both URLs start with "/api/live") ----
@@ -248,4 +312,106 @@ it("live mode keeps the historical window advancing so it never gaps behind the 
   } finally {
     vi.useRealTimers();
   }
+});
+
+describe("risk sizing panel", () => {
+  const FAKE_SESSION = {
+    id: 1, symbol: "XAUUSDc", symbol_base: "XAUUSD", timeframe: "M5" as const,
+    range_start_msc: 0, range_end_msc: Date.now() + 365 * 24 * 3600 * 1000,
+    cursor_msc: Date.now(), status: "active" as const, created_at_msc: Date.now(),
+  };
+
+  // Extends the file's stubFetch with the live-open preview/enqueue seam.
+  // Everything else (candles, live positions, ...) falls through to
+  // stubFetch's own defaults; replay session creation never touches the
+  // network at all — see the useReplaySession mock above.
+  function extraRoutes(url: string, method: string) {
+    if (url === "/api/live/open/preview" && method === "POST") {
+      return {
+        ok: true,
+        json: () => Promise.resolve({
+          intent: "Buka buy 0.13 lot XAUUSDc", position_id: null, kind: "open",
+          symbol: "XAUUSDc", fields: { sl: null, tp: null, volume: 0.13 },
+        }),
+      };
+    }
+    if (url === "/api/live/open" && method === "POST") {
+      return { ok: true, json: () => Promise.resolve({ ok: true, command_id: 7 }) };
+    }
+    return undefined;
+  }
+
+  beforeEach(() => {
+    riskSizing.result = null;
+    replaySession.session = null;
+    replaySession.cursorMsc = null;
+    replaySession.anchorMsc = null;
+    replaySession.open = vi.fn();
+  });
+
+  function renderChartPage(opts: { replayOpen: boolean; sizeResult?: SizeResult }) {
+    riskSizing.result = opts.sizeResult ?? null;
+    const openPosition = vi.fn();
+    replaySession.open = vi.fn(async (order: unknown) => {
+      openPosition(FAKE_SESSION.id, order);
+    });
+    if (opts.replayOpen) {
+      replaySession.session = FAKE_SESSION;
+      replaySession.cursorMsc = FAKE_SESSION.cursor_msc;
+      replaySession.anchorMsc = FAKE_SESSION.cursor_msc;
+    }
+
+    const fetchMock = stubFetch(extraRoutes);
+    const postJsonSpy = vi.spyOn(api, "postJson"); // call-through: still hits the stubbed fetch above
+
+    render(
+      <MemoryRouter initialEntries={["/chart"]}>
+        <Routes><Route path="/chart" element={<Chart />} /></Routes>
+      </MemoryRouter>,
+    );
+
+    // Entering replay is Chart.tsx's own local state — the only door in is the
+    // real toolbar → config-modal → "Mulai" flow. Both clicks are synchronous
+    // state transitions (no network involved, since useReplaySession is
+    // mocked above), so this needs no `act`/`await` beyond fireEvent's own.
+    if (opts.replayOpen) {
+      fireEvent.click(screen.getByRole("button", { name: /replay/i }));
+      fireEvent.click(screen.getByRole("button", { name: /^mulai$/i }));
+    }
+
+    return { fetchMock, postJson: postJsonSpy, openPosition };
+  }
+
+  it("is mounted in replay mode", async () => {
+    renderChartPage({ replayOpen: true });
+    expect(await screen.findByText(/Ukuran otomatis/i)).toBeTruthy();
+  });
+
+  it("is mounted in live (non-replay) mode", async () => {
+    renderChartPage({ replayOpen: false });
+    expect(await screen.findByText(/Ukuran otomatis/i)).toBeTruthy();
+  });
+
+  it("a replay submit sends the server-derived volume to the replay open API", async () => {
+    const { openPosition } = renderChartPage({ replayOpen: true, sizeResult: {
+      volume: 0.13, risk_usc: 65, risk_pct: 0.065, distance: 5, rr: null,
+      direction: "buy", error: null,
+    } });
+    fireEvent.click(await screen.findByRole("button", { name: /buy/i }));
+    await waitFor(() => expect(openPosition).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ direction: "buy", volume: 0.13 }),
+    ));
+  });
+
+  it("a live submit goes through the preview/confirm flow, not straight to the order", async () => {
+    const { postJson } = renderChartPage({ replayOpen: false, sizeResult: {
+      volume: 0.13, risk_usc: 65, risk_pct: 0.065, distance: 5, rr: null,
+      direction: "buy", error: null,
+    } });
+    fireEvent.click(await screen.findByRole("button", { name: /buy/i }));
+    await waitFor(() => expect(postJson).toHaveBeenCalledWith(
+      "/api/live/open/preview", expect.anything()));
+    expect(postJson).not.toHaveBeenCalledWith("/api/live/open", expect.anything());
+  });
 });
