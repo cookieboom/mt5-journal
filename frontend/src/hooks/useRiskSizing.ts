@@ -40,9 +40,12 @@ export function useRiskSizing(input: {
   const { symbol, entry, sl, tp } = input;
 
   useEffect(() => {
+    // Bump first so any in-flight request from a prior run is disowned even
+    // when this run returns early below — otherwise its stale answer would
+    // land after us and overwrite the null we're about to set.
+    const mine = ++seq.current;
     // No stop, no risk, no size. Not an error state — nothing has been asked yet.
     if (entry === null || sl === null) { setResult(null); setLoading(false); return; }
-    const mine = ++seq.current;
     setLoading(true);
     const t = setTimeout(async () => {
       const r = await postJson<SizeResult>("/api/size", {

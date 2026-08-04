@@ -73,4 +73,38 @@ describe("useRiskSizing", () => {
     await act(async () => { vi.advanceTimersByTime(500); });
     await waitFor(() => expect(put).toHaveBeenCalledWith({ mode: "pct", value: 1 }));
   });
+
+  it("discards a stale /api/size response when SL is cleared mid-flight", async () => {
+    // The first /api/size call never resolves until we release it below —
+    // this lets us clear the SL while that request is still in flight.
+    let releaseFirstCall: (() => void) | undefined;
+    const held = new Promise<void>((resolve) => { releaseFirstCall = resolve; });
+    let sizeCalls = 0;
+    globalThis.fetch = vi.fn(async (url: string) => ({
+      ok: true, status: 200,
+      json: async () => {
+        if (url.includes("risk-prefs")) return { prefs: null };
+        sizeCalls += 1;
+        if (sizeCalls === 1) await held;
+        return size;
+      },
+    })) as unknown as typeof fetch;
+
+    const { result, rerender } = renderHook(
+      (p: { sl: number | null }) => useRiskSizing({ symbol: "XAUUSDc", entry: 4035, sl: p.sl, tp: null }),
+      { initialProps: { sl: 4030 as number | null } },
+    );
+    // Debounce fires, the first /api/size request starts and hangs on `held`.
+    await act(async () => { vi.advanceTimersByTime(500); });
+
+    // SL is cleared before that request resolves.
+    rerender({ sl: null });
+    await act(async () => { vi.advanceTimersByTime(500); });
+    expect(result.current.result).toBeNull();
+
+    // Now let the stale first response resolve.
+    releaseFirstCall?.();
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(result.current.result).toBeNull();
+  });
 });
