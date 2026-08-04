@@ -5,7 +5,7 @@ import { clampBars, parseSelection } from "../lib/chartPrefs";
 import { useChartPrefs } from "../hooks/useChartPrefs";
 import { mergeForming, type Sym, type Timeframe, timeframeMs } from "../lib/candles";
 import type { HoverBar, LiveData } from "../lib/types";
-import { clipToCursor, type TrainingSummary } from "../lib/replay";
+import { clipToCursor, outcomeCounts, type TrainingSummary } from "../lib/replay";
 import { useReplaySession, type ReplayConfig } from "../hooks/useReplaySession";
 import { useReplayPrefs } from "../hooks/useReplayPrefs";
 import type { ReplayFormPrefs } from "../lib/replayPrefs";
@@ -209,6 +209,7 @@ export default function Chart() {
   const atEnd = !!replay.session && cursor !== null && cursor >= replay.session.range_end_msc;
 
   const { data: career } = useApi<TrainingSummary>("/api/training/summary", replayOpen ? 3000 : undefined);
+  const sessionCounts = useMemo(() => outcomeCounts(replay.positions), [replay.positions]);
 
   return (
     <div className="flex flex-col h-[calc(100vh-2rem)]">
@@ -355,10 +356,16 @@ export default function Chart() {
                 currency={currency}
                 onClose={replay.close}
               />
-              {!replayPrefs.prefs.competitiveMode && (
-                <ReplaySummary title="Kumulatif" s={career ?? null} />
-              )}
-              <ReplaySummary title={replayPrefs.prefs.competitiveMode ? "Sesi Ini" : "Sesi ini"} s={replay.sessionSummary} />
+              {/* Competitive rounds are separate backend sessions, so the per-session
+                  card resets every scenario and its n never reaches the §8 threshold.
+                  Keep the career card visible there too — it is the only place win
+                  rate / avg R can ever unlock. */}
+              <ReplaySummary title="Kumulatif" s={career ?? null} />
+              <ReplaySummary
+                title={replayPrefs.prefs.competitiveMode ? `Skenario ${compRound}` : "Sesi ini"}
+                s={replay.sessionSummary}
+                counts={sessionCounts}
+              />
             </>
           ) : (
             <>

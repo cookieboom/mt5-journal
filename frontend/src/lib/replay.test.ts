@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { clipToCursor, replayLines, unrealizedR, msPerStep, type TrainingPosition } from "./replay";
+import { clipToCursor, outcomeCounts, replayLines, unrealizedR, msPerStep, type TrainingPosition } from "./replay";
 import type { Candle } from "./types";
 
 const bar = (t: number): Candle => ({ time_msc: t, o: 1, h: 2, l: 0.5, c: 1.5, v: 1 });
@@ -40,6 +40,23 @@ describe("unrealizedR", () => {
   });
   it("computes (price-entry)/risk for a long", () => {
     expect(unrealizedR(pos({ entry_price: 4000, sl: 3998 }), 4002)).toBeCloseTo(1.0);
+  });
+});
+
+describe("outcomeCounts", () => {
+  it("counts closed positions by exit reason, folding eod into manual", () => {
+    const c = outcomeCounts([
+      pos({ status: "closed", exit_reason: "tp" }),
+      pos({ status: "closed", exit_reason: "sl" }),
+      pos({ status: "closed", exit_reason: "manual" }),
+      pos({ status: "closed", exit_reason: "eod" }),
+      pos({ status: "open" }),
+      pos({ status: "pending" }),
+    ]);
+    expect(c).toEqual({ closed: 4, sl: 1, tp: 1, manual: 2 });
+  });
+  it("is all-zero with no positions", () => {
+    expect(outcomeCounts([])).toEqual({ closed: 0, sl: 0, tp: 0, manual: 0 });
   });
 });
 

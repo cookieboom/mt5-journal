@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Sym, Timeframe } from "../lib/candles";
-import { msPerStep, type StepEvent, type TrainingPosition, type TrainingSession, type TrainingSummary } from "../lib/replay";
+import { EMPTY_SUMMARY, msPerStep, type StepEvent, type TrainingPosition, type TrainingSession, type TrainingSummary } from "../lib/replay";
 import * as replayApi from "../lib/replayApi";
 
 export interface ReplayConfig {
@@ -33,7 +33,8 @@ export function useReplaySession() {
   const clear = () => { if (timer.current) { clearTimeout(timer.current); timer.current = null; } };
 
   const _create = useCallback(async (cfg: ReplayConfig) => {
-    setStatus("starting"); setError(null); setEvents([]); setPositions([]); setSessionSummary(null);
+    setStatus("starting"); setError(null); setEvents([]); setPositions([]);
+    setSessionSummary(EMPTY_SUMMARY);   // card shows 0-rows immediately, not "—"
     const r = await replayApi.createSession(cfg);
     if (!r.ok || !r.data) { setError(r.error ?? "gagal membuat sesi"); setStatus("error"); return; }
     setSession(r.data.session);

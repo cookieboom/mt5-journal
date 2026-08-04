@@ -7,6 +7,25 @@ beforeEach(() => {
   vi.restoreAllMocks();
 });
 
+it("start seeds an empty summary so the card renders before the first step", async () => {
+  const { result } = renderHook(() => useReplaySession());
+  expect(result.current.sessionSummary).toBeNull();
+
+  vi.spyOn(replayApi, "createSession").mockResolvedValue({
+    ok: true,
+    data: { session: { id: 1, symbol: "XAUUSDc", symbol_base: "XAUUSD", timeframe: "M5",
+      range_start_msc: 0, range_end_msc: 1000, cursor_msc: 0, status: "active", created_at_msc: 0 },
+      pending: false },
+  });
+  await act(async () => { await result.current.start({
+    symbol: "XAUUSDc", timeframe: "M5", range_start_msc: 0, range_end_msc: 1000,
+  } as any); });
+
+  expect(result.current.sessionSummary).toEqual({
+    n: 0, win_rate: null, avg_r: null, total_r: 0, avg_mae_r: null, avg_mfe_r: null,
+  });
+});
+
 it("modifySltp calls replayApi.modifySltp then refreshes the session", async () => {
   const { result } = renderHook(() => useReplaySession());
 

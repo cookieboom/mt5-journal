@@ -57,6 +57,36 @@ export interface TrainingSummary {
   avg_mfe_r: number | null;
 }
 
+// A brand-new session has no closed positions yet and the create endpoint does
+// not carry a summary. Seed this instead of null so the card renders its rows
+// (n 0, total 0.00R) from the first bar rather than a bare "—" — mirrors what
+// training_store._summary returns for an empty session.
+export const EMPTY_SUMMARY: TrainingSummary = {
+  n: 0, win_rate: null, avg_r: null, total_r: 0, avg_mae_r: null, avg_mfe_r: null,
+};
+
+// How the closed positions of a session ended. The backend keeps the same
+// counters in training_session_stats, but every closed position is already in
+// `positions` — count them here instead of polling a second endpoint.
+export interface OutcomeCounts {
+  closed: number;
+  sl: number;
+  tp: number;
+  manual: number;   // includes 'eod' (unresolved at end of range)
+}
+
+export function outcomeCounts(positions: TrainingPosition[]): OutcomeCounts {
+  const out: OutcomeCounts = { closed: 0, sl: 0, tp: 0, manual: 0 };
+  for (const p of positions) {
+    if (p.status !== "closed") continue;
+    out.closed += 1;
+    if (p.exit_reason === "sl") out.sl += 1;
+    else if (p.exit_reason === "tp") out.tp += 1;
+    else out.manual += 1;
+  }
+  return out;
+}
+
 // Only bars at or before the reveal cursor are drawn — the future is hidden.
 export function clipToCursor(candles: Candle[], cursorMsc: number): Candle[] {
   return candles.filter((c) => c.time_msc <= cursorMsc);
