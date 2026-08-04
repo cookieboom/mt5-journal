@@ -197,8 +197,21 @@ export function useChartData(
       setError(null);
       const missing = resp.missing as [number, number][];
       setMissing(missing);
+      // A window fetched up to Date.now() always straddles the still-forming
+      // bar, so `missing` here is never actually empty in live mode — it
+      // can't be used as an "all caught up" signal. Forward progress
+      // (coveredTo advancing past the previous toRef.current) is: real
+      // closed bars got confirmed since the last call. Tail-follow runs
+      // independently of load()'s poll cycle, which owns status/pollRef; if
+      // that cycle already latched "gaveup" (initial window had a stale gap)
+      // before journal live caught up, nothing else ever clears it — the
+      // chart keeps rendering fresh live bars while the banner stays stuck.
+      // Confirmed progress here is proof journal live is alive, so clear it.
       const coveredTo = missing.length ? Math.min(to, missing[0][0]) : to;
-      if (coveredTo > toRef.current) toRef.current = coveredTo;
+      if (coveredTo > toRef.current) {
+        toRef.current = coveredTo;
+        setStatus((s) => (s === "gaveup" || s === "error" ? "ready" : s));
+      }
     } catch (e) {
       if (alive.current && gen === genRef.current) { setError(String(e)); setStatus("error"); }
     } finally {

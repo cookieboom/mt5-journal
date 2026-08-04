@@ -68,7 +68,10 @@ export default function TradeDetail() {
             <>
               <TradePngPanel settings={png.settings} onChange={png.update} />
               {chartFailed ? (
-                <p className="text-[12px] text-muted">Chart belum tersedia — jalankan <code>uv run journal candles</code> lalu buka lagi.</p>
+                <p className="text-[12px] text-muted">
+                  Chart belum tersedia — jalankan <code>uv run journal candles</code> lalu{" "}
+                  <button className="text-cyan hover:underline" onClick={() => setChartFailed(false)}>coba lagi</button>.
+                </p>
               ) : (
                 <img className="w-full rounded" src={`/trades/${trade.position_id}/chart.png?v=${png.version}`}
                   alt={`chart trade ${trade.position_id}`} onError={() => setChartFailed(true)} />

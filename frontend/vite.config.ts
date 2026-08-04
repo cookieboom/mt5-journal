@@ -7,7 +7,15 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 5173,
-    proxy: { "/api": "http://localhost:8000" },
+    // The trade PNG is the ONLY non-/api backend path the SPA fetches
+    // (app.py: /trades/{position_id}/chart.png). Matched as a REGEX, not as a
+    // "/trades" prefix: /trades, /trades/:id and /trades/:id/view are SPA
+    // routes, and proxying those would send a dev hard-refresh to FastAPI's
+    // catch-all, which serves the BUILT dist index.html — stale bundle, no HMR.
+    proxy: {
+      "/api": "http://localhost:8000",
+      "^/trades/\\d+/chart\\.png": "http://localhost:8000",
+    },
   },
   test: {
     environment: "jsdom",
