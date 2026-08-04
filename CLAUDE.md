@@ -26,7 +26,10 @@ Single user, local-only, macOS (Apple Silicon M4).
 - Several positions on the same symbol can be open at once (hedging). Analytics
   must not assume trades are non-overlapping.
 - ~140 deals ≈ 65 trades. Every reported statistic must show `n`, and buckets
-  with `n < 20` must be suppressed or greyed. See docs §8.
+  with `n < 20` must be suppressed or greyed. See docs §8. **Exception:
+  replay/training summaries (`store/training_store._summary`) are ungated** — a
+  session is a handful of trades, so the floor blanked every rate permanently
+  and the panel carried no information. `n` still ships with every metric.
 
 ## Hard rules
 

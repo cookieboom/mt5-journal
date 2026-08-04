@@ -1,7 +1,12 @@
 """training_store — pure DB access for Chart Phase D. Sessions and fake positions
 live here and NOWHERE near `trades`/raw (CLAUDE.md rule 2). No MT5 adapter import
-(M9 boundary, rules 1/12). Money is USC; R is unit-free (rule 4). Summaries follow
-§8: rate/average metrics are null when n < 20; `n` and `total_r` always show.
+(M9 boundary, rules 1/12). Money is USC; R is unit-free (rule 4).
+
+Training summaries are NOT §8-gated (unlike analytics/report, which still is).
+A replay session — and a competitive scenario in particular — is a handful of
+trades, so a 20-sample floor blanked every rate/average all the time and the
+panel carried no information at all. Every metric is reported with its own `n`
+alongside; the reader judges the sample size.
 
 Only CLOSED positions with a non-null `net_profit` count toward a summary — an
 `eod` (unresolved) or never-filled position is excluded (unknown outcome, rule 4).
@@ -11,8 +16,6 @@ from __future__ import annotations
 import sqlite3
 
 from .db import now_ms
-
-_MIN_N = 20   # §8 sample floor for rate/average metrics
 
 
 def create_session(conn: sqlite3.Connection, *, symbol: str, symbol_base: str,
@@ -136,21 +139,18 @@ def mark_close(conn: sqlite3.Connection, position_id: int, *, exit_msc: int,
 
 
 def _summary(rows: list[sqlite3.Row]) -> dict:
-    """Aggregate CLOSED, resolved (non-null net_profit) positions. §8: rate and
-    average metrics are null below _MIN_N; `n` and `total_r` always show."""
+    """Aggregate CLOSED, resolved (non-null net_profit) positions. Ungated: a
+    metric is null only when it has NO input (rule 4 — unknown, not zero)."""
     resolved = [r for r in rows if r["net_profit"] is not None]
     n = len(resolved)
     r_vals = [r["r_multiple"] for r in resolved if r["r_multiple"] is not None]
     mae_vals = [r["mae_r"] for r in resolved if r["mae_r"] is not None]
     mfe_vals = [r["mfe_r"] for r in resolved if r["mfe_r"] is not None]
     total_r = sum(r_vals)
-    if n < _MIN_N:
-        return {"n": n, "win_rate": None, "avg_r": None, "total_r": total_r,
-                "avg_mae_r": None, "avg_mfe_r": None}
     wins = sum(1 for r in resolved if r["net_profit"] > 0)
     return {
         "n": n,
-        "win_rate": wins / n,
+        "win_rate": (wins / n) if n else None,
         "avg_r": (total_r / len(r_vals)) if r_vals else None,
         "total_r": total_r,
         "avg_mae_r": (sum(mae_vals) / len(mae_vals)) if mae_vals else None,

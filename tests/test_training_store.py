@@ -55,10 +55,10 @@ def test_delete_session_cascades_positions(conn):
     assert ts.list_positions(conn, sid) == []
 
 
-def test_summary_is_section8_gated(conn):
+def test_summary_is_not_sample_gated(conn):
     sid = _session(conn)
-    # 3 closed winners → n=3 < 20, so rates/averages are suppressed (null),
-    # but total_r and n are always present.
+    # 3 closed winners. Training summaries carry NO §8 sample floor — a replay
+    # session never reaches 20 trades, so gating blanked every rate forever.
     for _ in range(3):
         pid = ts.insert_position(conn, session_id=sid, direction="buy", volume=0.1,
                                  decision_msc=1000, sl=3999.0, tp=4002.0)
@@ -68,5 +68,27 @@ def test_summary_is_section8_gated(conn):
                       mae_r=0.0, mfe_r=2.0)
     s = ts.career_summary(conn)
     assert s["n"] == 3
-    assert s["win_rate"] is None and s["avg_r"] is None      # §8: n < 20
-    assert abs(s["total_r"] - 6.0) < 1e-9                     # always shown
+    assert abs(s["win_rate"] - 1.0) < 1e-9
+    assert abs(s["avg_r"] - 2.0) < 1e-9
+    assert abs(s["avg_mfe_r"] - 2.0) < 1e-9
+    assert abs(s["total_r"] - 6.0) < 1e-9
+
+
+def test_summary_is_null_only_without_input(conn):
+    """Rule 4: null still means unknown. An empty session has no win rate, and a
+    trade closed without an SL has no R to average."""
+    sid = _session(conn)
+    empty = ts.session_summary(conn, sid)
+    assert empty["n"] == 0 and empty["win_rate"] is None and empty["avg_r"] is None
+    assert empty["total_r"] == 0
+
+    pid = ts.insert_position(conn, session_id=sid, direction="buy", volume=0.1,
+                             decision_msc=1000, sl=0.0, tp=0.0)
+    ts.mark_fill(conn, pid, entry_msc=2000, entry_price=4000.0)
+    ts.mark_close(conn, pid, exit_msc=3000, exit_price=4002.0, exit_reason="manual",
+                  net_profit=20.0, r_multiple=None, mae=None, mfe=None,
+                  mae_r=None, mfe_r=None)
+    s = ts.session_summary(conn, sid)
+    assert s["n"] == 1
+    assert abs(s["win_rate"] - 1.0) < 1e-9   # net_profit known → win rate known
+    assert s["avg_r"] is None                # no SL → R unknown, not 0

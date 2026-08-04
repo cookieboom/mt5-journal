@@ -143,7 +143,7 @@ def test_step_spans_market_gap(conn):
 
 
 def test_session_summary_counts_no_sl_resolved_trade(conn):
-    """Locks Fix 2 (+T4): session_summary is net_profit-based and §8-gated, so a
+    """Locks Fix 2 (+T4): session_summary is net_profit-based, so a
     RESOLVED no-SL trade (net_profit set, r_multiple NULL) counts toward session
     `n` exactly like the career summary — the two definitions must agree."""
     _seed_specs(conn)

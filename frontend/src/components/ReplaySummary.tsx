@@ -1,6 +1,8 @@
 import type { OutcomeCounts, TrainingSummary } from "../lib/replay";
 
-// §8: n and total_r always show; rate/average metrics are greyed (—) when null.
+// Replay summaries are ungated (no §8 sample floor — sessions are too small for
+// it to ever pass). A metric is greyed (—) only when the backend had no input
+// for it at all: no closed trades, or no SL so R is unknown (rule 4).
 function Metric(props: { label: string; value: number | null; suffix?: string; pct?: boolean }) {
   const v = props.value;
   const text = v === null ? "—" : props.pct ? `${(v * 100).toFixed(0)}%` : `${v.toFixed(2)}${props.suffix ?? ""}`;
@@ -12,7 +14,7 @@ function Metric(props: { label: string; value: number | null; suffix?: string; p
   );
 }
 
-// Raw counts, not ratios — §8 suppression applies to rates/averages only.
+// How the closed positions ended — raw counts, never derived.
 function Count(props: { label: string; value: number }) {
   return (
     <div className="flex justify-between">
@@ -45,7 +47,9 @@ export default function ReplaySummary(props: {
               <Count label="Manual/EOD" value={c.manual} />
             </div>
           )}
-          {s.n < 20 && <div className="text-muted/60 pt-1">n &lt; 20 — rasio disembunyikan (§8)</div>}
+          {s.n > 0 && s.n < 20 && (
+            <div className="text-muted/60 pt-1">n kecil — angka belum stabil</div>
+          )}
         </>
       )}
     </div>
