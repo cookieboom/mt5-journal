@@ -560,10 +560,14 @@ chart timeframe selection (duration ladder, ≤60 trade-bars, floor M1 — M3,
 CURRENT STATE above) · chart cache identity (`position_id`, never `trades.id`
 — M3, CURRENT STATE above).
 
-## PENDING HUMAN — risk-based auto lot sizing (2026-08-04)
+## ~~PENDING HUMAN~~ — risk-based auto lot sizing (2026-08-04)
 
-Automated gates are green; none of them touched a real broker. Before trusting
-this with size:
+**CONFIRMED BY THE HUMAN 2026-08-05: all five steps below ran against the real
+broker and behaved as described.** Kept as the record of what was checked. The
+OPEN QUESTION at the end of this section is still open — it is a product
+decision, not something a run can confirm.
+
+The five steps, as run:
 
 1. Start the MT5 bridge and `uv run journal live`. Confirm `journal doctor`
    reports the account and a recent tick.
