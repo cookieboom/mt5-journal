@@ -93,6 +93,15 @@ def _intent_text(
         return f"Tutup {held} lot {symbol} (posisi {position_id})"
     if kind == "close_partial":
         return f"Tutup sebagian {volume} lot {symbol} (posisi {position_id})"
+    if kind == "open":
+        # No position_id to name — this command CREATES one. The sentence says
+        # the size, the side, and the stop, because those three are the whole
+        # decision.
+        direction = pos["direction"].upper()
+        return (
+            f"BUKA {direction} {volume} lot {symbol} di harga pasar, "
+            f"SL {_level_word(sl)}, TP {_level_word(tp)}"
+        )
     # add_volume — a hedging account opens a SECOND position, not a bigger one.
     return (
         f"Tambah {volume} lot {symbol} searah posisi {position_id} "
@@ -610,3 +619,33 @@ def size_order(
     if tp is not None and abs(tp) > 1e-9:
         out["rr"] = abs(tp - entry) / out["distance"]
     return out
+
+
+def preview_open(
+    conn: sqlite3.Connection, login: int, *,
+    symbol: str, entry: float | None, sl: float | None, tp: float | None,
+    risk_mode: str, risk_value: float | None,
+) -> dict:
+    """The CONFIRM-step data for an open. Writes NOTHING.
+
+    Sizes the order server-side and runs `build_request` — which validates — so
+    an order that would be refused is refused HERE. The client never sends a
+    volume and never needs to: the same `size_order` call runs again at enqueue,
+    from the same inputs.
+    """
+    sizing = size_order(conn, login, symbol=symbol, entry=entry, sl=sl, tp=tp,
+                        risk_mode=risk_mode, risk_value=risk_value)
+    if sizing["error"] is not None:
+        raise CommandError(sizing["error"])
+
+    pos, spec = execute.load_open_context(conn, login, symbol, sizing["direction"], entry)
+    build_request("open", pos, spec, sl=sl, tp=tp, volume=sizing["volume"],
+                  balance=execute.account_balance(conn, login))  # validates; may raise
+    return {
+        "intent": _intent_text("open", pos, sl=sl, tp=tp, volume=sizing["volume"]),
+        "position_id": None,
+        "kind": "open",
+        "symbol": symbol,
+        "fields": {"sl": sl, "tp": tp, "volume": sizing["volume"]},
+        "sizing": sizing,
+    }

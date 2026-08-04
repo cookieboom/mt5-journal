@@ -676,3 +676,97 @@ def test_size_refuses_percent_mode_with_an_unknown_balance(conn):
               risk_mode="pct", risk_value=1.0)
     assert d["volume"] is None
     assert "sync" in d["error"] or "balance" in d["error"]
+
+
+# --------------------------------------------- /api/live/open* (no httpx)
+# Same reason as /api/size above: no TestClient/httpx. `_open_preview`/`_open`
+# call the plain route functions directly (bypassing FastAPI's Depends wiring)
+# and return (status_code, parsed body), mirroring `_endpoint` elsewhere here.
+
+
+def _call(app, name, conn, **body):
+    fn = _endpoint(app, name)
+    defaults = {"symbol": None, "entry": None, "sl": None, "tp": None,
+                "risk_mode": "pct", "risk_value": None}
+    defaults.update(body)
+    resp = fn(conn=conn, **defaults)
+    return resp.status_code, json.loads(resp.body)
+
+
+def _open_preview(conn, **body):
+    app = create_app(":memory:")
+    return _call(app, "api_open_preview", conn, **body)
+
+
+def _open(conn, **body):
+    app = create_app(":memory:")
+    return _call(app, "api_open", conn, **body)
+
+
+def test_open_preview_writes_nothing_and_returns_the_sized_lot(conn):
+    _seed_account(conn, balance=100_000.0)
+    _seed_spec(conn)
+    status, d = _open_preview(
+        conn, symbol="XAUUSDc", entry=4035.0, sl=4030.0, tp=4045.0,
+        risk_mode="usc", risk_value=50.0,
+    )
+    assert status == 200
+    assert d["kind"] == "open"
+    assert d["position_id"] is None
+    assert abs(d["fields"]["volume"] - 0.10) < 1e-9
+    assert "XAUUSDc" in d["intent"] and "0.1" in d["intent"]
+    assert conn.execute("SELECT COUNT(*) FROM trade_commands").fetchone()[0] == 0
+
+
+def test_open_preview_refuses_over_the_ceiling_without_writing(conn):
+    _seed_account(conn, balance=1000.0)
+    _seed_spec(conn)
+    status, d = _open_preview(
+        conn, symbol="XAUUSDc", entry=4035.0, sl=4030.0, tp=None,
+        risk_mode="usc", risk_value=80.0,
+    )
+    assert status == 400
+    assert "5" in d["error"]
+    assert conn.execute("SELECT COUNT(*) FROM trade_commands").fetchone()[0] == 0
+
+
+def test_open_enqueues_one_row_with_a_server_computed_volume(conn):
+    _seed_account(conn, balance=100_000.0)
+    _seed_spec(conn)
+    status, d = _open(
+        conn, symbol="XAUUSDc", entry=4035.0, sl=4030.0, tp=4045.0,
+        risk_mode="usc", risk_value=50.0,
+    )
+    assert status == 200 and d["ok"] is True
+    row = conn.execute("SELECT * FROM trade_commands").fetchone()
+    assert row["kind"] == "open"
+    assert row["direction"] == "buy"
+    assert abs(row["volume"] - 0.10) < 1e-9      # derived here, never sent by the client
+    assert abs(row["price_ref"] - 4035.0) < 1e-9
+
+
+def test_a_literal_open_never_hits_the_position_id_route():
+    """Route ordering. `/api/live/open/preview` must match the open route, not
+    `/api/live/{position_id}/{action}/preview` — which would swallow 'open' as
+    the position_id path segment."""
+    app = create_app(":memory:")
+    assert _resolve(app, "POST", "/api/live/open/preview") == "api_open_preview"
+    assert _resolve(app, "POST", "/api/live/open") == "api_open"
+
+
+def test_risk_prefs_round_trip(conn):
+    app = create_app(":memory:")
+    get_fn = _endpoint(app, "api_get_risk_prefs")
+    put_fn = _endpoint(app, "api_put_risk_prefs")
+
+    resp = get_fn(conn=conn)
+    assert resp.status_code == 200
+    assert json.loads(resp.body) == {"prefs": None}
+
+    body = {"mode": "pct", "value": 1.0}
+    put = put_fn(prefs=body, conn=conn)
+    put_body = json.loads(put.body)
+    assert put_body["ok"] is True and isinstance(put_body["updated_ms"], int)
+
+    resp2 = get_fn(conn=conn)
+    assert json.loads(resp2.body) == {"prefs": body}

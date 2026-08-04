@@ -22,7 +22,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from ..annotate import AnnotateError, add_tag, list_tags, remove_tag, set_annotation
-from ..execute import CommandError, enqueue
+from ..execute import CommandError, enqueue, enqueue_open
 from ..render.chart import NoCandlesError, TradeNotFoundError, render_trade
 from ..store import prefs_store
 from ..store import training_store
@@ -286,6 +286,72 @@ def create_app(db_path: str | None = None) -> FastAPI:
             conn, login, symbol=symbol, entry=entry, sl=sl, tp=tp,
             risk_mode=risk_mode, risk_value=risk_value,
         )))
+
+    # --- live open (M9+ risk sizing). Two-step, same shape as the position
+    # commands below: preview sizes + validates and writes nothing, enqueue
+    # re-derives the volume server-side and inserts ONE pending row. Must
+    # precede /api/live/{position_id}/{action}[/preview] — a literal path
+    # segment 'open' would otherwise be parsed as position_id and 422.
+    @app.post("/api/live/open/preview")
+    def api_open_preview(
+        symbol: str = Body(...),
+        entry: float | None = Body(None),
+        sl: float | None = Body(None),
+        tp: float | None = Body(None),
+        risk_mode: str = Body("pct"),
+        risk_value: float | None = Body(None),
+        conn: sqlite3.Connection = Depends(get_conn),
+    ):
+        try:
+            login = views.account_header(conn)["login"]
+            preview = views.preview_open(
+                conn, login, symbol=symbol, entry=entry, sl=sl, tp=tp,
+                risk_mode=risk_mode, risk_value=risk_value,
+            )
+        except (RuntimeError, CommandError) as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        return JSONResponse(api.to_jsonable(preview))
+
+    @app.post("/api/live/open")
+    def api_open(
+        symbol: str = Body(...),
+        entry: float | None = Body(None),
+        sl: float | None = Body(None),
+        tp: float | None = Body(None),
+        risk_mode: str = Body("pct"),
+        risk_value: float | None = Body(None),
+        conn: sqlite3.Connection = Depends(get_conn),
+    ):
+        """Enqueue ONE pending open. The volume is derived here, from the same
+        `size_order` the preview used — a lot computed in the browser is never
+        accepted, and the second derivation is what makes a stale preview
+        harmless."""
+        try:
+            login = views.account_header(conn)["login"]
+            sizing = views.size_order(
+                conn, login, symbol=symbol, entry=entry, sl=sl, tp=tp,
+                risk_mode=risk_mode, risk_value=risk_value,
+            )
+            if sizing["error"] is not None:
+                raise CommandError(sizing["error"])
+            cmd_id = enqueue_open(
+                conn, login, symbol=symbol, direction=sizing["direction"],
+                sl=sl, tp=tp, volume=sizing["volume"], price_ref=entry,
+            )
+        except (RuntimeError, CommandError) as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        return JSONResponse({"ok": True, "command_id": cmd_id})
+
+    @app.get("/api/risk-prefs")
+    def api_get_risk_prefs(conn: sqlite3.Connection = Depends(get_conn)):
+        return JSONResponse({"prefs": prefs_store.get_risk_prefs(conn)})
+
+    @app.put("/api/risk-prefs")
+    def api_put_risk_prefs(
+        prefs=Body(...), conn: sqlite3.Connection = Depends(get_conn),
+    ):
+        ts = prefs_store.set_risk_prefs(conn, prefs)
+        return JSONResponse({"ok": True, "updated_ms": ts})
 
     # --- two-step trade command (M9 safety: preview writes nothing; enqueue
     # inserts ONE pending row; `journal live` executes. Validation lives in

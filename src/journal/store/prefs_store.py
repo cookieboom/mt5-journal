@@ -17,6 +17,7 @@ from .db import now_ms
 CHART_KEY = "chart"
 REPLAY_KEY = "replay"
 TRADE_PNG_KEY = "trade_png"
+RISK_KEY = "risk_sizing"
 
 
 def get_pref(conn: sqlite3.Connection, key: str) -> str | None:
@@ -59,6 +60,17 @@ def get_replay_prefs(conn: sqlite3.Connection) -> Any | None:
 def set_replay_prefs(conn: sqlite3.Connection, prefs: Any) -> int:
     """Persist replay-config prefs (serialised to JSON). Returns updated_ms."""
     return set_pref(conn, REPLAY_KEY, json.dumps(prefs), now_ms())
+
+
+def get_risk_prefs(conn: sqlite3.Connection) -> Any | None:
+    """Risk-sizing panel prefs (mode + value), or None if never saved."""
+    raw = get_pref(conn, RISK_KEY)
+    return None if raw is None else json.loads(raw)
+
+
+def set_risk_prefs(conn: sqlite3.Connection, prefs: Any) -> int:
+    """Upsert the risk-sizing prefs blob. Returns the updated_ms stamp."""
+    return set_pref(conn, RISK_KEY, json.dumps(prefs), now_ms())
 
 
 def get_trade_png_prefs(conn: sqlite3.Connection) -> Any | None:
