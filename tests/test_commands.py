@@ -538,3 +538,54 @@ def test_the_risk_ceiling_does_not_apply_to_a_close():
     """The module's standing asymmetry: nothing that would stop a human
     REDUCING exposure applies to a close."""
     validate("close", _buy(volume=5.0), _spec(), volume=None, balance=None)
+
+
+# -------------------------------------------------------- open request building
+
+
+def test_an_open_request_carries_no_position_id():
+    """THE field. On a DEAL, `position_id` means 'close this one' — the opposite
+    of opening. An open must leave it None."""
+    req = build_request("open", _open(), _ospec(), sl=4030.0, tp=4045.0,
+                        volume=0.10, balance=_BALANCE)
+    assert req.action is TradeAction.DEAL
+    assert req.position_id is None
+
+
+def test_an_open_request_uses_the_same_direction_not_the_opposite():
+    buy = build_request("open", _open(), _ospec(), sl=4030.0, volume=0.10,
+                        balance=_BALANCE)
+    assert buy.order_type is OrderType.BUY
+    sell = build_request("open", _open(direction="sell"), _ospec(), sl=4040.0,
+                         volume=0.10, balance=_BALANCE)
+    assert sell.order_type is OrderType.SELL
+
+
+def test_an_open_request_carries_the_levels_and_the_volume():
+    req = build_request("open", _open(), _ospec(), sl=4030.0, tp=4045.0,
+                        volume=0.10, balance=_BALANCE)
+    assert abs(req.sl - 4030.0) < 1e-9
+    assert abs(req.tp - 4045.0) < 1e-9
+    assert abs(req.volume - 0.10) < 1e-9
+    assert req.symbol == "XAUUSDc"          # verbatim MT5 symbol (rule 11)
+    assert req.filling is OrderFilling.FOK  # from the spec's bitmask
+
+
+def test_an_open_request_sends_no_price():
+    """Execution is MARKET (trade_exemode=2, measured on all three symbols): the
+    broker fills at its own price and ignores this field. A price that is
+    already stale on arrival invites INVALID_PRICE and buys nothing."""
+    req = build_request("open", _open(), _ospec(), sl=4030.0, volume=0.10,
+                        balance=_BALANCE)
+    assert req.price is None
+
+
+def test_building_an_open_validates_first():
+    """`build_request` must not become a way around `validate` — a caller that
+    forgot still cannot produce an over-ceiling order."""
+    with pytest.raises(CommandError):
+        build_request("open", _open(), _ospec(), sl=4030.0, volume=0.10,
+                      balance=900.0)
+    with pytest.raises(CommandError):
+        build_request("open", _open(), _ospec(), sl=None, volume=0.10,
+                      balance=_BALANCE)

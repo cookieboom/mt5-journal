@@ -350,13 +350,14 @@ def build_request(
     sl: float | None = None,
     tp: float | None = None,
     volume: float | None = None,
+    balance: float | None = None,
 ) -> TradeRequest:
     """Turn a validated command into the request the adapter will send.
 
     Validates first, unconditionally: this must not become a way around
     `validate`. A caller that forgot still cannot produce an over-cap request.
     """
-    validate(kind, position, spec, sl=sl, tp=tp, volume=volume)
+    validate(kind, position, spec, sl=sl, tp=tp, volume=volume, balance=balance)
 
     direction = _get(position, "direction")
     # Rule 11: MT5 is queried with the verbatim symbol ('XAUUSDc'). 'XAUUSD'
@@ -398,6 +399,24 @@ def build_request(
             # three symbols), so the broker fills at its own price and ignores
             # this field. Sending a price_current that is already stale by the
             # time it lands buys nothing and invites INVALID_PRICE / PRICE_OFF.
+            filling=filling,
+        )
+
+    if kind == "open":
+        # The first command in this project that CREATES a position. Same shape
+        # as add_volume — a plain market DEAL with no position_id — but it
+        # carries the levels, because attaching SL/TP to the opening request is
+        # the only way they exist from the position's first tick. A separate
+        # modify afterwards leaves a window where the position is live and
+        # unprotected, and the whole point of this feature is the stop.
+        return TradeRequest(
+            action=TradeAction.DEAL,
+            position_id=None,
+            symbol=symbol,
+            order_type=_same(direction),
+            volume=volume,
+            sl=sl,
+            tp=tp,
             filling=filling,
         )
 
