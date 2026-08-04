@@ -108,7 +108,7 @@ Run the superpowers skills, in order. They carry the how; this lists the when.
 
 **New feature** (anything touching more than one file):
 
-1. `brainstorming` → spec in `docs/specs/<name>.md`. No code yet.
+1. `brainstorming` → spec in `docs/specs/<name>.md`. No code yet. You can ask plenty of questions to ensure the implementation aligns with what is desired.
 2. `writing-plans` → numbered tasks, one task = one commit-able unit.
 3. `using-git-worktrees` → branch + worktree per spec. Never build on `main`.
 4. `executing-plans`, and inside each task `test-driven-development` (rule 7).
@@ -139,8 +139,7 @@ A task is done when: tests pass, you have pasted the actual pytest output, and
 M0 doctor · M1 ingest deals · M2 reconstruct trades · M3 candles + renderer
 · M4 SL/TP poller · M5 analytics (R, MAE/MFE) · M6 annotations + weekly report
 · M7 web dashboard (`journal serve`) · M8 by_symbol + `/report` page · M9 live
-positions + trade interaction + auto-ingest on close + UI redesign (`journal
-live`, `/live`; trading ON by default, 1.00-lot cap)
+positions + trade interaction + auto-ingest on close + UI redesign (`journal live`, `/live`; trading ON by default, 1.00-lot cap)
 · **Frontend rework** (Jinja→React SPA, served at `/`; Jinja UI retired at
 Phase 5 cutover)
 
@@ -159,6 +158,7 @@ still pending a human run — see docs/HANDOFF.md.**
 This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
 
 Rules:
+
 - For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
 - If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
 - Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
