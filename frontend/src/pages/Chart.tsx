@@ -428,7 +428,7 @@ export default function Chart() {
           ) : (
             <>
               <RiskSizePanel
-                disabled={!live || live.live.empty === undefined}
+                disabled={!live} // load gate only — live.live.empty is never undefined
                 currency={currency}
                 prefs={sizing.prefs}
                 onPrefsChange={sizing.setPrefs}
