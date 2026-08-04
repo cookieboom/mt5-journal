@@ -336,12 +336,17 @@ CREATE TABLE IF NOT EXISTS open_positions (
 -- A 'sent' row orphaned by a crash is failed with an explanation and is NEVER
 -- auto-retried.
 --   sl/tp: NULL = leave untouched, 0.0 = clear it. (rule 4, load-bearing here)
+--   'open': the only kind with no position yet. Carries symbol/direction/
+--   price_ref instead, and a NULL position_id until the broker answers.
 CREATE TABLE IF NOT EXISTS trade_commands (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     account_login   INTEGER NOT NULL,
-    position_id     INTEGER NOT NULL,
+    position_id     INTEGER,                -- NULL for 'open' (no position yet)
     kind            TEXT NOT NULL CHECK (kind IN
-                        ('modify_sltp','close','close_partial','add_volume')),
+                        ('modify_sltp','close','close_partial','add_volume','open')),
+    symbol          TEXT,                   -- 'open' only; verbatim MT5 symbol (rule 11)
+    direction       TEXT CHECK (direction IN ('buy','sell')),  -- 'open' only
+    price_ref       REAL,                   -- 'open' only; price the human sized against
     sl              REAL,
     tp              REAL,
     volume          REAL,
