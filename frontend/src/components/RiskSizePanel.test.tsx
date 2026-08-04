@@ -68,6 +68,12 @@ describe("RiskSizePanel", () => {
     expect(screen.getByTestId("size-hint").textContent).toMatch(/SL/i);
   });
 
+  it("disables the action while a recompute is in flight, even with a valid result", () => {
+    setup({ loading: true });
+    const btn = screen.getByRole("button", { name: /menghitung/i }) as HTMLButtonElement;
+    expect(btn.disabled).toBe(true);
+  });
+
   it("switching the risk mode reports the new prefs upward", () => {
     const { onPrefsChange } = setup();
     fireEvent.click(screen.getByRole("button", { name: "USC" }));
