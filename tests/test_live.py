@@ -451,6 +451,39 @@ def test_live_cycle_fulfils_one_candle_request(conn):
     assert row["status"] == "done"
 
 
+def test_cycle_order_chart_first_bulk_backfill_last(conn, monkeypatch):
+    """The whole cycle is one serial call, so ORDER is the contract:
+
+      * `serve_watches` + the beacon run BEFORE the two blocking steps (ingest
+        on close, order send) — otherwise /chart's forming bar and the liveness
+        indicator freeze for the length of a bridge round trip;
+      * `fulfill_request` runs LAST, behind the command — `fill_range` can walk
+        a whole requested range, and an SL/TP or close must never queue behind
+        bulk history.
+    """
+    from journal.store import candle_queue as q
+    seen: list[str] = []
+
+    monkeypatch.setattr("journal.ingest.live.serve_watches",
+                        lambda *a, **k: seen.append("watches"))
+    monkeypatch.setattr("journal.ingest.live.live_store.beat",
+                        lambda *a, **k: seen.append("beat"))
+    monkeypatch.setattr("journal.ingest.live._run_ingest_pipeline",
+                        lambda *a, **k: seen.append("ingest"))
+    monkeypatch.setattr("journal.ingest.live._execute_one_command",
+                        lambda *a, **k: (seen.append("command"), (None, None))[1])
+    monkeypatch.setattr("journal.ingest.live.fulfill_request",
+                        lambda *a, **k: (seen.append("candles"), 0)[1])
+
+    client = FakeLiveClient([[_pos(identifier=111)], []])
+    live_cycle(client, conn, _LOGIN)          # cycle 1: 111 open
+    seen.clear()
+    q.request_candles(conn, "XAUUSDc", "M1", 0, 60_000)
+    live_cycle(client, conn, _LOGIN)          # cycle 2: 111 gone -> close + ingest
+
+    assert seen == ["watches", "beat", "ingest", "command", "candles"]
+
+
 # ---------------------------------------------------------------- heartbeat
 
 

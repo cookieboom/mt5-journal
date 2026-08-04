@@ -5,25 +5,19 @@ it. The web never talks to MT5; it INSERTs a `pending` row into `trade_commands`
 and this loop claims, sends, and records it. That split is what keeps CLAUDE.md
 rules 1 and 12 literally true everywhere else in the codebase.
 
-One cycle does four jobs, in this order and for a reason:
+One cycle does five jobs, in this order and for a reason:
 
   1. **Mirror.** Fetch `positions_get()` ONCE and use that single list for
      everything downstream — the SL/TP snapshots (via the reused `poll_once`),
      the `open_positions` mirror, AND close detection. Fetching twice would risk
      the three consumers seeing three slightly different worlds a few ms apart.
 
-  2. **Fulfil one candle request + serve watches + beat.** Claim the OLDEST
-     pending row in `candle_requests` (queued by the web, never sent there
-     directly — see CLAUDE.md rules 1/12) and run it through
-     `candle_fill.fulfill_request`, then `serve_watches` (forming bar +
-     promote closed bars) and the liveness beacon. Deliberately BEFORE steps 3
-     and 4: those can block on a multi-second bridge round trip (ingest on
-     close, order send), and this is everything `/chart` and the liveness
-     indicator depend on — it must not sit behind that wait. One candle
-     request per cycle, same discipline as commands, so a large backfill can
-     never starve the position heartbeat either. A failed fetch is marked
-     `failed` and logged, never re-raised past this loop — unlike a command, a
-     candle fetch is idempotent and safe to just re-request.
+  2. **Serve watches + beat.** `serve_watches` (forming bar + promote closed
+     bars) and the liveness beacon. Deliberately BEFORE steps 3 and 4: those
+     can block on a multi-second bridge round trip (ingest on close, order
+     send), and this is what `/chart`'s live edge and the liveness indicator
+     depend on — it must not sit behind that wait. Cheap enough to lead with:
+     one latest-bars fetch per active watch, ~1 given demand-driven watching.
 
   3. **Detect closes → ingest.** A `position_id` that was in `open_positions` at
      the START of this cycle but is absent from the fresh feed has CLOSED. MT5
@@ -38,6 +32,17 @@ One cycle does four jobs, in this order and for a reason:
      and run it through the same gate the web used at enqueue time — the world
      moves between enqueue and claim, so we re-validate. One command per cycle
      keeps the sequence serial and auditable.
+
+  5. **Fulfil one candle request.** Claim the OLDEST pending row in
+     `candle_requests` (queued by the web, never sent there directly — see
+     CLAUDE.md rules 1/12) and run it through `candle_fill.fulfill_request`.
+     Same one-per-cycle discipline as commands, so a large backfill can never
+     starve the position heartbeat. LAST because `fill_range` can walk a whole
+     requested range over several round trips and nothing user-facing waits on
+     it, while an order does. A failed fetch is marked `failed` and logged,
+     never re-raised past this loop — unlike a command, a candle fetch is
+     idempotent and safe to just re-request, so it does not need the command
+     queue's stricter "never auto-retry" refusal.
 
 The single most important refusal (shared with `execute.recover_interrupted`):
 an order that MAY have reached the broker is NEVER re-sent by a machine. If
@@ -270,37 +275,22 @@ def live_cycle(
 
     _replace_open_positions(conn, login, positions, observed_msc)
 
-    # (3) chart-facing work FIRST, before the two steps below that can block on
-    # a multi-second bridge round trip (ingest pipeline on close, order send).
-    # Reported: adding an SL/TP or a position closing froze /chart for however
-    # long that round trip took, because it used to run after these and the
-    # whole cycle is one serial call — chart's fresh forming bar, any queued
-    # backfill, and the heartbeat all sat behind it. Same one-per-cycle
-    # discipline for the candle request so a big backfill can't itself starve
-    # the position heartbeat; this is the ONLY place a browser-triggered
-    # candle fetch reaches the bridge.
-    candle_request_id: int | None = None
-    candle_bars_written: int | None = None
-    req = claim_next_request(conn)
-    if req is not None:
-        candle_request_id = int(req["id"])
-        try:
-            candle_bars_written = fulfill_request(client, conn, req, observed_msc)
-        except Exception:
-            log.exception(
-                "live: candle request %d failed — marked failed, will not auto-retry "
-                "this exact row (a new request re-queues)", candle_request_id
-            )
-
-    # forming bar + promote closed bars. Cheap (one latest-bars fetch per
-    # active watch, ~1 given demand-driven watching).
+    # (3) forming bar + promote closed bars, then the beacon. FIRST, ahead of
+    # the two steps below that can block on a multi-second bridge round trip
+    # (ingest pipeline on close, order send). Reported: adding an SL/TP or a
+    # position closing froze /chart for however long that round trip took,
+    # because this used to run after them and the whole cycle is one serial
+    # call. Cheap enough to lead with — one latest-bars fetch per active watch,
+    # ~1 given demand-driven watching. The BULK candle fetch stays at step (6),
+    # behind order send: a backfill has no deadline, an order does.
     serve_watches(client, conn, observed_msc)
 
-    # liveness beacon — ALWAYS, even with no positions/watches, so the web can
+    # (4) liveness beacon — ALWAYS, even with no positions/watches, so the web can
     # tell "journal live is running" from "data is just old". Empty open_positions
     # cannot serve as a heartbeat (no rows when nothing is open).
     live_store.beat(conn, now_ms())
 
+    # (5) detect closes → ingest.
     ingest_ran = False
     if closed_ids:
         log.info("live: %d position(s) closed: %s", len(closed_ids), closed_ids)
@@ -319,11 +309,31 @@ def live_cycle(
         if on_close is not None:
             on_close(closed_ids)
 
-    # (4) one command per cycle.
+    # (6) one command per cycle.
     command_id: int | None = None
     command_status: str | None = None
     if trading:
         command_id, command_status = _execute_one_command(client, conn, login)
+
+    # (7) one candle request per cycle — same one-per-cycle discipline as
+    # commands, so a big backfill can never starve the position heartbeat. LAST
+    # on purpose: `fill_range` can walk a whole requested range over several
+    # bridge round trips, and nothing user-facing waits on it (the request stays
+    # queued and the forming bar is already served at step 3), whereas an SL/TP
+    # or close command must not queue behind bulk history. This is the ONLY
+    # place a browser-triggered candle fetch reaches the bridge.
+    candle_request_id: int | None = None
+    candle_bars_written: int | None = None
+    req = claim_next_request(conn)
+    if req is not None:
+        candle_request_id = int(req["id"])
+        try:
+            candle_bars_written = fulfill_request(client, conn, req, observed_msc)
+        except Exception:
+            log.exception(
+                "live: candle request %d failed — marked failed, will not auto-retry "
+                "this exact row (a new request re-queues)", candle_request_id
+            )
 
     return LiveReport(
         account_login=login,
