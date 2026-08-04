@@ -257,12 +257,14 @@ def _seed_position(
 def _seed_command(
     conn, *, position_id=1, kind="close", status="pending",
     retcode=None, error=None, sl=None, tp=None, volume=None,
+    symbol=None, direction=None, price_ref=None,
 ):
     conn.execute(
-        "INSERT INTO trade_commands (account_login, position_id, kind, sl, tp, "
-        "volume, requested_msc, status, retcode, error) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (_LOGIN, position_id, kind, sl, tp, volume, now_ms(), status, retcode, error),
+        "INSERT INTO trade_commands (account_login, position_id, kind, symbol, "
+        "direction, price_ref, sl, tp, volume, requested_msc, status, retcode, "
+        "error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (_LOGIN, position_id, kind, symbol, direction, price_ref, sl, tp, volume,
+         now_ms(), status, retcode, error),
     )
     conn.commit()
 
@@ -367,6 +369,22 @@ def test_commands_context_maps_retcode_name_and_shows_error(conn):
     assert by_pos[2]["error"] == "proses berhenti di tengah perintah"
     assert by_pos[2]["retcode_name"] is None            # nothing said yet
     assert by_pos[3]["retcode_name"] == "retcode 99999"  # honest fallback
+
+
+def test_commands_context_carries_symbol_direction_price_ref_for_open(conn):
+    # An "open" has no position row yet, so its symbol/direction/side-entry
+    # price live only on the command — the audit log must not drop them
+    # (Finding 2: a UI reading only position_id renders "#null" for these).
+    _seed_account(conn)
+    _seed_command(conn, position_id=None, kind="open", status="pending",
+                  symbol="XAUUSDc", direction="buy", price_ref=4035.5,
+                  sl=4030.0, volume=0.1)
+    ctx = views.commands_context(conn)
+    row = ctx["commands"][0]
+    assert row["position_id"] is None
+    assert row["symbol"] == "XAUUSDc"
+    assert row["direction"] == "buy"
+    assert row["price_ref"] == pytest.approx(4035.5)
 
 
 # --------------------------------------------------- equity / R tape (M9)

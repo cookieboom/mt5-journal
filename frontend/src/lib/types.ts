@@ -81,7 +81,12 @@ export interface DashboardData {
 export interface LiveData { header: Header; live: Live; }
 
 export interface CommandRow {
-  id: number; position_id: number; kind: string; status: string;
+  // null for an "open": no position exists yet to attach an id to (rule 4 —
+  // NULL means unknown, never coerce to 0).
+  id: number; position_id: number | null; kind: string; status: string;
+  // "open" only — symbol/direction/price_ref have no position row to read
+  // them from, so they live on the command itself. NULL for every other kind.
+  symbol: string | null; direction: string | null; price_ref: number | null;
   sl: number | null; tp: number | null; volume: number | null;
   requested_msc: number; retcode: number | null; retcode_name: string | null;
   result_volume: number | null; result_price: number | null;

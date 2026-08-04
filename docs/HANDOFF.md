@@ -540,6 +540,11 @@ The three worth a pointer, because they change how you work:
       matches its two neighbours. The code question is closed; the empirical
       one — does this bridge actually need it — is not, and may never be worth
       resolving now that the insurance is cheap and in place.
+- [ ] `tests/test_storage_api.py` imports httpx via `TestClient`, but httpx is
+      absent from `pyproject.toml`/`uv.lock` — a clean `uv sync` breaks the
+      whole web test suite. Pre-existing, found during the 2026-08-04
+      risk-auto-size review; fix on its own commit to `main`, not bundled
+      into a feature branch.
 - [ ] Funding-deal comments (`D-IDQRISGT-…`, `W-ALLINT-…`) are payment
       references, now committed to git. Zero analytical value. If this repo is
       ever pushed anywhere public, redact `comment` on funding deals only
@@ -567,9 +572,28 @@ this with size:
    price flips it to Sell.
 3. Set the risk to the smallest workable value and open ONE position on the
    smallest symbol. Confirm: the ConfirmModal shows the intent sentence; the
-   command appears in the audit log; `journal live` sends it; MT5 shows the
-   position WITH the SL attached from the first tick.
+   command appears in the audit log **showing the symbol and the direction**
+   (not `#null` — see Finding 2 of the 2026-08-04 fix wave); `journal live`
+   sends it; MT5 shows the position WITH the SL attached from the first tick.
 4. Confirm the realised risk matches the panel's figure within the entry
    slippage, using `risk_amount` on the resulting trade after `journal sync`.
 5. Try to open with an SL far enough away to exceed 5% of balance. Confirm the
    panel refuses and no command row is written.
+
+**OPEN QUESTION — stale feed can size against a stale price (2026-08-04 review):**
+Volume is frozen at enqueue by design; the executor's fresh-tick
+re-validation (`_check_level`) catches a stop on the wrong *side* but not a
+changed *size*. If `plannedEntry` (the last shown bar's close, `Chart.tsx`
+`shownCandles` tail) is stale — `journal live` down, or a stale feed — the
+human can size 0.10 lot against a 4035 close with a 4030 stop (50 USC
+intended), the market gaps to 4060 before the command executes,
+`_check_level` still passes on the SL side, and ~300 USC goes out instead of
+50. Still bounded by `MAX_RISK_PCT` (5% of balance), but that can be many
+multiples of the stated budget. `RiskSizePanel`'s live gate is
+`disabled={!live}`, which only checks that `/api/live` responded, not that
+the data is fresh. `views.positions_context` already returns `stale`/`age_s`
+and `LiveData` already carries them, so if the answer is "block it" the data
+is already there to wire up. If the answer is "allow it", the panel should
+at least show the feed age next to the price so the divergence is visible
+before the human commits size. No guard implemented — this is a product
+decision, not a bug.

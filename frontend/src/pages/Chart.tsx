@@ -237,10 +237,19 @@ export default function Chart() {
   const sizing = useRiskSizing({
     symbol, entry: plannedEntry, sl: plannedSl, tp: plannedTp,
   });
-  const plannedOrder = plannedEntry === null ? null : {
-    entry: plannedEntry, sl: plannedSl, tp: plannedTp,
-    direction: sizing.result?.direction ?? null,
-  };
+  // Memoized for the same reason as shownCandles/draggableReplay above: this
+  // object is a CandleChart prop AND a dependency of its price-line effect,
+  // which starts by wiping every line. A fresh object each render (every
+  // hover, every unrelated Chart.tsx state change) would destroy and
+  // recreate all entry/SL/TP lines on every mousemove.
+  const plannedDirection = sizing.result?.direction ?? null;
+  const plannedOrder = useMemo(
+    () => (plannedEntry === null ? null : {
+      entry: plannedEntry, sl: plannedSl, tp: plannedTp,
+      direction: plannedDirection,
+    }),
+    [plannedEntry, plannedSl, plannedTp, plannedDirection],
+  );
 
   const competitive = replayPrefs.prefs.competitiveMode;
   const { data: career } = useApi<TrainingSummary>(
