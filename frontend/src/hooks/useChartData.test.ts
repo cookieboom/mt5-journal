@@ -84,3 +84,98 @@ it("loadUpTo does not permanently drop a bar the backend hasn't promoted yet", a
     vi.useRealTimers();
   }
 });
+
+// Reproduces the reported bug: /chart shows fresh live bars (tail-follow via
+// loadUpTo keeps working) but the "data belum lengkap" banner never clears.
+// load()'s poll cycle owns status and gives up after MAX_POLLS if the
+// initial window has a gap (e.g. chart opened before `journal live` caught
+// up) — but loadUpTo runs independently and never touched status, so a
+// stale "gaveup" outlived the gap it described.
+it("loadUpTo clears a stale gaveup status once the window is actually covered", async () => {
+  vi.useFakeTimers();
+  const T0 = 1_700_000_000_000;
+  vi.setSystemTime(T0);
+  const M5 = 5 * 60_000;
+
+  let pollCalls = 0;
+  const fetchMock = vi.fn((url: string) => {
+    const q = new URL(url, "http://localhost").searchParams;
+    const from = Number(q.get("from"));
+    // First 6 calls are load()'s initial fetch + its 5 bounded retries, all
+    // against the same window: some history present, but the tail is
+    // permanently missing (simulates journal live not running yet) so the
+    // poll cycle exhausts MAX_POLLS and gives up.
+    if (pollCalls < 6) {
+      pollCalls += 1;
+      return jsonOk({
+        symbol: "XAUUSDc", timeframe: "M5",
+        candles: [{ time_msc: T0 - 2 * M5, o: 1, h: 1, l: 1, c: 1, v: 1 }],
+        missing: [[T0 - M5, T0]], pending: true,
+      });
+    }
+    // journal live has since caught up: tail-follow (loadUpTo) finds full coverage.
+    return jsonOk({
+      symbol: "XAUUSDc", timeframe: "M5",
+      candles: [{ time_msc: from, o: 2, h: 2, l: 2, c: 2, v: 1 }],
+      missing: [], pending: false,
+    });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+
+  try {
+    const { result } = renderHook(() => useChartData("XAUUSDc", "M5", 3, 50));
+    // Drain all 5 bounded polls (POLL_MS apart) to reach "gaveup".
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000 * 6); });
+    expect(result.current.status).toBe("gaveup");
+
+    await act(async () => { await result.current.loadUpTo(T0 + M5); });
+    expect(result.current.status).toBe("ready");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+// A window fetched up to Date.now() always straddles the currently-forming
+// bar, so the backend's `missing` for a live tail-follow call is realistically
+// NEVER empty — it always has a trailing sliver for the bar that hasn't
+// closed yet. The gaveup-clearing logic must not require missing.length===0
+// (that would never fire in practice); it must clear on confirmed forward
+// progress instead.
+it("loadUpTo clears a stale gaveup status on forward progress even with a trailing forming-bar sliver", async () => {
+  vi.useFakeTimers();
+  const T0 = 1_700_000_000_000;
+  vi.setSystemTime(T0);
+  const M5 = 5 * 60_000;
+
+  let pollCalls = 0;
+  const fetchMock = vi.fn(() => {
+    if (pollCalls < 6) {
+      pollCalls += 1;
+      return jsonOk({
+        symbol: "XAUUSDc", timeframe: "M5",
+        candles: [{ time_msc: T0 - 2 * M5, o: 1, h: 1, l: 1, c: 1, v: 1 }],
+        missing: [[T0 - M5, T0]], pending: true,
+      });
+    }
+    // journal live caught up: the just-closed bar is confirmed, but the
+    // still-forming bar's tail is (correctly, always) reported missing.
+    return jsonOk({
+      symbol: "XAUUSDc", timeframe: "M5",
+      candles: [{ time_msc: T0, o: 2, h: 2, l: 2, c: 2, v: 1 }],
+      missing: [[T0 + M5, T0 + M5 + 15_000]], pending: true,
+    });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+
+  try {
+    const { result } = renderHook(() => useChartData("XAUUSDc", "M5", 3, 50));
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000 * 6); });
+    expect(result.current.status).toBe("gaveup");
+
+    await act(async () => { await result.current.loadUpTo(T0 + M5); });
+    expect(result.current.missing).toEqual([[T0 + M5, T0 + M5 + 15_000]]);
+    expect(result.current.status).toBe("ready");
+  } finally {
+    vi.useRealTimers();
+  }
+});
