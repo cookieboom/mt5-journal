@@ -87,6 +87,29 @@ export function outcomeCounts(positions: TrainingPosition[]): OutcomeCounts {
   return out;
 }
 
+// Competitive mode runs each scenario as its own backend session, so no single
+// session_summary spans the whole run. Mirror training_store._summary here over
+// the positions the client already holds (current round + finished rounds).
+export function summarize(positions: TrainingPosition[]): TrainingSummary {
+  const resolved = positions.filter((p) => p.status === "closed" && p.net_profit !== null);
+  const nums = (pick: (p: TrainingPosition) => number | null) =>
+    resolved.map(pick).filter((v): v is number => v !== null);
+  const rs = nums((p) => p.r_multiple);
+  const maes = nums((p) => p.mae_r);
+  const mfes = nums((p) => p.mfe_r);
+  const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
+  const n = resolved.length;
+  const total_r = sum(rs);
+  return {
+    n,
+    win_rate: n ? resolved.filter((p) => (p.net_profit ?? 0) > 0).length / n : null,
+    avg_r: rs.length ? total_r / rs.length : null,
+    total_r,
+    avg_mae_r: maes.length ? sum(maes) / maes.length : null,
+    avg_mfe_r: mfes.length ? sum(mfes) / mfes.length : null,
+  };
+}
+
 // Only bars at or before the reveal cursor are drawn — the future is hidden.
 export function clipToCursor(candles: Candle[], cursorMsc: number): Candle[] {
   return candles.filter((c) => c.time_msc <= cursorMsc);

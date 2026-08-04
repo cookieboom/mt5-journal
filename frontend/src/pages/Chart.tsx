@@ -5,7 +5,7 @@ import { clampBars, parseSelection } from "../lib/chartPrefs";
 import { useChartPrefs } from "../hooks/useChartPrefs";
 import { mergeForming, type Sym, type Timeframe, timeframeMs } from "../lib/candles";
 import type { HoverBar, LiveData } from "../lib/types";
-import { clipToCursor, outcomeCounts, type TrainingSummary } from "../lib/replay";
+import { clipToCursor, outcomeCounts, summarize, type TrainingPosition, type TrainingSummary } from "../lib/replay";
 import { useReplaySession, type ReplayConfig } from "../hooks/useReplaySession";
 import { useReplayPrefs } from "../hooks/useReplayPrefs";
 import type { ReplayFormPrefs } from "../lib/replayPrefs";
@@ -58,6 +58,9 @@ export default function Chart() {
   const snapshotRef = useRef<string>("");
 
   const [compRound, setCompRound] = useState(1);
+  // Closed positions of the FINISHED scenarios. Each round is its own backend
+  // session, so without this the stats card would reset every scenario.
+  const [compClosed, setCompClosed] = useState<TrainingPosition[]>([]);
   const [evalPause, setEvalPause] = useState<{ pnl: number; isSkip: boolean } | null>(null);
   const prevPosCount = useRef(0);
 
@@ -99,6 +102,7 @@ export default function Chart() {
     setParams(new URLSearchParams({ symbol: cfg.symbol, tf: cfg.timeframe }), { replace: true });
     replayPrefs.save(form);   // remember these specs for next time
     setCompRound(1);
+    setCompClosed([]);
     setEvalPause(null);
     prevPosCount.current = 0;
     replay.start(cfg);
@@ -111,6 +115,11 @@ export default function Chart() {
        return;
     }
     
+    // Carry this scenario's result into the run total before the session is
+    // replaced (position ids are globally unique, so no dedupe needed).
+    const done = replay.positions.filter((p) => p.status === "closed");
+    if (done.length) setCompClosed((prev) => [...prev, ...done]);
+
     // Generate new random date
     const endMs = Date.now() - 14 * 24 * 3600 * 1000;
     const startMs = Date.now() - 2 * 365 * 24 * 3600 * 1000;
@@ -208,8 +217,17 @@ export default function Chart() {
   const currentClose = shownCandles.length ? shownCandles[shownCandles.length - 1].c : null;
   const atEnd = !!replay.session && cursor !== null && cursor >= replay.session.range_end_msc;
 
-  const { data: career } = useApi<TrainingSummary>("/api/training/summary", replayOpen ? 3000 : undefined);
-  const sessionCounts = useMemo(() => outcomeCounts(replay.positions), [replay.positions]);
+  const competitive = replayPrefs.prefs.competitiveMode;
+  const { data: career } = useApi<TrainingSummary>(
+    "/api/training/summary", replayOpen && !competitive ? 3000 : undefined,
+  );
+  // Competitive: stats span the whole run (finished scenarios + current one).
+  const statPositions = useMemo(
+    () => (competitive ? [...compClosed, ...replay.positions] : replay.positions),
+    [competitive, compClosed, replay.positions],
+  );
+  const sessionCounts = useMemo(() => outcomeCounts(statPositions), [statPositions]);
+  const sessionSummary = competitive ? summarize(statPositions) : replay.sessionSummary;
 
   return (
     <div className="flex flex-col h-[calc(100vh-2rem)]">
@@ -356,14 +374,12 @@ export default function Chart() {
                 currency={currency}
                 onClose={replay.close}
               />
-              {/* Competitive rounds are separate backend sessions, so the per-session
-                  card resets every scenario and its n never reaches the §8 threshold.
-                  Keep the career card visible there too — it is the only place win
-                  rate / avg R can ever unlock. */}
-              <ReplaySummary title="Kumulatif" s={career ?? null} />
+              {/* Career card is hidden in competitive mode — the run total below
+                  is the score that matters there. */}
+              {!competitive && <ReplaySummary title="Kumulatif" s={career ?? null} />}
               <ReplaySummary
-                title={replayPrefs.prefs.competitiveMode ? `Skenario ${compRound}` : "Sesi ini"}
-                s={replay.sessionSummary}
+                title={competitive ? `Kompetitif · Skenario ${compRound}` : "Sesi ini"}
+                s={sessionSummary}
                 counts={sessionCounts}
               />
             </>

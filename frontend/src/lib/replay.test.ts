@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { clipToCursor, outcomeCounts, replayLines, unrealizedR, msPerStep, type TrainingPosition } from "./replay";
+import { clipToCursor, outcomeCounts, replayLines, summarize, unrealizedR, msPerStep, type TrainingPosition } from "./replay";
 import type { Candle } from "./types";
 
 const bar = (t: number): Candle => ({ time_msc: t, o: 1, h: 2, l: 0.5, c: 1.5, v: 1 });
@@ -57,6 +57,30 @@ describe("outcomeCounts", () => {
   });
   it("is all-zero with no positions", () => {
     expect(outcomeCounts([])).toEqual({ closed: 0, sl: 0, tp: 0, manual: 0 });
+  });
+});
+
+describe("summarize", () => {
+  it("aggregates closed+resolved positions across scenarios, ignoring open ones", () => {
+    const s = summarize([
+      pos({ status: "closed", net_profit: 100, r_multiple: 2, mae_r: 0.5, mfe_r: 2.5 }),
+      pos({ status: "closed", net_profit: -50, r_multiple: -1, mae_r: 1.5, mfe_r: 0.5 }),
+      pos({ status: "closed", net_profit: null }),   // unresolved — no input
+      pos({ status: "open", net_profit: 999, r_multiple: 9 }),
+    ]);
+    expect(s.n).toBe(2);
+    expect(s.win_rate).toBeCloseTo(0.5);
+    expect(s.total_r).toBeCloseTo(1);
+    expect(s.avg_r).toBeCloseTo(0.5);
+    expect(s.avg_mae_r).toBeCloseTo(1);
+    expect(s.avg_mfe_r).toBeCloseTo(1.5);
+  });
+  it("greys metrics with no input (rule 4) instead of reporting 0", () => {
+    const s = summarize([pos({ status: "closed", net_profit: 10, r_multiple: null })]);
+    expect(s.n).toBe(1);
+    expect(s.avg_r).toBeNull();
+    expect(s.avg_mae_r).toBeNull();
+    expect(summarize([]).win_rate).toBeNull();
   });
 });
 
