@@ -100,6 +100,78 @@ def enqueue(
     return int(cur.lastrowid)
 
 
+def account_balance(conn: sqlite3.Connection, login: int) -> float | None:
+    """`accounts.balance` in account currency (USC), or None if unknown.
+
+    A SNAPSHOT from the last `journal sync`, not a live figure — which is why
+    the risk ceiling it feeds is a hard 5% rather than a knife-edge limit.
+    """
+    row = conn.execute(
+        "SELECT balance FROM accounts WHERE login = ?", (login,)
+    ).fetchone()
+    return None if row is None or row["balance"] is None else float(row["balance"])
+
+
+def load_open_context(
+    conn: sqlite3.Connection, login: int, symbol: str, direction: str, price: float,
+) -> tuple[dict, sqlite3.Row]:
+    """The (position, spec) pair for an OPEN, where no position exists yet.
+
+    The position is synthesised from what the human chose, in exactly the shape
+    `domain/commands` reads off a real `open_positions` row — which is why the
+    open path needs no new branch inside `_check_trade_mode`, `_check_volume`,
+    or `_check_level`. Same rules, same messages, one code path.
+    """
+    spec = _spec(conn, symbol)
+    if spec is None:
+        raise CommandError(
+            f"Spesifikasi simbol {symbol} belum ada di database — "
+            f"jalankan `journal sync` dulu."
+        )
+    pos = {
+        "position_id": None,
+        "symbol": symbol,
+        "direction": direction,
+        "price_current": price,
+        "volume": None,
+        "sl": 0.0,
+        "tp": 0.0,
+    }
+    return pos, spec
+
+
+def enqueue_open(
+    conn: sqlite3.Connection,
+    login: int,
+    *,
+    symbol: str,
+    direction: str,
+    sl: float | None,
+    tp: float | None,
+    volume: float | None,
+    price_ref: float | None,
+) -> int:
+    """Validate, then queue an open. Returns the new command id.
+
+    A refused open writes NOTHING, exactly as `enqueue` does. `price_ref` is
+    stored as evidence of the price the human sized against — it is NOT sent to
+    the broker (execution is MARKET) and it is not the fill price.
+    """
+    pos, spec = load_open_context(conn, login, symbol, direction, price_ref)
+    validate("open", pos, spec, sl=sl, tp=tp, volume=volume,
+             balance=account_balance(conn, login))
+
+    cur = conn.execute(
+        "INSERT INTO trade_commands "
+        "(account_login, position_id, kind, symbol, direction, price_ref, "
+        " sl, tp, volume, requested_msc, status) "
+        "VALUES (?, NULL, 'open', ?, ?, ?, ?, ?, ?, ?, 'pending')",
+        (login, symbol, direction, price_ref, sl, tp, volume, now_ms()),
+    )
+    conn.commit()
+    return int(cur.lastrowid)
+
+
 def claim_next(conn: sqlite3.Connection, login: int) -> sqlite3.Row | None:
     """Take ownership of the oldest pending command, or return None.
 
@@ -250,11 +322,14 @@ def pending_count(conn: sqlite3.Connection, login: int) -> int:
 
 __all__ = [
     "CommandError",
+    "account_balance",
     "claim_next",
     "enqueue",
+    "enqueue_open",
     "get_command",
     "list_commands",
     "load_context",
+    "load_open_context",
     "mark_sent",
     "pending_count",
     "record_result",

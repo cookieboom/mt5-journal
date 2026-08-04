@@ -18,8 +18,10 @@ from journal.domain.commands import CommandError
 from journal.execute import (
     claim_next,
     enqueue,
+    enqueue_open,
     get_command,
     list_commands,
+    load_open_context,
     record_result,
     recover_interrupted,
     reject,
@@ -279,3 +281,64 @@ def test_list_commands_respects_a_limit(conn):
     for i in range(5):
         enqueue(conn, _LOGIN, "modify_sltp", 111, sl=3300.0 + i)
     assert len(list_commands(conn, _LOGIN, limit=2)) == 2
+
+
+# ---------------------------------------------------------------------- open
+
+
+def _seed_open(conn, *, balance=100_000.0, trade_mode=4):
+    conn.execute(
+        "INSERT OR REPLACE INTO accounts (login, currency, balance, margin_mode, "
+        "first_seen_at) VALUES (?, 'USC', ?, 2, 1)", (_LOGIN, balance),
+    )
+    conn.execute(
+        "INSERT OR REPLACE INTO symbol_specs (symbol, symbol_base, digits, point, "
+        "tick_size, tick_value, fetched_at, volume_min, volume_max, volume_step, "
+        "stops_level, freeze_level, trade_mode, filling_mode) VALUES "
+        "('XAUUSDc', 'XAUUSD', 3, 0.001, 0.001, 0.1, 1, 0.01, 200.0, 0.01, 0, 0, ?, 3)",
+        (trade_mode,),
+    )
+    conn.commit()
+
+
+def test_enqueue_open_writes_one_pending_row(conn):
+    _seed_open(conn)
+    cmd_id = enqueue_open(conn, _LOGIN, symbol="XAUUSDc", direction="buy",
+                          sl=4030.0, tp=4045.0, volume=0.10, price_ref=4035.0)
+    row = get_command(conn, cmd_id)
+    assert row["kind"] == "open"
+    assert row["status"] == "pending"
+    assert row["position_id"] is None
+    assert row["symbol"] == "XAUUSDc"
+    assert row["direction"] == "buy"
+    assert abs(row["price_ref"] - 4035.0) < 1e-9
+    assert abs(row["sl"] - 4030.0) < 1e-9
+    assert abs(row["tp"] - 4045.0) < 1e-9
+    assert abs(row["volume"] - 0.10) < 1e-9
+
+
+def test_a_refused_open_writes_nothing(conn):
+    # 50 USC risk against a 100 USC balance is 50% — far over the ceiling.
+    _seed_open(conn, balance=100.0)
+    with pytest.raises(CommandError):
+        enqueue_open(conn, _LOGIN, symbol="XAUUSDc", direction="buy",
+                     sl=4030.0, tp=0.0, volume=0.10, price_ref=4035.0)
+    n = conn.execute("SELECT COUNT(*) FROM trade_commands").fetchone()[0]
+    assert n == 0
+
+
+def test_an_open_on_an_unknown_symbol_is_refused(conn):
+    _seed_open(conn)
+    with pytest.raises(CommandError, match="sync|spesifikasi|Spesifikasi"):
+        enqueue_open(conn, _LOGIN, symbol="GBPUSDc", direction="buy",
+                     sl=1.2, tp=0.0, volume=0.10, price_ref=1.25)
+
+
+def test_load_open_context_builds_a_synthetic_position(conn):
+    _seed_open(conn)
+    pos, spec = load_open_context(conn, _LOGIN, "XAUUSDc", "buy", 4035.0)
+    assert pos["position_id"] is None
+    assert pos["symbol"] == "XAUUSDc"
+    assert pos["direction"] == "buy"
+    assert abs(pos["price_current"] - 4035.0) < 1e-9
+    assert spec["symbol"] == "XAUUSDc"
