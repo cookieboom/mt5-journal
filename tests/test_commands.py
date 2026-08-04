@@ -410,3 +410,131 @@ def test_classify_none_is_failed_not_done():
 def test_classify_accepts_a_raw_int():
     assert classify(10009) == "done"
     assert classify(99999) == "failed"
+
+
+# ------------------------------------------------------------------- open
+
+
+from journal.domain.commands import MAX_RISK_PCT
+
+# A synthetic "position" for an open: there is no position yet, so the caller
+# supplies the symbol, the direction (derived from the SL side), and the price
+# the human sized against. Every existing check reads this the same way it reads
+# a real open_positions row.
+_OPEN_BUY = {
+    "position_id": None,
+    "symbol": "XAUUSDc",
+    "direction": "buy",
+    "price_current": 4035.0,
+    "volume": None,
+    "sl": 0.0,
+    "tp": 0.0,
+}
+
+# XAUUSDc, measured: tick_size 0.001, tick_value 0.1 USC (docs §7). Not in the
+# shared _SPEC above, which only carries the order-validation fields.
+_OPEN_SPEC = dict(_SPEC, tick_size=0.001, tick_value=0.1)
+
+# entry 4035 / SL 4030 at 0.10 lot = 50 USC (the §8 reference figure).
+_BALANCE = 100_000.0   # USC = $1000. 50 USC is 0.05% of it — comfortably legal.
+
+
+def _open(**over):
+    return dict(_OPEN_BUY, **over)
+
+
+def _ospec(**over):
+    return dict(_OPEN_SPEC, **over)
+
+
+def test_open_is_a_known_kind():
+    from journal.domain.commands import KINDS
+    assert "open" in KINDS
+
+
+def test_a_valid_open_passes():
+    validate("open", _open(), _ospec(), sl=4030.0, tp=4045.0, volume=0.10,
+             balance=_BALANCE)
+
+
+def test_an_open_without_a_stop_is_refused():
+    """The whole feature is risk-first: with no SL there is no computable risk,
+    so there is no size to derive and no ceiling to check against."""
+    with pytest.raises(CommandError, match="SL"):
+        validate("open", _open(), _ospec(), sl=None, volume=0.10, balance=_BALANCE)
+    with pytest.raises(CommandError, match="SL"):
+        validate("open", _open(), _ospec(), sl=0.0, volume=0.10, balance=_BALANCE)
+
+
+def test_an_open_with_the_stop_on_the_wrong_side_is_refused():
+    # A buy's stop above the price. `_check_level` already knows this; the test
+    # is here to prove the open path routes through it.
+    with pytest.raises(CommandError, match="BAWAH"):
+        validate("open", _open(), _ospec(), sl=4040.0, volume=0.10, balance=_BALANCE)
+    with pytest.raises(CommandError, match="ATAS"):
+        validate("open", _open(direction="sell", price_current=4035.0), _ospec(),
+                 sl=4030.0, volume=0.10, balance=_BALANCE)
+
+
+def test_an_open_with_the_target_on_the_wrong_side_is_refused():
+    with pytest.raises(CommandError, match="ATAS"):
+        validate("open", _open(), _ospec(), sl=4030.0, tp=4020.0, volume=0.10,
+                 balance=_BALANCE)
+
+
+def test_an_open_obeys_the_lot_cap():
+    with pytest.raises(CommandError, match="1"):
+        validate("open", _open(), _ospec(), sl=4030.0, volume=1.01, balance=_BALANCE)
+
+
+def test_an_open_obeys_the_broker_volume_rules():
+    with pytest.raises(CommandError, match="minimum"):
+        validate("open", _open(), _ospec(), sl=4030.0, volume=0.005, balance=_BALANCE)
+    with pytest.raises(CommandError, match="kelipatan"):
+        validate("open", _open(), _ospec(), sl=4030.0, volume=0.015, balance=_BALANCE)
+
+
+def test_an_open_obeys_trade_mode():
+    with pytest.raises(CommandError, match="short-only"):
+        validate("open", _open(), _ospec(trade_mode=2), sl=4030.0, volume=0.10,
+                 balance=_BALANCE)
+    with pytest.raises(CommandError, match="close-only"):
+        validate("open", _open(), _ospec(trade_mode=3), sl=4030.0, volume=0.10,
+                 balance=_BALANCE)
+
+
+def test_the_risk_ceiling_is_five_percent():
+    assert MAX_RISK_PCT == 5.0
+
+
+def test_an_open_just_under_the_risk_ceiling_passes():
+    # 5% of 1000 USC balance is 50 USC — exactly the reference figure at 0.10
+    # lot. Rule 5: at the limit is allowed, compared with tolerance.
+    validate("open", _open(), _ospec(), sl=4030.0, volume=0.10, balance=1000.0)
+
+
+def test_an_open_over_the_risk_ceiling_is_refused():
+    # Same 50 USC risk against a 900 USC balance is 5.6% — refused, and the
+    # message states both numbers so the human can act on it.
+    with pytest.raises(CommandError, match="5"):
+        validate("open", _open(), _ospec(), sl=4030.0, volume=0.10, balance=900.0)
+
+
+def test_an_open_with_an_unknown_balance_is_refused():
+    """Rule 4 where it binds. An unknown ceiling is not permission to open."""
+    with pytest.raises(CommandError, match="balance|sync"):
+        validate("open", _open(), _ospec(), sl=4030.0, volume=0.10, balance=None)
+
+
+def test_an_open_with_an_unknown_tick_spec_is_refused():
+    """Without tick_size/tick_value the risk is not computable, so the ceiling
+    cannot be enforced — refuse rather than open an unmeasured position."""
+    with pytest.raises(CommandError, match="sync|risiko"):
+        validate("open", _open(), _ospec(tick_value=None), sl=4030.0, volume=0.10,
+                 balance=_BALANCE)
+
+
+def test_the_risk_ceiling_does_not_apply_to_a_close():
+    """The module's standing asymmetry: nothing that would stop a human
+    REDUCING exposure applies to a close."""
+    validate("close", _buy(volume=5.0), _spec(), volume=None, balance=None)

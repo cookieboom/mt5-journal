@@ -35,6 +35,7 @@ from ..adapter.base import (
     filling_for,
     is_success,
 )
+from .risk import risk_amount
 
 # The human's hard cap, 2026-07-23: one lot per command. A constant here rather
 # than a `max` attribute on a form field, so it is enforced somewhere testable.
@@ -42,16 +43,23 @@ from ..adapter.base import (
 # formality. It governs volume a human TYPES — see `_check_volume`.
 MAX_LOT = 1.0
 
+# The second hard ceiling, and the one that scales with the account: no single
+# order may put more than this share of `accounts.balance` at stake. MAX_LOT
+# alone does not bound risk — one lot with a distant stop is a large loss. A
+# constant here rather than a pref, for the same reason MAX_LOT is: a limit the
+# UI can raise is not a limit.
+MAX_RISK_PCT = 5.0
+
 # Rule 5: money and volume are REAL, compared with tolerance, never `==` or a
 # bare `>`. Lot steps are 0.01, so this is comfortably finer than any real
 # distinction while absorbing IEEE754 noise.
 _TOL = 1e-9
 
-KINDS = ("modify_sltp", "close", "close_partial", "add_volume")
+KINDS = ("modify_sltp", "close", "close_partial", "add_volume", "open")
 
 # The kinds that can INCREASE exposure. Everything stricter applies only to
 # these; `close` is deliberately absent.
-_OPENING = ("add_volume",)
+_OPENING = ("add_volume", "open")
 
 # SYMBOL_TRADE_MODE_*, from the bridge (__init__.py:166-170). Kept as plain ints
 # with a comment rather than an adapter enum: unlike DealType or TradeAction these
@@ -230,6 +238,48 @@ def _check_level(
             )
 
 
+def _check_risk(
+    position: Mapping[str, Any] | Any, spec: Mapping[str, Any] | Any,
+    sl: float | None, volume: float | None, balance: float | None,
+) -> None:
+    """The risk ceiling, for an `open` only.
+
+    An open is the only command that both creates exposure and knows its own
+    stop, so it is the only one whose risk can be bounded before it is sent.
+    Every unknown here refuses rather than defaults: an unmeasurable risk is not
+    a small one.
+    """
+    if sl is None or abs(sl) < _TOL:
+        raise CommandError(
+            "SL wajib diisi untuk membuka posisi — tanpa SL, risikonya tidak "
+            "bisa dihitung dan ukuran lot tidak bisa diturunkan."
+        )
+    if balance is None:
+        raise CommandError(
+            "Balance akun belum diketahui — jalankan `journal sync` dulu. "
+            "Membuka posisi ditolak selama batas risikonya tidak bisa dihitung."
+        )
+
+    risk = risk_amount(
+        _get(position, "price_current"), sl,
+        _get(spec, "tick_size"), _get(spec, "tick_value"), volume,
+    )
+    if risk is None:
+        raise CommandError(
+            "Risiko tidak bisa dihitung (tick_size/tick_value simbol atau harga "
+            "terkini belum diketahui) — jalankan `journal sync` dulu. Posisi "
+            "tidak dibuka tanpa risiko yang terukur."
+        )
+
+    ceiling = balance * MAX_RISK_PCT / 100.0
+    if risk > ceiling + _TOL:
+        pct = (risk / balance * 100.0) if balance else float("inf")
+        raise CommandError(
+            f"Risiko {risk:.2f} ({pct:.2f}% dari balance) melebihi batas keras "
+            f"{MAX_RISK_PCT}% ({ceiling:.2f}). Perkecil lot atau dekatkan SL."
+        )
+
+
 def validate(
     kind: str,
     position: Mapping[str, Any] | Any,
@@ -238,9 +288,14 @@ def validate(
     sl: float | None = None,
     tp: float | None = None,
     volume: float | None = None,
+    balance: float | None = None,
 ) -> None:
     """Raise `CommandError` if this command must not be sent. Returns None when
-    it may be."""
+    it may be.
+
+    `balance` is read only for `open` — the one kind whose risk can be bounded
+    before it exists. Every other kind ignores it.
+    """
     if kind not in KINDS:
         raise CommandError(f"Jenis perintah tidak dikenal: {kind!r}.")
 
@@ -258,6 +313,17 @@ def validate(
         price = _get(position, "price_current")
         _check_level("sl", sl, direction, price, spec)
         _check_level("tp", tp, direction, price, spec)
+        return
+
+    if kind == "open":
+        # Order matters: volume rules first (the cheapest and most specific
+        # message), then the levels, then the risk — which needs both a valid
+        # volume and a valid SL to mean anything.
+        _check_volume(kind, position, spec, volume)
+        price = _get(position, "price_current")
+        _check_level("sl", sl, direction, price, spec)
+        _check_level("tp", tp, direction, price, spec)
+        _check_risk(position, spec, sl, volume, balance)
         return
 
     if kind in ("close_partial", "add_volume"):
