@@ -111,6 +111,34 @@ export function mergeForming(candles: Candle[], forming: Candle | null, interval
   return candles;
 }
 
+// Is the price an order would be SIZED against fresh enough to commit to?
+//
+// The order's volume is frozen at enqueue (execute.enqueue_open), and the
+// executor's re-validation only catches a stop that has ended up on the wrong
+// SIDE — not a size that no longer matches the budget. So a reference price the
+// market has left produces a real, silently wrong lot, bounded only by the 5%
+// ceiling. Two independent ways it goes bad, both checked here:
+//   - `journal live` is not running (cold heartbeat), so nothing is updating;
+//   - it IS running but the feed has stopped advancing — a lapsed watch, or a
+//     closed market. The heartbeat alone says nothing about that.
+// Returns the reason to show the human, or null when it is safe to size.
+//
+// `entryBarMs` is the bar the ENTRY PRICE is read off — the last bar actually
+// shown — not the forming bar from the poll. The two diverge exactly when it
+// matters: `mergeForming` refuses to append a forming bar more than one
+// interval ahead of the history, so a stalled candle fetch leaves an old bar on
+// screen while the poll keeps reporting a current one.
+export function staleEntryReason(
+  feedLive: boolean, entryBarMs: number | null, intervalMs: number, nowMs: number,
+): string | null {
+  if (!feedLive) return "`journal live` tidak berjalan — harga acuan tidak segar.";
+  if (entryBarMs === null) return "Belum ada bar sebagai harga acuan.";
+  if (nowMs - entryBarMs > 2 * intervalMs) {
+    return "Harga acuan basi — bar terakhir lebih tua dari 2× timeframe.";
+  }
+  return null;
+}
+
 export async function fetchCandles(
   symbol: string, tf: Timeframe, fromMs: number, toMs: number,
 ): Promise<CandlesResponse> {

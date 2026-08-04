@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mergeForming } from "./candles";
+import { mergeForming, staleEntryReason } from "./candles";
 import type { Candle } from "./types";
 
 const bar = (t: number, c: number): Candle =>
@@ -36,5 +36,31 @@ describe("mergeForming", () => {
   it("does not append a forming bar more than one interval ahead of the last bar", () => {
     const out = mergeForming([bar(100, 1)], bar(300, 9), 100);
     expect(out).toEqual([bar(100, 1)]);
+  });
+});
+
+// The gate behind the open button. Sizing reads the last shown bar's close, and
+// the volume is frozen at enqueue — so an old reference price ships a lot the
+// market has already invalidated. See docs/HANDOFF.md, OPEN QUESTION.
+describe("staleEntryReason", () => {
+  const TF = 60_000;   // M1
+  it("passes a live feed whose forming bar is current", () => {
+    expect(staleEntryReason(true, 1_000_000, TF, 1_030_000)).toBeNull();
+  });
+  it("blocks when the journal live heartbeat is cold", () => {
+    expect(staleEntryReason(false, 1_000_000, TF, 1_030_000)).toMatch(/journal live/);
+  });
+  it("blocks when there is no bar to read a price off at all", () => {
+    expect(staleEntryReason(true, null, TF, 1_030_000)).not.toBeNull();
+  });
+  // The daemon can beat while the bar on screen stops advancing: a lapsed
+  // watch, a closed market, or a candle fetch that stalled while the poll kept
+  // running. The heartbeat alone would not catch any of them.
+  it("blocks when the shown bar has not advanced for two intervals", () => {
+    expect(staleEntryReason(true, 1_000_000, TF, 1_000_000 + 2 * TF + 1))
+      .toMatch(/basi/i);
+  });
+  it("allows exactly two intervals — only older than that is stale", () => {
+    expect(staleEntryReason(true, 1_000_000, TF, 1_000_000 + 2 * TF)).toBeNull();
   });
 });

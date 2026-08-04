@@ -74,6 +74,23 @@ describe("RiskSizePanel", () => {
     expect(btn.disabled).toBe(true);
   });
 
+  // The reference price the server sizes against comes off the chart, and the
+  // volume is frozen at enqueue — so a stale price must not be committable.
+  it("refuses to open on a stale feed, even with a perfectly valid size", () => {
+    const { onSubmit } = setup({ blocked: "`journal live` tidak berjalan — harga acuan tidak segar." });
+    const btn = screen.getByRole("button", { name: /buy/i }) as HTMLButtonElement;
+    expect(btn.disabled).toBe(true);
+    fireEvent.click(btn);
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(screen.getByTestId("stale-block").textContent).toMatch(/journal live/);
+  });
+
+  it("says nothing about staleness when the feed is fresh", () => {
+    setup({ blocked: null });
+    expect(screen.queryByTestId("stale-block")).toBeNull();
+    expect((screen.getByRole("button", { name: /buy/i }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
   it("switching the risk mode reports the new prefs upward", () => {
     const { onPrefsChange } = setup();
     fireEvent.click(screen.getByRole("button", { name: "USC" }));

@@ -9,6 +9,11 @@ import { money, price } from "../lib/format";
 // already placed, not proposed by this panel.
 export default function RiskSizePanel(props: {
   disabled: boolean;
+  // Non-null = the reference price is not fresh enough to commit size against
+  // (`staleEntryReason`). Separate from `disabled` only so the panel can say
+  // WHY: a dead button with no reason is its own trap. Live mode only —
+  // replay's cursor bar is the price by definition.
+  blocked?: string | null;
   currency: string;
   prefs: RiskPrefs;
   onPrefsChange: (p: RiskPrefs) => void;
@@ -23,7 +28,7 @@ export default function RiskSizePanel(props: {
 }) {
   const r = props.result;
   const direction = r?.direction ?? null;
-  const ready = !props.disabled && !props.loading && !!r
+  const ready = !props.disabled && !props.blocked && !props.loading && !!r
     && r.error === null && r.volume !== null && direction !== null;
 
   // "" -> null, not 0: an empty field means "not set", and 0 is a real price
@@ -94,6 +99,9 @@ export default function RiskSizePanel(props: {
         <Row label="R:R" value={r?.rr == null ? "—" : r.rr.toFixed(2)} testId="rr" />
       </div>
 
+      {props.blocked && (
+        <div data-testid="stale-block" className="text-neg">{props.blocked}</div>
+      )}
       {r?.error && (
         <div data-testid="size-error" className="text-neg">{r.error}</div>
       )}

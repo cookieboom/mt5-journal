@@ -321,11 +321,38 @@ describe("risk sizing panel", () => {
     cursor_msc: Date.now(), status: "active" as const, created_at_msc: Date.now(),
   };
 
-  // Extends the file's stubFetch with the live-open preview/enqueue seam.
-  // Everything else (candles, live positions, ...) falls through to
-  // stubFetch's own defaults; replay session creation never touches the
-  // network at all — see the useReplaySession mock above.
-  function extraRoutes(url: string, method: string) {
+  // A current M5 bucket, so the shown bar is inside the freshness window the
+  // open button now gates on. stubFetch's own defaults deliberately serve a
+  // 1970 bar and `live: false` — i.e. a dead feed — which is what the
+  // stale-feed test below leans on.
+  const M5_MS = 5 * 60_000;
+  const FRESH_BUCKET = Math.floor(Date.now() / M5_MS) * M5_MS;
+
+  // Extends the file's stubFetch with the live-open preview/enqueue seam, and
+  // (when `fresh`) a live feed current enough to open against. Everything else
+  // (live positions, ...) falls through to stubFetch's own defaults; replay
+  // session creation never touches the network at all — see the
+  // useReplaySession mock above.
+  function extraRoutes(url: string, method: string, fresh: boolean) {
+    if (fresh && url.startsWith("/api/candles/live")) {
+      return {
+        ok: true,
+        json: () => Promise.resolve({
+          forming: { time_msc: FRESH_BUCKET, o: 1900, h: 1901, l: 1899, c: 1900.5, v: 1 },
+          beat_msc: FRESH_BUCKET, live: true,
+        }),
+      };
+    }
+    if (fresh && url.startsWith("/api/candles")) {
+      return {
+        ok: true,
+        json: () => Promise.resolve({
+          symbol: "XAUUSDc", timeframe: "M5",
+          candles: [{ time_msc: FRESH_BUCKET, o: 1900, h: 1905, l: 1895, c: 1900, v: 5 }],
+          missing: [], pending: false,
+        }),
+      };
+    }
     if (url === "/api/live/open/preview" && method === "POST") {
       return {
         ok: true,
@@ -349,7 +376,9 @@ describe("risk sizing panel", () => {
     replaySession.open = vi.fn();
   });
 
-  function renderChartPage(opts: { replayOpen: boolean; sizeResult?: SizeResult }) {
+  function renderChartPage(
+    opts: { replayOpen: boolean; sizeResult?: SizeResult; staleFeed?: boolean },
+  ) {
     riskSizing.result = opts.sizeResult ?? null;
     const openPosition = vi.fn();
     replaySession.open = vi.fn(async (order: unknown) => {
@@ -361,7 +390,8 @@ describe("risk sizing panel", () => {
       replaySession.anchorMsc = FAKE_SESSION.cursor_msc;
     }
 
-    const fetchMock = stubFetch(extraRoutes);
+    const fetchMock = stubFetch((url, method) =>
+      extraRoutes(url, method, !opts.staleFeed));
     const postJsonSpy = vi.spyOn(api, "postJson"); // call-through: still hits the stubbed fetch above
 
     render(
@@ -413,5 +443,31 @@ describe("risk sizing panel", () => {
     await waitFor(() => expect(postJson).toHaveBeenCalledWith(
       "/api/live/open/preview", expect.anything()));
     expect(postJson).not.toHaveBeenCalledWith("/api/live/open", expect.anything());
+  });
+
+  // The volume is frozen at enqueue, so a reference price the market has left
+  // ships a lot that no longer matches the budget — and the executor's
+  // re-validation only catches a stop on the wrong SIDE, never a wrong size.
+  // docs/HANDOFF.md, OPEN QUESTION (2026-08-04 review).
+  it("refuses to open at all when the feed is stale, however valid the size", async () => {
+    const { postJson } = renderChartPage({ replayOpen: false, staleFeed: true, sizeResult: {
+      volume: 0.13, risk_usc: 65, risk_pct: 0.065, distance: 5, rr: null,
+      direction: "buy", error: null,
+    } });
+    const btn = await screen.findByRole("button", { name: /buy/i }) as HTMLButtonElement;
+    expect(btn.disabled).toBe(true);
+    fireEvent.click(btn);
+    expect(postJson).not.toHaveBeenCalledWith("/api/live/open/preview", expect.anything());
+    expect(screen.getByTestId("stale-block").textContent).toBeTruthy();
+  });
+
+  // Replay's price IS the cursor bar's close — there is no feed to be stale.
+  it("never applies the freshness gate in replay", async () => {
+    const { openPosition } = renderChartPage({ replayOpen: true, staleFeed: true, sizeResult: {
+      volume: 0.13, risk_usc: 65, risk_pct: 0.065, distance: 5, rr: null,
+      direction: "buy", error: null,
+    } });
+    fireEvent.click(await screen.findByRole("button", { name: /buy/i }));
+    await waitFor(() => expect(openPosition).toHaveBeenCalled());
   });
 });

@@ -584,6 +584,18 @@ The five steps, as run:
 5. Try to open with an SL far enough away to exceed 5% of balance. Confirm the
    panel refuses and no command row is written.
 
+**ANSWERED 2026-08-05 — the human chose option A: block the open on a stale
+feed.** `lib/candles.staleEntryReason` gates the live panel's button on
+`journal live`'s heartbeat AND on the age of the bar the entry price is
+actually read off (stale past 2× the timeframe), with the reason shown in the
+panel. Deliberately NOT wired to `views.positions_context.stale`, which the
+original note suggested: that field is computed from `open_positions`, and with
+no rows it returns `stale=False` (`views.py`, "cannot tell 'flat' from 'live
+never ran'") — so it is always False in exactly the case that matters, the
+first open on a flat account. The gate is frontend-only; the server still
+accepts a stale `entry` if something else posts one. The original note, kept
+for the reasoning:
+
 **OPEN QUESTION — stale feed can size against a stale price (2026-08-04 review):**
 Volume is frozen at enqueue by design; the executor's fresh-tick
 re-validation (`_check_level`) catches a stop on the wrong *side* but not a

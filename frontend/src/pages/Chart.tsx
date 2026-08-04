@@ -3,7 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import { useApi, postJson } from "../lib/api";
 import { clampBars, parseSelection } from "../lib/chartPrefs";
 import { useChartPrefs } from "../hooks/useChartPrefs";
-import { mergeForming, type Sym, type Timeframe, timeframeMs } from "../lib/candles";
+import { mergeForming, staleEntryReason, type Sym, type Timeframe, timeframeMs } from "../lib/candles";
 import type { HoverBar, LiveData } from "../lib/types";
 import { clipToCursor, outcomeCounts, summarize, type TrainingPosition, type TrainingSummary } from "../lib/replay";
 import { useReplaySession, type ReplayConfig } from "../hooks/useReplaySession";
@@ -78,7 +78,7 @@ export default function Chart() {
   // Realtime forming bar — normal mode only (never in replay/training, which is
   // historical). enabled flips the watch + poll off the instant replay opens.
   const liveEnabled = !replayOpen && !configOpen;
-  const { forming } = useLiveForming(symbol, tf, liveEnabled);
+  const { forming, live: feedLive } = useLiveForming(symbol, tf, liveEnabled);
 
   const setSelection = (next: { symbol?: Sym; tf?: Timeframe }) => {
     const p = new URLSearchParams(params);
@@ -234,6 +234,16 @@ export default function Chart() {
   const [plannedSl, setPlannedSl] = useState<number | null>(null);
   const [plannedTp, setPlannedTp] = useState<number | null>(null);
   const plannedEntry = currentClose ?? null;
+  // Live only. Recomputed on every 5s poll, which is what makes the clock read
+  // here honest: a dead web server freezes this value, but it also makes the
+  // open request itself unsendable, so nothing gets through on a frozen gate.
+  const entryBlocked = replayOpen
+    ? null
+    : staleEntryReason(
+        feedLive,
+        shownCandles.length ? shownCandles[shownCandles.length - 1].time_msc : null,
+        timeframeMs(tf), Date.now(),
+      );
   const sizing = useRiskSizing({
     symbol, entry: plannedEntry, sl: plannedSl, tp: plannedTp,
   });
@@ -438,6 +448,7 @@ export default function Chart() {
             <>
               <RiskSizePanel
                 disabled={!live} // load gate only — live.live.empty is never undefined
+                blocked={entryBlocked}
                 currency={currency}
                 prefs={sizing.prefs}
                 onPrefsChange={sizing.setPrefs}
