@@ -52,7 +52,7 @@ class FakeLiveClient(FakeMT5Client):
     `live_loop` never runs off the end). Inherits `script_results`/`order_check`/
     `order_send`/`sent`/`checked` from the base fake."""
 
-    def __init__(self, batches):
+    def __init__(self, batches=()):
         super().__init__()
         self._batches = batches
         self._i = 0
@@ -609,3 +609,127 @@ def test_serve_watches_does_not_cover_a_hole_in_a_sparse_bridge_response(conn):
     hole_start = cur_bucket - size
     missing = cs.missing_ranges(cs.read_coverage(conn, "XAUUSDc", tf), (hole_start, cur_bucket - 1))
     assert missing == [(hole_start, cur_bucket - 1)]
+
+
+# ---------------------------------------------------------------- open execution
+
+
+def _seed_specs_and_account(conn, login=7, *, balance=100_000.0, trade_mode=4):
+    """Same shape as `_seed_open` in `tests/test_execute.py` — an account with a
+    known balance and a symbol spec with real tick_size/tick_value, both of
+    which `_check_risk` needs to size an `open`."""
+    conn.execute(
+        "INSERT OR REPLACE INTO accounts (login, currency, balance, margin_mode, "
+        "first_seen_at) VALUES (?, 'USC', ?, 2, 1)", (login, balance),
+    )
+    conn.execute(
+        "INSERT OR REPLACE INTO symbol_specs (symbol, symbol_base, digits, point, "
+        "tick_size, tick_value, fetched_at, volume_min, volume_max, volume_step, "
+        "stops_level, freeze_level, trade_mode, filling_mode) VALUES "
+        "('XAUUSDc', 'XAUUSD', 3, 0.001, 0.001, 0.1, 1, 0.01, 200.0, 0.01, 0, 0, ?, 3)",
+        (trade_mode,),
+    )
+    conn.commit()
+
+
+class FakeOpenClient(FakeLiveClient):
+    """Records what was sent and lets a test control the tick."""
+
+    def __init__(self, *a, tick=None, tick_raises=False, **kw):
+        super().__init__(*a, **kw)
+        self._tick = tick
+        self._tick_raises = tick_raises
+        self.sent = []
+        self.checked = []
+
+    def symbol_info_tick(self, symbol):
+        if self._tick_raises:
+            raise RuntimeError("bridge down")
+        return self._tick
+
+    def order_check(self, req):
+        self.checked.append(req)
+        return None
+
+    def order_send(self, req):
+        self.sent.append(req)
+        from journal.adapter.base import TradeResult, TradeRetcode
+        return TradeResult(retcode=TradeRetcode.DONE, deal=1, order=2,
+                           volume=req.volume, price=4035.0, comment="ok", raw={})
+
+
+def _seed_open_command(conn, login=7, *, sl=4030.0, tp=4045.0, volume=0.10,
+                       price_ref=4035.0):
+    conn.execute(
+        "INSERT INTO trade_commands (account_login, position_id, kind, symbol, "
+        "direction, price_ref, sl, tp, volume, requested_msc, status) "
+        "VALUES (?, NULL, 'open', 'XAUUSDc', 'buy', ?, ?, ?, ?, 1, 'pending')",
+        (login, price_ref, sl, tp, volume),
+    )
+    conn.commit()
+
+
+def test_an_open_is_sent_using_a_fresh_tick(conn):
+    from journal.adapter.base import Tick
+    from journal.ingest.live import _execute_one_command
+    _seed_specs_and_account(conn)          # existing helper in this file
+    _seed_open_command(conn)
+    client = FakeOpenClient(tick=Tick(bid=4036.0, ask=4036.2))
+
+    cmd_id, status = _execute_one_command(client, conn, 7)
+
+    assert status == "done"
+    assert len(client.sent) == 1
+    req = client.sent[0]
+    assert req.position_id is None
+    assert abs(req.volume - 0.10) < 1e-9
+    assert abs(req.sl - 4030.0) < 1e-9
+
+
+def test_an_open_falls_back_to_price_ref_when_the_tick_is_unavailable(conn):
+    """A stale reference price is worse than a fresh one and better than no
+    side-check at all. The order still goes out."""
+    from journal.ingest.live import _execute_one_command
+    _seed_specs_and_account(conn)
+    _seed_open_command(conn)
+    client = FakeOpenClient(tick_raises=True)
+
+    cmd_id, status = _execute_one_command(client, conn, 7)
+
+    assert status == "done"
+    assert len(client.sent) == 1
+
+
+def test_an_open_is_rejected_when_the_market_crossed_the_stop(conn):
+    """The market moved through the SL between enqueue and send: a buy's stop is
+    now ABOVE the price. Refuse WITHOUT sending — this is the case the fresh
+    tick exists for."""
+    from journal.adapter.base import Tick
+    from journal.ingest.live import _execute_one_command
+    _seed_specs_and_account(conn)
+    _seed_open_command(conn, sl=4030.0, price_ref=4035.0)
+    client = FakeOpenClient(tick=Tick(bid=4025.0, ask=4025.2))
+
+    cmd_id, status = _execute_one_command(client, conn, 7)
+
+    assert status == "rejected"
+    assert client.sent == []
+    row = conn.execute(
+        "SELECT error FROM trade_commands WHERE id = ?", (cmd_id,)
+    ).fetchone()
+    assert "BAWAH" in row["error"]
+
+
+def test_the_volume_is_not_recomputed_at_send_time(conn):
+    """The stored volume IS the intent, the same as add_volume. The SL is an
+    absolute level, so the only error the queue delay introduces is entry
+    slippage — which MARKET execution has regardless."""
+    from journal.adapter.base import Tick
+    from journal.ingest.live import _execute_one_command
+    _seed_specs_and_account(conn)
+    _seed_open_command(conn, volume=0.10, price_ref=4035.0)
+    client = FakeOpenClient(tick=Tick(bid=4033.0, ask=4033.2))
+
+    _execute_one_command(client, conn, 7)
+
+    assert abs(client.sent[0].volume - 0.10) < 1e-9

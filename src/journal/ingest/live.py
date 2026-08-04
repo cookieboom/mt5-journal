@@ -72,8 +72,10 @@ from ..adapter.base import MT5Client, Position
 from ..domain.commands import CommandError, build_request
 from ..domain.symbols import to_base
 from ..execute import (
+    account_balance,
     claim_next,
     load_context,
+    load_open_context,
     mark_sent,
     pending_count,
     record_result,
@@ -186,6 +188,34 @@ def _run_ingest_pipeline(client: MT5Client, conn: sqlite3.Connection) -> None:
     run_rebuild(conn)
 
 
+def _open_price_for(client: MT5Client, symbol: str, price_ref: float | None) -> float | None:
+    """The price an OPEN is re-validated against at send time.
+
+    A fresh tick, because the market has moved since the human sized the order
+    and the SL may now be on the wrong side — the one failure this re-check
+    exists to catch. Falls back to the stored `price_ref` when the bridge cannot
+    answer: a stale price still catches a gross error, and refusing every order
+    whenever a tick call hiccups would be its own kind of trap.
+
+    This is the ingest layer, so calling the client here is allowed (rules 1
+    and 12 bind `web/` and `domain/`).
+    """
+    try:
+        tick = client.symbol_info_tick(symbol)
+    except Exception:
+        log.warning("live: no fresh tick for %s — re-validating against price_ref", symbol)
+        return price_ref
+    if tick is None:
+        return price_ref
+    # Mid of bid/ask; either alone biases the side-check by the spread. Falls
+    # back through last, then price_ref — rule 4 all the way down.
+    if tick.bid is not None and tick.ask is not None:
+        return (tick.bid + tick.ask) / 2.0
+    if tick.last is not None:
+        return tick.last
+    return price_ref
+
+
 def _execute_one_command(
     client: MT5Client, conn: sqlite3.Connection, login: int
 ) -> tuple[int | None, str | None]:
@@ -195,6 +225,10 @@ def _execute_one_command(
     every step is about real money:
       * `load_context`/`build_request` raising CommandError => `reject` (the world
         moved since enqueue: position closed, spec changed). Never sent.
+      * an `open` has no position to load, so it re-validates against a FRESH
+        tick — if the market crossed the stop while the command sat in the
+        queue, the SL is now on the wrong side and the order is rejected, not
+        sent.
       * `order_check` is a broker-side dry run first; then `mark_sent` COMMITS
         before `order_send`, so a crash mid-flight leaves the row as evidence.
       * if `order_send` (or `order_check`) raises, we catch, log loudly, and
@@ -209,10 +243,20 @@ def _execute_one_command(
     cmd_id = int(row["id"])
 
     try:
-        pos, spec = load_context(conn, login, row["position_id"])
-        req = build_request(
-            row["kind"], pos, spec, sl=row["sl"], tp=row["tp"], volume=row["volume"]
-        )
+        if row["kind"] == "open":
+            price = _open_price_for(client, row["symbol"], row["price_ref"])
+            pos, spec = load_open_context(
+                conn, login, row["symbol"], row["direction"], price
+            )
+            req = build_request(
+                "open", pos, spec, sl=row["sl"], tp=row["tp"], volume=row["volume"],
+                balance=account_balance(conn, login),
+            )
+        else:
+            pos, spec = load_context(conn, login, row["position_id"])
+            req = build_request(
+                row["kind"], pos, spec, sl=row["sl"], tp=row["tp"], volume=row["volume"]
+            )
     except CommandError as e:
         # Valid when queued, not now. Refuse WITHOUT sending.
         reject(conn, cmd_id, str(e))
