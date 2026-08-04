@@ -223,3 +223,30 @@ export type LiveStatus = { live: boolean; beat_msc: number | null; age_ms: numbe
 
 // /api/candles/live response — the single realtime forming bar for a symbol+tf.
 export type LiveCandle = { forming: Candle | null; beat_msc: number | null; live: boolean };
+
+// Server-derived sizing. `error` non-null always means `volume` is null: the
+// server never returns a number the confirm step would then refuse.
+export interface SizeResult {
+  volume: number | null;
+  risk_usc: number | null;      // USC (account currency), never "$"
+  risk_pct: number | null;      // of accounts.balance
+  distance: number | null;      // |entry - sl| in price units
+  rr: number | null;            // |tp - entry| / distance; null when no TP
+  direction: "buy" | "sell" | null;
+  error: string | null;
+}
+
+export interface RiskPrefs {
+  mode: "pct" | "usc";
+  value: number;
+}
+
+// A not-yet-existing order drawn on the chart. `entry` is the live/cursor price
+// the human is sizing against; sl/tp are null until dragged (rule 4: null is
+// "not set", and 0 would be a price).
+export interface PlannedOrder {
+  entry: number;
+  sl: number | null;
+  tp: number | null;
+  direction: "buy" | "sell" | null;
+}
