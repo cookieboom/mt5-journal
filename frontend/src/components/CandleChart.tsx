@@ -9,7 +9,7 @@ import {
 } from "lightweight-charts";
 import { toSeconds, isNowVisible, LINE_COLORS, liveLines, type Sym, type Timeframe } from "../lib/candles";
 import type { ChartSettings } from "../lib/chartPrefs";
-import type { Candle, HoverBar, LiveData } from "../lib/types";
+import type { Candle, HoverBar, LiveData, PlannedOrder } from "../lib/types";
 import { wib } from "../lib/format";
 import type { ChartHandle } from "../pages/Chart";
 import MeasureOverlay, { type ProjectedPoint } from "./MeasureOverlay";
@@ -20,7 +20,7 @@ import {
 import CoverageShadeOverlay from "./CoverageShadeOverlay";
 import { classifyGaps } from "../lib/coverage";
 import {
-  resolveDragTarget, ghostTitle, HIT_THRESHOLD_PX, type DraggablePosition, type LineKind,
+  resolveDragTarget, ghostTitle, HIT_THRESHOLD_PX, PLANNED_ID, type DraggablePosition, type LineKind,
 } from "../lib/sltpDrag";
 
 const DARK = {
@@ -79,6 +79,7 @@ const CandleChart = forwardRef<ChartHandle, {
   overlayLines?: import("../lib/types").PriceLineSpec[];
   draggablePositions?: DraggablePosition[];
   onSlTpChange?: (positionId: number, change: { sl?: number; tp?: number }) => void;
+  plannedOrder?: PlannedOrder | null;
   fitToRange?: { startMs: number; endMs: number };
   markers?: SeriesMarker<Time>[];
   missing?: [number, number][];
@@ -268,6 +269,19 @@ const CandleChart = forwardRef<ChartHandle, {
       return { x: e.clientX - r.left, y: e.clientY - r.top };
     };
 
+    // Entry-line drag resolves to sl/tp by direction — except a planned order
+    // with no side chosen yet (PLANNED_ID, direction still null), where any
+    // entry-line drag always means "sl": that's the gesture that decides the
+    // side in the first place, so there's nothing to resolve by yet. Shared
+    // by the ghost preview (onMove) and the committed change (onUp) so they
+    // never disagree.
+    const resolveEntryDragKind = (
+      positionId: number, direction: "buy" | "sell", entryPrice: number | null, price: number,
+    ): "sl" | "tp" =>
+      positionId === PLANNED_ID && cbs.current.plannedOrder?.direction == null
+        ? "sl"
+        : resolveDragTarget({ id: positionId, direction, entry_price: entryPrice, sl: 0, tp: 0 }, price);
+
     const onDown = (e: PointerEvent) => {
       const { x, y } = rel(e);
       const prev = lastUp.current;
@@ -309,10 +323,7 @@ const CandleChart = forwardRef<ChartHandle, {
         if (!pt) return;
         const drag = sltpDragging.current;
         const kind = drag.kind === "entry"
-          ? resolveDragTarget(
-              { id: drag.positionId, direction: drag.direction, entry_price: drag.entryPrice, sl: 0, tp: 0 },
-              pt.price,
-            )
+          ? resolveEntryDragKind(drag.positionId, drag.direction, drag.entryPrice, pt.price)
           : (drag.kind as "sl" | "tp");
         setSltpGhost({ price: pt.price, kind });
         return;
@@ -339,10 +350,7 @@ const CandleChart = forwardRef<ChartHandle, {
         // had — same float-tolerance convention as rule 5 elsewhere.
         if (pt && cbs.current.onSlTpChange && Math.abs(pt.price - drag.startPrice) > 1e-9) {
           const target = drag.kind === "entry"
-            ? resolveDragTarget(
-                { id: drag.positionId, direction: drag.direction, entry_price: drag.entryPrice, sl: 0, tp: 0 },
-                pt.price,
-              )
+            ? resolveEntryDragKind(drag.positionId, drag.direction, drag.entryPrice, pt.price)
             : (drag.kind as "sl" | "tp");
           cbs.current.onSlTpChange(drag.positionId, { [target]: pt.price } as { sl?: number; tp?: number });
         }
@@ -537,6 +545,19 @@ const CandleChart = forwardRef<ChartHandle, {
       linesMeta.current.push({ line, positionId, kind, direction, entryPrice });
     };
 
+    // A planned order draws on top of whatever else the chart is showing: it is
+    // not a position yet, so it belongs to none of the branches below, and each
+    // of those returns early. `direction` is null until the human's stop picks a
+    // side; an entry-line drag then resolves to "sl" by default, which is
+    // exactly the gesture that decides it.
+    if (props.plannedOrder) {
+      const p = props.plannedOrder;
+      const dir = p.direction ?? "buy";
+      addLine(PLANNED_ID, "entry", p.entry, LINE_COLORS.entry, "harga", dir, p.entry);
+      addLine(PLANNED_ID, "sl", p.sl, LINE_COLORS.sl, "SL rencana", dir, p.entry);
+      addLine(PLANNED_ID, "tp", p.tp, LINE_COLORS.tp, "TP rencana", dir, p.entry);
+    }
+
     if (props.draggablePositions !== undefined) {
       for (const pos of props.draggablePositions) {
         addLine(pos.id, "entry", pos.entry_price, LINE_COLORS.entry, `entry #${pos.id}`, pos.direction, pos.entry_price);
@@ -568,7 +589,7 @@ const CandleChart = forwardRef<ChartHandle, {
       }
     }
   }, [props.live, props.nowVisible, props.symbol, props.settings.liveOverlay,
-      props.settings.chartType, props.overlayLines, props.draggablePositions]);
+      props.settings.chartType, props.overlayLines, props.draggablePositions, props.plannedOrder]);
 
   // Ghost line preview while a SL/TP drag is in progress — shows the
   // to-be-committed value at the cursor's projected price, styled distinctly

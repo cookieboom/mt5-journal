@@ -1,10 +1,11 @@
+import type { ComponentProps } from "react";
 import { render, fireEvent } from "@testing-library/react";
-import { it, expect, vi, beforeEach } from "vitest";
+import { it, expect, vi, beforeEach, describe } from "vitest";
 import CandleChart from "./CandleChart";
-import type { Candle } from "../lib/types";
+import type { Candle, PlannedOrder } from "../lib/types";
 import type { ChartSettings } from "../lib/chartPrefs";
 import type { SeriesMarker, Time, UTCTimestamp } from "lightweight-charts";
-import type { DraggablePosition } from "../lib/sltpDrag";
+import { PLANNED_ID, type DraggablePosition } from "../lib/sltpDrag";
 import type { LiveData, LivePosition } from "../lib/types";
 
 let capturedMarkers: SeriesMarker<Time>[] | null = null;
@@ -373,4 +374,70 @@ it("dragging a LIVE position's ENTRY line resolves to sl/tp by direction, never 
   fireEvent.pointerUp(window, { clientX: 50, clientY: 130 });
 
   expect(onSlTpChange).toHaveBeenCalledWith(9, { tp: 107 });
+});
+
+// Shared render helper: fills in the required props with the same defaults
+// used throughout this file, forwards any overrides (e.g. plannedOrder,
+// draggablePositions, onSlTpChange), and exposes the captured price lines
+// plus a drag helper built on the mock's fixed pixel<->price mapping
+// (price 100 <-> y=200, 1px = 0.1 price unit — see the lightweight-charts
+// mock above).
+function renderChart(overrides: Partial<ComponentProps<typeof CandleChart>> = {}) {
+  const { container } = render(
+    <CandleChart
+      symbol="XAUUSDc" tf="M1" settings={DEFAULT_SETTINGS} candles={mockCandles}
+      onHover={() => {}} onNowVisibleChange={() => {}} onRequestOlder={() => {}}
+      lastBarMs={2_140_000} live={null} nowVisible={true}
+      {...overrides}
+    />
+  );
+  const node = container.querySelectorAll("div > div")[1] as HTMLElement;
+  const yFor = (price: number) => 200 - (price - 100) * 10;
+  const dragLineTo = (fromPrice: number, toPrice: number) => {
+    fireEvent.pointerDown(node, { clientX: 50, clientY: yFor(fromPrice) });
+    fireEvent.pointerMove(window, { clientX: 50, clientY: yFor(toPrice) });
+    fireEvent.pointerUp(window, { clientX: 50, clientY: yFor(toPrice) });
+  };
+  return { container, node, priceLines: capturedPriceLines, dragLineTo };
+}
+
+describe("planned-order lines", () => {
+  it("draws entry, SL and TP lines for a planned order", () => {
+    const plannedOrder: PlannedOrder = { entry: 4035, sl: 4030, tp: 4045, direction: "buy" };
+    const { priceLines } = renderChart({ plannedOrder });
+    const prices = priceLines.map((l) => l.price).sort((a, b) => a - b);
+    expect(prices).toEqual([4030, 4035, 4045]);
+  });
+
+  it("omits an unset SL and TP rather than drawing them at 0", () => {
+    const plannedOrder: PlannedOrder = { entry: 4035, sl: null, tp: null, direction: null };
+    const { priceLines } = renderChart({ plannedOrder });
+    expect(priceLines.map((l) => l.price)).toEqual([4035]);
+  });
+
+  it("reports a planned-line drag under the PLANNED_ID sentinel", () => {
+    const onSlTpChange = vi.fn();
+    const plannedOrder: PlannedOrder = { entry: 4035, sl: 4030, tp: null, direction: "buy" };
+    const { dragLineTo } = renderChart({ plannedOrder, onSlTpChange });
+    dragLineTo(4030, 4028);
+    expect(onSlTpChange).toHaveBeenCalledWith(PLANNED_ID, { sl: 4028 });
+  });
+
+  it("a drag from the planned ENTRY line becomes the SL while no side is known", () => {
+    const onSlTpChange = vi.fn();
+    const plannedOrder: PlannedOrder = { entry: 4035, sl: null, tp: null, direction: null };
+    const { dragLineTo } = renderChart({ plannedOrder, onSlTpChange });
+    dragLineTo(4035, 4030);
+    expect(onSlTpChange).toHaveBeenCalledWith(PLANNED_ID, { sl: 4030 });
+  });
+
+  it("planned lines coexist with real position lines without colliding", () => {
+    const plannedOrder: PlannedOrder = { entry: 4035, sl: 4030, tp: null, direction: "buy" };
+    const draggablePositions: DraggablePosition[] = [
+      { id: 1, direction: "buy", entry_price: 4000, sl: 3990, tp: 0 },
+    ];
+    const { priceLines } = renderChart({ plannedOrder, draggablePositions });
+    expect(priceLines.map((l) => l.price).sort((a, b) => a - b))
+      .toEqual([3990, 4000, 4030, 4035]);
+  });
 });

@@ -15,6 +15,12 @@ export type LineKind = "entry" | "sl" | "tp";
 
 export const HIT_THRESHOLD_PX = 8;
 
+// The `positionId` used for an order that does not exist yet. Real position ids
+// are MT5 tickets — always positive — so a negative sentinel can never collide
+// with one, and the whole existing hit-test/drag/ghost machinery works on a
+// planned line with no branching inside it.
+export const PLANNED_ID = -1;
+
 // When dragging FROM the entry line (no sl/tp set yet), decide whether the
 // dragged-to price should become the SL or the TP, based on direction and
 // which side of entry the price landed on. If entry_price is unknown, this
