@@ -98,6 +98,33 @@ def test_load_active_returns_none_when_nothing_is_trained(conn, tmp_path):
                        tmp_path / "cache") is None
 
 
+def test_artifact_writes_do_not_hold_the_write_lock(conn, tmp_path, monkeypatch):
+    """Pins the write-lock discipline (CLAUDE.md: no cursor open across a fit,
+    and the scar tissue from deals.sync/fill_range starving the WAL writer
+    across slow work). `joblib.dump()` is the slow call in this module — it
+    must never run while `conn` has a write transaction open. Fails if
+    save_models reverts to insert-then-dump-then-update per model."""
+    import joblib
+
+    seen_in_transaction = []
+    real_dump = joblib.dump
+
+    def spy_dump(value, filename, *a, **kw):
+        seen_in_transaction.append(conn.in_transaction)
+        return real_dump(value, filename, *a, **kw)
+
+    monkeypatch.setattr(joblib, "dump", spy_dump)
+
+    models = [
+        _model(kind="logreg", regime="trend_up"),
+        _model(kind="lgbm", regime="trend_up"),
+        _model(kind="lgbm", regime="range"),
+    ]
+    _save(conn, tmp_path, models)
+
+    assert seen_in_transaction == [False, False, False]
+
+
 def test_list_models_filters_by_symbol_and_timeframe(conn, tmp_path):
     _save(conn, tmp_path, [_model()], symbol="XAUUSDc", timeframe="H1")
     _save(conn, tmp_path, [_model()], symbol="BTCUSDc", timeframe="M5")

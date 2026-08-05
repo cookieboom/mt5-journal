@@ -1,12 +1,17 @@
 """lab_models persistence. The ONLY module under lab/ that touches sqlite.
 
 Write-lock discipline (the lesson from deals.sync and fill_range): callers fit
-first and call `save_models` afterwards, so no cursor is open across a fit. The
-functions here are all short-transaction."""
+first and call `save_models` afterwards, so no cursor is open across a fit.
+`save_models` itself is two phases: every `joblib.dump()` — plausibly slow,
+one per stage/regime/kind — runs BEFORE any transaction opens, writing to a
+temp filename outside the DB entirely; the transaction that follows only
+inserts rows and renames files already sitting on disk into place, then
+commits once. Every other function here is a single short transaction."""
 from __future__ import annotations
 
 import json
 import sqlite3
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -28,9 +33,22 @@ def save_models(conn: sqlite3.Connection, *, symbol: str, timeframe: str,
     models_dir = Path(cache_dir) / "models"
     models_dir.mkdir(parents=True, exist_ok=True)
     created = now_ms()
-    ids: list[int] = []
 
+    # Phase 1 — no connection work. Every artifact lands under a throwaway
+    # temp name; the row (and the id its filename will use) doesn't exist yet,
+    # so nothing here can hold, or wait on, the write lock. A dump failure
+    # here leaves no transaction open and no row to roll back.
+    staged: list[tuple[TrainedModel, Path]] = []
     for model in models:
+        tmp_path = models_dir / f".tmp-{uuid.uuid4().hex}.joblib"
+        joblib.dump(model.estimator, tmp_path)
+        staged.append((model, tmp_path))
+
+    # Phase 2 — one short transaction: insert every row, rename each staged
+    # artifact into its final <id>.joblib (a filesystem rename, not a dump —
+    # cheap regardless of model size), commit once.
+    ids: list[int] = []
+    for model, tmp_path in staged:
         cur = conn.execute(
             """INSERT INTO lab_models
                    (created_ms, symbol, timeframe, stage, regime, kind,
@@ -43,10 +61,10 @@ def save_models(conn: sqlite3.Connection, *, symbol: str, timeframe: str,
              model.n_rows, int(model.pooled), ""),
         )
         model_id = int(cur.lastrowid)
-        path = models_dir / f"{model_id}.joblib"
-        joblib.dump(model.estimator, path)
+        final_path = models_dir / f"{model_id}.joblib"
+        tmp_path.rename(final_path)
         conn.execute("UPDATE lab_models SET artifact_path = ? WHERE id = ?",
-                     (str(path), model_id))
+                     (str(final_path), model_id))
         ids.append(model_id)
     conn.commit()
 
