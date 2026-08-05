@@ -17,7 +17,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Iterator
 
-from fastapi import Body, Depends, FastAPI, Query
+from fastapi import Body, Depends, FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
@@ -30,6 +30,7 @@ from ..store import candles_store as cs
 from ..store.db import connect
 from . import views
 from . import api
+from . import lab_api
 from . import training
 
 # URL path segment → command kind. The URL uses hyphens; the kind uses
@@ -572,6 +573,44 @@ def create_app(db_path: str | None = None) -> FastAPI:
         except ValueError as e:
             return JSONResponse({"error": str(e)}, status_code=400)
         return JSONResponse(api.to_jsonable(out))
+
+    # --------------------------------------------------------------------- lab
+    # Regime + entry-timing models. Candle-only, never the bridge (M9 boundary,
+    # same as /api/candles). `train` is synchronous — one request, one fit — the
+    # write-lock discipline is inside lab_api.train (read, then fit with no
+    # connection held, then one short write), not concurrency here.
+    def _lab(fn, *args, **kwargs):
+        """LabRequestError is a caller mistake, not a server fault."""
+        try:
+            return fn(*args, **kwargs)
+        except lab_api.LabRequestError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/lab/train")
+    def api_lab_train(body=Body(...), conn: sqlite3.Connection = Depends(get_conn)):
+        return _lab(lab_api.train, conn, body, _CACHE_DIR)
+
+    @app.get("/api/lab/models")
+    def api_lab_models(symbol: str | None = None, timeframe: str | None = None,
+                       conn: sqlite3.Connection = Depends(get_conn)):
+        return lab_api.models_payload(conn, symbol, timeframe)
+
+    @app.post("/api/lab/models/{model_id}/activate")
+    def api_lab_activate(model_id: int,
+                         conn: sqlite3.Connection = Depends(get_conn)):
+        return _lab(lab_api.activate_payload, conn, model_id)
+
+    @app.get("/api/lab/score")
+    def api_lab_score(symbol: str, timeframe: str,
+                      bars: int = lab_api.DEFAULT_SCORE_BARS,
+                      conn: sqlite3.Connection = Depends(get_conn)):
+        return lab_api.score_payload(conn, symbol, timeframe, bars, _CACHE_DIR)
+
+    @app.get("/api/lab/regimes")
+    def api_lab_regimes(symbol: str, timeframe: str, from_ms: int, to_ms: int,
+                        conn: sqlite3.Connection = Depends(get_conn)):
+        return lab_api.regimes_payload(conn, symbol, timeframe, from_ms, to_ms,
+                                       _CACHE_DIR)
 
     # -------------------------------------------------------- storage & maintenance
     @app.get("/api/storage/overview")
