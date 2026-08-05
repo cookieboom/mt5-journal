@@ -36,7 +36,34 @@ home each, and a second copy is a future lie. Point, never duplicate.
 
 ## CURRENT STATE — update this section every session
 
-**Last updated:** 2026-07-23
+**Last updated:** 2026-08-05
+
+**2026-08-05 — nothing is pending a human run any more.** The human confirmed,
+in person and against the live bridge, every item this file and the project
+memory had been carrying as PENDING HUMAN:
+
+- The on-close ingest freeze is gone (gap-aware `sync_candles` + capped fetches
+  + post-ingest beat, and two-phase `deals.sync` with a windowed history pull —
+  measured 243 s → 49 s, 124 bridge round trips → 0). Watched on a real close.
+- SL/TP drag on `/chart` with the bridge running: the whole click-through,
+  including a live order reaching the broker.
+- Risk-based auto lot sizing opening a real position with the SL attached from
+  the first tick — which also settles the older "an accepted order has never
+  landed" note below (AutoTrading is on).
+- The live-bar rollover fixes: the stale-`now_msc` one in `serve_watches`
+  (backend) and, found the same day, a second FRONTEND cause of the *identical*
+  symptom — `useChartData.loadUpTo` fetched from a mid-bucket cursor, so the bar
+  that was forming when `/chart` opened could never be returned by
+  `time_msc BETWEEN from AND to` and was lost for good (one bar, once per page
+  open). Fixed by flooring the forward `from` to the bucket start (`219d95e`).
+  **If "the live bar vanishes at rollover" is ever reported again, check BOTH
+  layers** — the symptom does not tell you which one it is.
+
+Remember `frontend/dist` is gitignored and is what `journal serve` ships: after
+any frontend merge, run `npm run build` in the main checkout or the browser
+keeps the old bundle.
+
+**Previous entry — 2026-07-23:**
 
 **M9 in one line (MERGED to main; branch `claude/trading-system-plan-2959b7` since deleted):** the
 journal became able to *act*, not just describe. Six phases: (1) a real
@@ -96,10 +123,11 @@ reconciliation intact.
   real honesty bug: the audit log rendered a left-unchanged `TP` (NULL) as
   "unknown"; it now reads "(tetap)" via a shared `format.level_word` — a modify's
   NULL level is a deliberate "leave it", not ignorance (rule 4).
-- **STILL NOT measured:** a `done` order that actually LANDS — enable Algo Trading
-  in the container's MT5 terminal, resend one `modify_sltp` on the smallest
-  position, and confirm the SL changed in MT5 itself. Also unmeasured: browser
-  visual/contrast check of the redesign in light and dark.
+- ~~**STILL NOT measured:** a `done` order that actually LANDS~~ — **MEASURED
+  2026-08-05.** The risk-based auto-lot-sizing live pass (its section below)
+  opened a real position with the SL attached from the first tick, so AutoTrading
+  is on and an accepted order landing is proven. The browser visual/contrast pass
+  of the redesign is confirmed too.
 
 M9 is now *live-verified for ingest, the read/observe surface, and the full
 order-send plumbing up to the broker's verdict; a successful (accepted) order has
@@ -113,9 +141,9 @@ unproven." That is wrong and has been for a long time. The live round trip —
 and the browser UI reading it — WORKS and was measured 2026-07-23 (above). The web
 layer never touches the bridge directly (rule 1 / M9 boundary); it goes through the
 `journal live` process + the command/candle queues, and that whole path is proven.
-The ONLY genuinely-pending items are: (1) enable AutoTrading in the container's MT5
-terminal and confirm one *accepted* `modify_sltp` actually changes the SL in MT5
-(a terminal toggle, not a code gap); (2) a browser visual/contrast pass of the SPA.
+Both items that section once listed as pending — (1) an *accepted* order actually
+changing the SL in MT5, (2) a browser visual/contrast pass of the SPA — were
+**CONFIRMED by the human 2026-08-05**. M9 has no pending human verification left.
 Chart Phase B's live-position overlay consumes the same proven `/api/live` data
 path — its "positive path" is verifiable exactly the way `/live` already is; only
 the chart-specific line rendering is new frontend, not a bridge concern.

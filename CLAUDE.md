@@ -143,15 +143,14 @@ positions + trade interaction + auto-ingest on close + UI redesign (`journal liv
 · **Frontend rework** (Jinja→React SPA, served at `/`; Jinja UI retired at
 Phase 5 cutover)
 
-Currently on: **Frontend React rework COMPLETE — the SPA is the sole UI, served
-at `/` (Jinja retired, Phase 5 cutover). M9 live-bridge smoke still pending a
-human run — see docs/HANDOFF.md. Draggable SL/TP chart lines (replay
-instant-commit + live precision-dialog → ConfirmModal) MERGED to main
-2026-08-01 (`13fc345`); in-browser visual pass with the MT5 bridge running
-still pending a human run — see memory `sltp-drag-2026-08-01`. Risk-based auto
-lot sizing + live position open (command kind `open`, `RiskSizePanel`,
-migration 009) MERGED 2026-08-04; in-browser pass with the MT5 bridge running
-still pending a human run — see docs/HANDOFF.md.**
+Currently on: **Everything above is merged, running, and human-verified as of
+2026-08-05 — no pending human run anywhere.** The SPA is the sole UI at `/`
+(Jinja retired). Confirmed against the live bridge on 2026-08-05: draggable
+SL/TP chart lines (`13fc345`), risk-based auto lot sizing + live open
+(migration 009), the on-close ingest freeze fixes (gap-aware `sync_candles`,
+two-phase `deals.sync`), and both live-bar-rollover fixes — the backend
+`serve_watches` clock one and the frontend mid-bucket-cursor one (`219d95e`).
+See docs/HANDOFF.md § CURRENT STATE.
 
 ## graphify
 
