@@ -463,7 +463,9 @@ def test_cycle_order_chart_first_bulk_backfill_last(conn, monkeypatch):
         indicator freeze for the length of a bridge round trip;
       * `fulfill_request` runs LAST, behind the command — `fill_range` can walk
         a whole requested range, and an SL/TP or close must never queue behind
-        bulk history.
+        bulk history;
+      * the beacon beats a SECOND time right after the ingest pipeline, so a
+        long ingest cannot age it past the web's staleness threshold.
     """
     from journal.store import candle_queue as q
     seen: list[str] = []
@@ -485,7 +487,7 @@ def test_cycle_order_chart_first_bulk_backfill_last(conn, monkeypatch):
     q.request_candles(conn, "XAUUSDc", "M1", 0, 60_000)
     live_cycle(client, conn, _LOGIN)          # cycle 2: 111 gone -> close + ingest
 
-    assert seen == ["watches", "beat", "ingest", "command", "candles"]
+    assert seen == ["watches", "beat", "ingest", "beat", "command", "candles"]
 
 
 # ---------------------------------------------------------------- heartbeat
@@ -498,6 +500,41 @@ def test_live_cycle_writes_heartbeat(conn):
     live_cycle(client, conn, _LOGIN)
     beat = ls.read_heartbeat(conn)
     assert beat is not None and beat >= _MSC_FLOOR  # real ms, always written
+
+
+def test_beat_refreshed_after_the_ingest_pipeline_runs(conn, monkeypatch):
+    """The step-4 beat fires BEFORE the (blocking) ingest pipeline. If that were
+    the only beat, a slow ingest (candles fetch + two rebuilds) could age the
+    beacon past the web's staleness threshold before the next cycle's beat ever
+    lands — `journal live` would read as down while it is in fact working. This
+    asserts a SECOND beat lands after the ingest pipeline finishes, so the
+    heartbeat recorded while ingest is still in flight is stale by the time
+    `live_cycle` returns."""
+    from journal.store import live_store as ls
+
+    ticks = iter(range(1_700_000_000_000, 1_700_000_100_000, 1000))
+    monkeypatch.setattr("journal.ingest.live.now_ms", lambda: next(ticks))
+
+    captured: dict = {}
+
+    def spy_sync(client, conn):
+        # Runs mid-ingest, AFTER the step-4 beat: captures what the beacon says
+        # while ingest is still running.
+        captured["mid_ingest_beat"] = ls.read_heartbeat(conn)
+
+    monkeypatch.setattr("journal.ingest.deals.sync", spy_sync)
+    monkeypatch.setattr("journal.domain.reconstruct.rebuild", lambda conn: None)
+    monkeypatch.setattr(
+        "journal.ingest.candles.sync_candles", lambda client, conn: CandlesReport()
+    )
+
+    client = FakeLiveClient([[_pos(identifier=111)], []])
+    live_cycle(client, conn, _LOGIN)          # cycle 1: position open
+    live_cycle(client, conn, _LOGIN)          # cycle 2: it closes -> ingest runs
+
+    assert "mid_ingest_beat" in captured
+    final_beat = ls.read_heartbeat(conn)
+    assert final_beat > captured["mid_ingest_beat"]
 
 
 # ---------------------------------------------------------------- serve_watches

@@ -36,9 +36,11 @@ from .candle_fill import fill_range
 # this pipeline inside its serial cycle, so an unbounded backlog (first run after
 # coverage was introduced; a restart after days offline) would stall the forming
 # bar and the liveness beat for as long as the backlog takes. Five windows is
-# roughly twelve seconds against a ~2.5 s round trip — a knob to tune against
-# measured bridge latency, not a derived constant. `journal candles` passes
-# max_windows=None to prime a backlog in one deliberate, foreground run.
+# roughly twelve seconds against a ~2.5 s round trip IF each window has a single
+# gap — a window with fragmented coverage costs one round trip per gap in
+# `missing_ranges`, so that estimate is a floor, not a bound. A knob to tune
+# against measured bridge latency, not a derived constant. `journal candles`
+# passes max_windows=None to prime a backlog in one deliberate, foreground run.
 _MAX_FETCH_WINDOWS = 5
 
 
@@ -48,7 +50,10 @@ class CandlesReport:
     trades_seen: int = 0            # closed trades processed this run
     trades_skipped_open: int = 0    # open/partially_open -- no close_time yet
     bars_new: int = 0               # bars actually inserted (post PK-dedupe)
-    windows_fetched: int = 0        # windows that hit the bridge this run
+    windows_fetched: int = 0        # windows `fill_range` was CALLED for this run --
+                                     # one call, but one bridge round trip per gap in
+                                     # that window's missing_ranges, so this undercounts
+                                     # actual round trips whenever coverage is fragmented
     windows_pending: int = 0        # windows left untouched because the cap closed
     symbols: list[str] = field(default_factory=list)
 
@@ -113,8 +118,6 @@ def sync_candles(
                 client, conn, r["symbol"], tf, from_msc, to_msc, now
             )
             windows_fetched += 1
-
-    conn.commit()
 
     return CandlesReport(
         account_login=login,

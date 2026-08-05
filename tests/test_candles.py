@@ -372,6 +372,29 @@ def test_sync_candles_caps_fetches_and_serves_newest_first(conn, tmp_path):
     assert candles_mod._MAX_FETCH_WINDOWS == 5      # the default the live loop uses
 
 
+def test_sync_candles_uncapped_run_fetches_the_whole_backlog(conn, tmp_path):
+    """`max_windows=None` is what `journal candles` passes to prime a backlog in
+    one deliberate, foreground run — nothing asserted this before. All 12
+    uncovered windows must be fetched in a single call, with none deferred."""
+    base = 1_700_000_000_000
+    anchors = {}
+    for i in range(12):
+        open_msc = base + i * 86_400_000
+        _insert_trade(conn, position_id=800 + i, open_msc=open_msc,
+                      close_msc=open_msc + 373_000, duration_s=373,
+                      symbol=f"V{i:02d}c")
+        anchors[f"V{i:02d}c:M1"] = open_msc
+    fx = tmp_path / "fixtures"
+    _write_rates_multi(fx, anchors)
+    client = CountingClient(fixtures_dir=fx)
+
+    r = sync_candles(client, conn, max_windows=None)
+
+    assert r.windows_fetched == 12
+    assert r.windows_pending == 0
+    assert len(client.fetches) == 12
+
+
 def test_sync_candles_backlog_drains_without_refetching(conn, tmp_path):
     """Repeated capped runs finish the backlog, and no window is ever fetched
     twice. 12 windows at a cap of 5 = 3 runs, 12 fetches total."""

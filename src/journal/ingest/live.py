@@ -18,6 +18,10 @@ One cycle does five jobs, in this order and for a reason:
      send), and this is what `/chart`'s live edge and the liveness indicator
      depend on — it must not sit behind that wait. Cheap enough to lead with:
      one latest-bars fetch per active watch, ~1 given demand-driven watching.
+     This beat alone is not enough to survive a close, though: the ingest
+     pipeline in step 3 can run long enough on its own to age this beat past
+     the web's staleness threshold before the NEXT cycle ever gets a chance to
+     beat again — so step 3 beats a second time right after the pipeline runs.
 
   3. **Detect closes → ingest.** A `position_id` that was in `open_positions` at
      the START of this cycle but is absent from the fresh feed has CLOSED. MT5
@@ -27,6 +31,9 @@ One cycle does five jobs, in this order and for a reason:
      matter how many closed together. A failed ingest is caught and logged, never
      propagated: losing this loop loses unrecoverable live SL history, which is
      the whole reason M4 exists, so a transient bridge hiccup must not kill it.
+     The beacon is beaten again immediately after the pipeline (success or
+     failure) — see step 2's note on why one beat is not enough across a long
+     ingest.
 
   4. **Execute one command.** If trading is on, claim the OLDEST pending command
      and run it through the same gate the web used at enqueue time — the world
@@ -184,18 +191,18 @@ def _run_ingest_pipeline(client: MT5Client, conn: sqlite3.Connection) -> None:
     """
     from ..ingest.deals import sync as run_sync
     from ..domain.reconstruct import rebuild as run_rebuild
-    from ..ingest.candles import sync_candles
+    from ..ingest import candles
 
     run_sync(client, conn)
     run_rebuild(conn)
-    report = sync_candles(client, conn)
+    report = candles.sync_candles(client, conn)
     if report.windows_pending:
         log.info(
             "live: %d candle window(s) still pending after this ingest — capped at "
             "%d per close so the forming bar keeps streaming; run `journal candles` "
             "to drain the backlog in one go",
             report.windows_pending,
-            report.windows_fetched,
+            candles._MAX_FETCH_WINDOWS,
         )
     run_rebuild(conn)
 
@@ -362,6 +369,15 @@ def live_cycle(
                 "live: ingest pipeline failed after close(s) %s — loop continues",
                 closed_ids,
             )
+        finally:
+            # The pipeline (sync + two rebuilds + capped candle fetch) can run
+            # long enough to age the step-4 beat past the web's staleness
+            # threshold before this cycle even finishes, let alone before the
+            # next one beats — which reads as "journal live is down" while it
+            # is in fact working. Beat again here, unconditionally: a failed
+            # ingest is still a live process. This does not replace the step-4
+            # beat, which must still fire BEFORE this blocking work starts.
+            live_store.beat(conn, now_ms())
         if on_close is not None:
             on_close(closed_ids)
 

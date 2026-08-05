@@ -618,6 +618,14 @@ git commit -m "feat(candles): run journal candles uncapped, log live backlog"
 
    Expect it to take minutes on that first run and report a large `windows_fetched`. Every run after it should report `0 window(s) fetched` for trades that have not changed.
 
+   A healthy first prime looks like a large `windows_fetched` paired with a
+   **near-zero** `bars_new`: the bars for those 123 trades mostly already exist
+   from years of blind re-fetching before this branch, and this run is mainly
+   catching the coverage ledger up to what is already stored. A large
+   `bars_new` instead would mean real bars were genuinely missing and is worth
+   investigating — `candles_store.forget_coverage` is the repair hatch if
+   coverage ever needs to be wound back and re-verified against the bridge.
+
 2. **Restart `journal live`.** It is a long-running process and will not pick up the new code otherwise. Two earlier fixes (`ae82991`, `b96e220`) are waiting on the same restart.
 
 3. **Confirm the fix live.** Close a position and watch the `journal live` heartbeat. Before this change the per-cycle line went quiet for minutes after `closed [...] — menjalankan ingest`; it should now resume within seconds, and `/chart`'s live bar should keep moving through the ingest.

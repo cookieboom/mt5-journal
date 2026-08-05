@@ -103,10 +103,18 @@ non-empty); fully covered trades are free and never count. Once the count
 reaches the cap the loop stops and the remaining trades are left for the next
 invocation.
 
-This gives a hard ceiling of roughly `5 × 2.5 s ≈ 12 s` per ingest no matter how
-large the backlog. It covers both known bad cases: the first run after this
-change (coverage holds only 11 rows against 123 closed trades) and a restart
-after `journal live` has been down for days.
+This bounds `sync_candles` itself to roughly `5 × 2.5 s ≈ 12 s`, assuming one
+gap per window — a window with fragmented coverage costs one round trip per
+gap in `missing_ranges`, so 12 s is a floor, not a ceiling on `sync_candles`.
+It is also not the number that matters for the liveness beacon: the whole
+ingest pipeline is `sync → rebuild → sync_candles → rebuild`, and `run_sync`
+plus the two rebuilds are not counted by the 12 s figure at all. The web's
+15 s staleness threshold (`api.py` `stale_ms`) is checked against the whole
+pipeline's wall-clock time, not just the candle fetch. Fix wave
+2026-08-05 addresses this directly: `live_cycle` now beats the liveness
+beacon again immediately after the ingest pipeline finishes (success or
+failure), so the beacon stays fresh regardless of how long the whole
+pipeline — not just `sync_candles` — actually takes.
 
 Deciding whether a window needs a fetch must not cost a second coverage read.
 `fill_range` returns `bars_new`, which cannot distinguish "already covered"
@@ -190,7 +198,11 @@ must still succeed (definition of done).
 
 - With a large backlog, MAE/MFE for **older** trades completes over several
   ingest runs rather than one. The trade that just closed is never affected —
-  `close_time_msc DESC` puts it first.
+  `close_time_msc DESC` puts it first. This is singular, though: closes are
+  coalesced across a whole cycle, and on this hedging account several
+  positions can close together. With a cap of 5, only the first five
+  newest-closed trades in that cycle are guaranteed candles this run — the
+  6th+ close in the same cycle waits for the next ingest.
 - `_MAX_FETCH_WINDOWS = 5` is a tuning knob for real hardware and a real broker,
   not a derived constant. It lives as a named module constant so it can be
   raised or lowered against a measured round-trip time.
