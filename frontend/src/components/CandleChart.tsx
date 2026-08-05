@@ -552,12 +552,20 @@ const CandleChart = forwardRef<ChartHandle, {
     priceLines.current = [];
     linesMeta.current = [];
 
+    // A planned order's entry line sits on the last close and keeps its own
+    // axis label (see below), so the series' built-in last-value badge would
+    // be a duplicate at the same price. Hide it exactly while that line exists.
+    const plannedEntry = props.plannedOrder?.entry ?? null;
+    s.applyOptions({
+      lastValueVisible: plannedEntry === null || Math.abs(plannedEntry) < 1e-9,
+    });
+
     const addLine = (positionId: number, kind: LineKind, price: number | null,
                      color: string, title: string, direction: "buy" | "sell",
-                     entryPrice: number | null, axisLabel = true) => {
+                     entryPrice: number | null) => {
       if (price === null || price === undefined || Math.abs(price) < 1e-9) return;
       const line = s.createPriceLine({
-        price, color, lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: axisLabel, title,
+        price, color, lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title,
       });
       priceLines.current.push(line);
       linesMeta.current.push({ line, positionId, kind, direction, entryPrice });
@@ -571,10 +579,14 @@ const CandleChart = forwardRef<ChartHandle, {
     if (props.plannedOrder) {
       const p = props.plannedOrder;
       const dir = p.direction ?? "buy";
-      // No axis label: this line sits ON the last close, so its label was a
-      // second price badge stacked against the series' own last-price label.
-      // The title (countdown in live, "harga" otherwise) still marks the line.
-      addLine(PLANNED_ID, "entry", p.entry, LINE_COLORS.entry, entryTitle, dir, p.entry, false);
+      // This line sits ON the last close, so its axis label would stack a
+      // second price badge against the series' own last-price label. The badge
+      // has to stay, though: lightweight-charts paints a price line's title
+      // from its price-axis view, which returns early when axisLabelVisible is
+      // false — killing the label kills the title (countdown in live, "harga"
+      // otherwise) with it. So keep this line's label and drop the series' own:
+      // same one badge on the scale, and the title paints.
+      addLine(PLANNED_ID, "entry", p.entry, LINE_COLORS.entry, entryTitle, dir, p.entry);
       addLine(PLANNED_ID, "sl", p.sl, LINE_COLORS.sl, "SL rencana", dir, p.entry);
       addLine(PLANNED_ID, "tp", p.tp, LINE_COLORS.tp, "TP rencana", dir, p.entry);
     }

@@ -10,7 +10,8 @@ import type { LiveData, LivePosition } from "../lib/types";
 
 let capturedMarkers: SeriesMarker<Time>[] | null = null;
 let capturedLogicalRange: { from: number; to: number } | null = null;
-let capturedPriceLines: { price: number; color: string; title: string }[] = [];
+let capturedPriceLines: { price: number; color: string; title: string; axisLabelVisible?: boolean }[] = [];
+let capturedSeriesOptions: Record<string, unknown> = {};
 
 vi.mock("lightweight-charts", async () => {
   const actual: any = await vi.importActual("lightweight-charts");
@@ -28,8 +29,16 @@ vi.mock("lightweight-charts", async () => {
         };
         const origCreatePriceLine = s.createPriceLine;
         s.createPriceLine = (opts: any) => {
-          capturedPriceLines.push({ price: opts.price, color: opts.color, title: opts.title });
+          capturedPriceLines.push({
+            price: opts.price, color: opts.color, title: opts.title,
+            axisLabelVisible: opts.axisLabelVisible,
+          });
           return origCreatePriceLine ? origCreatePriceLine.call(s, opts) : { applyOptions: () => {}, options: () => opts, remove: () => {} };
+        };
+        const origApplyOptions = s.applyOptions;
+        s.applyOptions = (opts: any) => {
+          Object.assign(capturedSeriesOptions, opts);
+          return origApplyOptions ? origApplyOptions.call(s, opts) : undefined;
         };
         // Deterministic pixel<->price mapping for hit-test/drag math:
         // y=200 <-> price=100 (SL line), y=100 <-> price=110 (TP line),
@@ -78,6 +87,7 @@ beforeEach(() => {
   capturedMarkers = null;
   capturedLogicalRange = null;
   capturedPriceLines = [];
+  capturedSeriesOptions = {};
 
   vi.stubGlobal("matchMedia", vi.fn().mockImplementation((query: string) => ({
     matches: false, media: query, onchange: null,
@@ -429,6 +439,25 @@ describe("planned-order lines", () => {
     const { dragLineTo } = renderChart({ plannedOrder, onSlTpChange });
     dragLineTo(4035, 4030);
     expect(onSlTpChange).toHaveBeenCalledWith(PLANNED_ID, { sl: 4030 });
+  });
+
+  // lightweight-charts paints a price line's title from its price-AXIS view,
+  // which bails out entirely when axisLabelVisible is false — a titled line
+  // with no axis label therefore shows nothing at all. The bar-close countdown
+  // rides this line's title, so: axis label ON, and the series' own last-value
+  // badge OFF, keeping exactly one price marker on the scale.
+  it("keeps the axis label on the planned entry line so its countdown title paints", () => {
+    const plannedOrder: PlannedOrder = { entry: 4035, sl: null, tp: null, direction: null };
+    const { priceLines } = renderChart({ plannedOrder, countdown: true, tf: "M5" });
+    const entry = priceLines.find((l) => l.price === 4035)!;
+    expect(entry.axisLabelVisible).toBe(true);
+    expect(entry.title).toMatch(/^\d{2}:\d{2}$/);
+    expect(capturedSeriesOptions.lastValueVisible).toBe(false);
+  });
+
+  it("leaves the series last-value badge alone when there is no planned entry line", () => {
+    renderChart({ countdown: true });
+    expect(capturedSeriesOptions.lastValueVisible).toBe(true);
   });
 
   it("planned lines coexist with real position lines without colliding", () => {
