@@ -346,9 +346,13 @@ def migrate(db: str = typer.Option(_DEFAULT_DB, help="SQLite DB path.")) -> None
 def candles(db: str = typer.Option(_DEFAULT_DB, help="SQLite DB path.")) -> None:
     """Fetch OHLC bars for every closed trade's chart window into `candles` (M3).
 
-    Needs the live bridge (client-bearing, like `sync`). Idempotent: bars already
-    stored are skipped (PK-deduped on `symbol, timeframe, time_msc`). Run this
-    after `journal rebuild` and before `journal chart`.
+    Needs the live bridge (client-bearing, like `sync`). Run this after
+    `journal rebuild` and before `journal chart`.
+
+    Idempotent and cheap to re-run: `candle_coverage` is consulted first, so a
+    window already stored is not re-fetched at all. Runs uncapped — unlike the
+    same pipeline inside `journal live`, which limits itself to a few windows per
+    position close so the forming bar keeps streaming.
     """
     from .adapter.live import LiveMT5Client
     from .ingest.candles import sync_candles
@@ -356,7 +360,10 @@ def candles(db: str = typer.Option(_DEFAULT_DB, help="SQLite DB path.")) -> None
     client = LiveMT5Client()
     conn = connect(db)
     try:
-        r = sync_candles(client, conn)
+        # No cap here: this is a deliberate foreground command a human is
+        # watching, and it is how a large backlog gets primed in one run. The
+        # cap exists to protect `journal live`'s serial cycle, which this is not.
+        r = sync_candles(client, conn, max_windows=None)
     finally:
         conn.close()
 
@@ -366,7 +373,10 @@ def candles(db: str = typer.Option(_DEFAULT_DB, help="SQLite DB path.")) -> None
         f"trades:         {r.trades_seen} closed windowed, "
         f"{r.trades_skipped_open} open/partial skipped (no close yet)"
     )
-    typer.echo(f"bars:           {r.bars_new} new, {r.bars_seen - r.bars_new} already had")
+    typer.echo(
+        f"bars:           {r.bars_new} new from {r.windows_fetched} window(s) fetched"
+    )
+    typer.echo(f"pending:        {r.windows_pending} window(s) left for the next run")
     typer.echo(f"symbols:        {', '.join(r.symbols) or '(none)'}")
 
 

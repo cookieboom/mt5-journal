@@ -21,6 +21,7 @@ import pytest
 from journal.adapter.base import Position, TradeResult, TradeRetcode
 from journal.adapter.fake import FakeMT5Client
 from journal.execute import claim_next, enqueue, get_command
+from journal.ingest.candles import CandlesReport
 from journal.ingest.live import live_cycle, live_loop
 from journal.store.db import connect
 
@@ -112,7 +113,10 @@ def _spy_pipeline(monkeypatch):
     calls: list[str] = []
     monkeypatch.setattr("journal.ingest.deals.sync", lambda client, conn: calls.append("sync"))
     monkeypatch.setattr("journal.domain.reconstruct.rebuild", lambda conn: calls.append("rebuild"))
-    monkeypatch.setattr("journal.ingest.candles.sync_candles", lambda client, conn: calls.append("candles"))
+    monkeypatch.setattr(
+        "journal.ingest.candles.sync_candles",
+        lambda client, conn: (calls.append("candles"), CandlesReport())[1],
+    )
     return calls
 
 
@@ -252,7 +256,7 @@ def test_failed_ingest_does_not_kill_the_loop(conn, monkeypatch):
 
     monkeypatch.setattr("journal.ingest.deals.sync", boom)
     monkeypatch.setattr("journal.domain.reconstruct.rebuild", lambda conn: None)
-    monkeypatch.setattr("journal.ingest.candles.sync_candles", lambda client, conn: None)
+    monkeypatch.setattr("journal.ingest.candles.sync_candles", lambda client, conn: CandlesReport())
 
     client = FakeLiveClient([[_pos(identifier=111)], []])
     live_cycle(client, conn, _LOGIN)

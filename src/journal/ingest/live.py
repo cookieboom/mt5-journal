@@ -177,6 +177,10 @@ def _run_ingest_pipeline(client: MT5Client, conn: sqlite3.Connection) -> None:
 
     Imported lazily, mirroring cli.py: keeps this module importable with no
     bridge present, and lets a test monkeypatch each stage at its source module.
+
+    `sync_candles` caps how many candle windows it fetches per run, so a large
+    backlog drains across several closes rather than stalling this loop. What is
+    left is logged, never re-raised.
     """
     from ..ingest.deals import sync as run_sync
     from ..domain.reconstruct import rebuild as run_rebuild
@@ -184,7 +188,15 @@ def _run_ingest_pipeline(client: MT5Client, conn: sqlite3.Connection) -> None:
 
     run_sync(client, conn)
     run_rebuild(conn)
-    sync_candles(client, conn)
+    report = sync_candles(client, conn)
+    if report.windows_pending:
+        log.info(
+            "live: %d candle window(s) still pending after this ingest — capped at "
+            "%d per close so the forming bar keeps streaming; run `journal candles` "
+            "to drain the backlog in one go",
+            report.windows_pending,
+            report.windows_fetched,
+        )
     run_rebuild(conn)
 
 
