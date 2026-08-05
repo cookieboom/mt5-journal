@@ -21,6 +21,7 @@ journal = "journal.cli:app"
 dev = [
     "pytest",
     "watchfiles>=1.2.0",
+    "httpx",
 ]
 
 [build-system]
