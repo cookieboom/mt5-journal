@@ -48,13 +48,13 @@ def fill_range(client: MT5Client, conn: sqlite3.Connection, symbol: str,
     # Phase 2 — local writes only, one short transaction.
     bars_new = 0
     for lo, hi, bars in fetched:
+        stored: list[int] = []
         for c in bars:
-            if c.time_msc is not None and c.time_msc >= cur_bucket:
+            if c.time_msc is None or c.time_msc >= cur_bucket:
                 continue                     # still forming — not a closed bar yet
             bars_new += cs.insert_candle(conn, symbol, timeframe, c)
-        closed_hi = min(hi, cur_bucket - 1)
-        if closed_hi >= lo:
-            cs.record_coverage(conn, symbol, timeframe, lo, closed_hi)
+            stored.append(c.time_msc)
+        cs.record_fetch(conn, symbol, timeframe, lo, hi, stored, now_msc)
     conn.commit()
     return bars_new
 

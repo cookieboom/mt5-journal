@@ -258,3 +258,25 @@ def test_candles_payload_truncates_to_max_bars(tmp_path):
         assert out["candles"][-1]["time_msc"] == base + (n - 1) * step
     finally:
         db_conn.close()
+
+
+def test_sync_candles_does_not_claim_coverage_past_the_bars_it_got(conn, tmp_path):
+    """A render window runs to close + PAD_BARS, so a trade that closed moments
+    ago is asked for bars that do not exist yet. The bridge answers with what it
+    has and stops; claiming the whole window regardless sealed those minutes as
+    fetched forever (real hole 2026-08-05: trade closed 21:34, sync ran 21:43,
+    and 21:44-21:49 were never fetchable again while the data-health panel read
+    100%). Claim only up to the last bar that actually came back."""
+    open_msc = 1_700_000_000_000
+    close_msc = open_msc + 373_000
+    _insert_trade(conn, position_id=556, open_msc=open_msc, close_msc=close_msc,
+                  duration_s=373)
+    fx = tmp_path / "fixtures"
+    _write_rates(fx, "XAUUSDc:M1", open_msc)        # bars stop 20 min after open
+    sync_candles(FakeMT5Client(fixtures_dir=fx), conn)
+
+    _, to_msc = window_for(open_msc, close_msc, "M1")
+    last_bar = open_msc + 19 * 60_000               # _write_rates' final bar
+    ((_, hi),) = cs.read_coverage(conn, "XAUUSDc", "M1")
+    assert hi == last_bar + 60_000 - 1
+    assert hi < to_msc                              # the unfetched tail stays on offer

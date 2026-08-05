@@ -4,8 +4,8 @@ Mirrors `ingest/deals.py`: takes an `MT5Client` by parameter, never constructs
 `LiveMT5Client` (CLAUDE.md rule 1), so `sync_candles` runs under `FakeMT5Client`
 with no bridge. For each CLOSED trade, fetches the render window
 (`render.chart.choose_timeframe` / `window_for`) at the trade's own chosen
-timeframe and appends new bars with `INSERT OR IGNORE` -- append-only, deduped on
-the `candles` primary key `(symbol, timeframe, time_msc)`, safe to re-run.
+timeframe and appends new bars via `candles_store.insert_candle` -- deduped on the
+`candles` primary key `(symbol, timeframe, time_msc)`, safe to re-run.
 Overlapping windows from nearby trades on the same symbol just collide
 harmlessly on that key; central storage means a bar fetched for one trade is
 free for its neighbours (schema.sql: "Dedupes across trades on the same
@@ -29,7 +29,7 @@ from datetime import datetime, timezone
 from ..adapter.base import MT5Client
 from ..render.chart import choose_timeframe, window_for
 from ..store import candles_store
-from ..store.db import one_account_login
+from ..store.db import now_ms, one_account_login
 
 
 @dataclass(frozen=True)
@@ -63,6 +63,12 @@ def sync_candles(client: MT5Client, conn: sqlite3.Connection) -> CandlesReport:
     bars_seen = 0
     bars_new = 0
     symbols_touched: set[str] = set()
+    # A window runs to close + PAD_BARS, so a trade that closed moments ago has a
+    # window reaching into the future: the bridge answers with bars only up to
+    # the present and `record_fetch` claims no further (2026-08-05 hole — a trade
+    # closed 21:34, sync ran 21:43, and the whole-range claim sealed 21:44-21:49
+    # as fetched forever).
+    now = now_ms()
 
     for r in rows:
         tf = choose_timeframe(r["duration_s"])
@@ -71,10 +77,13 @@ def sync_candles(client: MT5Client, conn: sqlite3.Connection) -> CandlesReport:
             r["symbol"], tf, _ms_to_dt(from_msc), _ms_to_dt(to_msc)
         )
         symbols_touched.add(r["symbol"])
+        stored: list[int] = []
         for c in candles:
             bars_seen += 1
             bars_new += candles_store.insert_candle(conn, r["symbol"], tf, c)
-        candles_store.record_coverage(conn, r["symbol"], tf, from_msc, to_msc)
+            if c.time_msc is not None:
+                stored.append(c.time_msc)
+        candles_store.record_fetch(conn, r["symbol"], tf, from_msc, to_msc, stored, now)
 
     conn.commit()
 

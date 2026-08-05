@@ -63,3 +63,45 @@ def test_load_bars_returns_native_rows(tmp_path):
         assert len(bars) == 1 and bars[0].close == 1.5
     finally:
         conn.close()
+
+def test_insert_candle_repairs_a_partial_bar(tmp_path):
+    """A bar can reach us mid-formation and get stored as if final — the feed
+    was still catching up (real incident 2026-08-05: the Mac woke from sleep,
+    the terminal was still backfilling, and 08:05 landed with 22 of its 302
+    ticks). INSERT OR IGNORE left that stub frozen forever. A later fetch with
+    strictly more ticks is the fuller truth and must win."""
+    conn = _conn(tmp_path)
+    cs.insert_candle(conn, "XAUUSDc", "M1", _c(BASE, c=1.5, v=22))
+    assert cs.insert_candle(conn, "XAUUSDc", "M1", _c(BASE, c=9.9, v=302)) == 1
+    (row,) = cs.read_candles(conn, "XAUUSDc", "M1", BASE, BASE + M1)
+    assert row["tick_volume"] == 302
+    assert row["close"] == pytest.approx(9.9)
+
+def test_insert_candle_never_downgrades_to_fewer_ticks(tmp_path):
+    """Monotone in tick_volume: a late, thinner snapshot never overwrites the
+    fuller bar already stored."""
+    conn = _conn(tmp_path)
+    cs.insert_candle(conn, "XAUUSDc", "M1", _c(BASE, c=9.9, v=302))
+    assert cs.insert_candle(conn, "XAUUSDc", "M1", _c(BASE, c=1.5, v=22)) == 0
+    (row,) = cs.read_candles(conn, "XAUUSDc", "M1", BASE, BASE + M1)
+    assert row["tick_volume"] == 302
+    assert row["close"] == pytest.approx(9.9)
+
+def test_forget_coverage_punches_a_hole_and_keeps_the_rest(tmp_path):
+    """Repair hatch: split the range in two so the fill path offers the middle
+    again, without forgetting the history on either side."""
+    conn = _conn(tmp_path)
+    cs.record_coverage(conn, "XAUUSDc", "M1", BASE, BASE + 10*M1)
+    cs.forget_coverage(conn, "XAUUSDc", "M1", BASE + 4*M1, BASE + 6*M1)
+    assert cs.read_coverage(conn, "XAUUSDc", "M1") == [
+        (BASE, BASE + 4*M1 - 1), (BASE + 6*M1 + 1, BASE + 10*M1)]
+    assert cs.missing_ranges(cs.read_coverage(conn, "XAUUSDc", "M1"),
+                             (BASE, BASE + 10*M1)) == [(BASE + 4*M1, BASE + 6*M1)]
+
+def test_forget_coverage_leaves_untouched_ranges_alone(tmp_path):
+    conn = _conn(tmp_path)
+    cs.record_coverage(conn, "XAUUSDc", "M1", BASE, BASE + 2*M1)
+    cs.record_coverage(conn, "XAUUSDc", "M1", BASE + 8*M1, BASE + 10*M1)
+    cs.forget_coverage(conn, "XAUUSDc", "M1", BASE + 4*M1, BASE + 6*M1)
+    assert cs.read_coverage(conn, "XAUUSDc", "M1") == [
+        (BASE, BASE + 2*M1), (BASE + 8*M1, BASE + 10*M1)]

@@ -32,7 +32,10 @@ def test_fill_fetches_gap_inserts_and_records_coverage(tmp_path):
     n = fill_range(client, conn, "XAUUSDc", "M1", BASE, BASE+3*M1, NOW)
     assert n == 2
     assert [r["time_msc"] for r in cs.read_candles(conn, "XAUUSDc", "M1", BASE, BASE+3*M1)] == [BASE+M1, BASE+2*M1]
-    assert cs.read_coverage(conn, "XAUUSDc", "M1") == [(BASE, BASE+3*M1)]
+    # Claimed up to the end of the LAST bar the bridge actually returned, not to
+    # the requested `to_ms` — see test_fill_does_not_claim_coverage_past_a_
+    # truncated_response for why the difference is load-bearing.
+    assert cs.read_coverage(conn, "XAUUSDc", "M1") == [(BASE, BASE+3*M1-1)]
 
 def test_fill_records_coverage_for_empty_range(tmp_path):
     conn = connect(tmp_path / "t.db")
@@ -42,8 +45,12 @@ def test_fill_records_coverage_for_empty_range(tmp_path):
     assert cs.read_coverage(conn, "XAUUSDc", "M1") == [(BASE, BASE+3*M1)]  # remembered as fetched
 
 def test_fill_is_idempotent(tmp_path):
+    """A response that reaches the end of the requested range is the final word:
+    re-asking touches the bridge zero times. (A response that stops SHORT is not
+    — that tail stays on offer, see test_fill_does_not_claim_coverage_past_a_
+    truncated_response.)"""
     conn = connect(tmp_path / "t.db")
-    client = FakeRates({(BASE, BASE+3*M1): [_c(BASE+M1)]})
+    client = FakeRates({(BASE, BASE+3*M1): [_c(BASE+M1), _c(BASE+2*M1), _c(BASE+3*M1)]})
     fill_range(client, conn, "XAUUSDc", "M1", BASE, BASE+3*M1, NOW)
     client.calls.clear()
     n2 = fill_range(client, conn, "XAUUSDc", "M1", BASE, BASE+3*M1, NOW)  # already covered
@@ -114,3 +121,38 @@ def test_fill_does_not_hold_write_lock_across_bridge_fetches(tmp_path):
     client = ConcurrentWriter(db, {})
     fill_range(client, conn, "XAUUSDc", "M1", BASE, BASE + 3 * M1, NOW)
     assert client.lock_errors == []   # a concurrent enqueue must never be locked out
+
+def test_fill_does_not_claim_coverage_past_a_truncated_response(tmp_path):
+    """The real 2026-08-05 hole: the Mac slept, and on wake the chart asked for
+    [07:48, 08:13] while the terminal was still backfilling history. The bridge
+    answered with bars only up to 08:05 and nothing after. The old code recorded
+    coverage over the WHOLE requested range anyway, so 08:06-08:09 were sealed
+    as fetched: missing_ranges never offered them again, INSERT OR IGNORE never
+    got a second chance, and the chart kept a permanent price gap while the
+    data-health panel read 100%. Never claim past where the data actually ends."""
+    conn = connect(tmp_path / "t.db")
+    lo, hi = BASE, BASE + 8*M1
+    truncated = [_c(BASE), _c(BASE+M1), _c(BASE+2*M1)]      # feed stops at bar 2
+    client = FakeRates({(lo, hi): truncated})
+    fill_range(client, conn, "XAUUSDc", "M1", lo, hi, NOW)
+    assert cs.read_coverage(conn, "XAUUSDc", "M1") == [(lo, BASE + 3*M1 - 1)]
+
+    # Once the terminal has caught up, the tail is still on offer and lands.
+    client.bars_by_range = {(BASE + 3*M1, hi): [_c(BASE+3*M1), _c(BASE+4*M1)]}
+    n = fill_range(client, conn, "XAUUSDc", "M1", lo, hi, NOW)
+    assert n == 2
+    assert [r["time_msc"] for r in cs.read_candles(conn, "XAUUSDc", "M1", lo, hi)] == [
+        BASE, BASE+M1, BASE+2*M1, BASE+3*M1, BASE+4*M1]
+
+def test_fill_still_claims_an_interior_gap(tmp_path):
+    """A hole with bars on BOTH sides is the bridge's final word about a span it
+    has data around — a weekend or holiday. Claim it, or every scroll back over
+    that weekend re-fetches the same genuinely-empty range forever."""
+    conn = connect(tmp_path / "t.db")
+    lo, hi = BASE, BASE + 5*M1 - 1
+    client = FakeRates({(lo, hi): [_c(BASE), _c(BASE+4*M1)]})   # 3-bar hole between
+    fill_range(client, conn, "XAUUSDc", "M1", lo, hi, NOW)
+    assert cs.read_coverage(conn, "XAUUSDc", "M1") == [(lo, hi)]
+    client.calls.clear()
+    fill_range(client, conn, "XAUUSDc", "M1", lo, hi, NOW)
+    assert client.calls == []                                   # no gap → no bridge call
