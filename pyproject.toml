@@ -10,6 +10,8 @@ dependencies = [
     "typer",
     "fastapi",
     "uvicorn",
+    "scikit-learn",
+    "lightgbm",
 ]
 
 [project.scripts]

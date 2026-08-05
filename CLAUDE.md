@@ -54,9 +54,17 @@ Single user, local-only, macOS (Apple Silicon M4).
 7. **Tests before implementation** for anything in `domain/` and `analytics/`.
    Use fixtures in `tests/fixtures/`, not live MT5.
 8. **Do not add dependencies without asking.** Current stack: python 3.12,
-   sqlite3 (stdlib), pandas, mplfinance, typer, pytest.
-9. **This tool describes patterns in past data. It never generates trade signals
-   or recommendations.** Do not add "should I take this trade" features.
+   sqlite3 (stdlib), pandas, mplfinance, typer, pytest, fastapi, uvicorn,
+   scikit-learn, lightgbm.
+9. **Descriptive by default; `lab/` is the one predictive part.** Everything
+   outside `src/journal/lab/` describes patterns in past data and must not
+   generate trade signals or recommendations. `lab/` trains models on candle
+   data and does predict. Its output is bound by three conditions that are not
+   optional: it is always rendered together with the model's out-of-sample
+   expectancy and its age; it never places, modifies, or sizes an order —
+   `trade_commands` still requires a human click; and it is never the input to
+   another automated step. Do not add "should I take this trade" features
+   anywhere, including inside `lab/`.
 10. **Never commit `data/`, `cache/`, or anything containing a real account
     login.** Fixtures must be sanitised (login → 0, broker name stripped).
 11. **Symbols are stored twice.** `symbol` = exactly what MT5 said (`XAUUSDc`);
