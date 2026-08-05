@@ -533,6 +533,44 @@ def test_serve_watches_splits_forming_from_closed(conn):
     assert cs.read_coverage(conn, "XAUUSDc", tf) != []
 
 
+def test_serve_watches_promotes_a_closed_bar_the_clock_has_not_caught_up_to(conn):
+    # `now_msc` is captured at the TOP of live_cycle and only reaches
+    # serve_watches after positions_get/poll_once/mirror-write — several hundred
+    # ms with a position open. Across a bucket rollover that stamp is still in
+    # the PREVIOUS bucket while the bridge already returns the new bar. Judging
+    # "forming" by the clock alone then marks the just-closed bar as forming too;
+    # the newer bar overwrites it in live_candles and it is never promoted, so
+    # the chart's history freezes a bar behind for the whole interval.
+    # A bar with a NEWER bar beside it in the same response is closed, whatever
+    # the clock says.
+    from journal.ingest.live_candles import serve_watches
+    from journal.store import live_store as ls
+    from journal.store import candles_store as cs
+    from journal.adapter.base import Candle
+
+    tf = "M5"; size = 300_000
+    base = 1_700_000_000_000
+    cur_bucket = base - (base % size)
+    prev_bucket = cur_bucket - size
+    stale_now = cur_bucket - 200            # 200ms BEFORE the rollover
+    closed = Candle(time_msc=prev_bucket, open=1, high=2, low=0.5, close=1.5,
+                    tick_volume=5, spread=2, real_volume=0)
+    forming = Candle(time_msc=cur_bucket, open=1.5, high=3, low=1.4, close=2.9,
+                     tick_volume=7, spread=2, real_volume=0)
+
+    class C(FakeLiveClient):
+        def copy_rates_range(self, symbol, timeframe, date_from, date_to):
+            return [closed, forming]
+
+    client = C([[]])
+    ls.upsert_watch(conn, "XAUUSDc", tf, stale_now, ttl_ms=30_000)
+    serve_watches(client, conn, stale_now)
+
+    assert len(cs.read_candles(conn, "XAUUSDc", tf, prev_bucket, prev_bucket)) == 1
+    assert ls.read_forming(conn, "XAUUSDc", tf).time_msc == cur_bucket
+    assert cs.read_candles(conn, "XAUUSDc", tf, cur_bucket, cur_bucket) == []
+
+
 def test_serve_watches_noop_without_active_watch(conn):
     from journal.ingest.live_candles import serve_watches
     client = FakeLiveClientWithRates([[]], bar=None)  # never asked

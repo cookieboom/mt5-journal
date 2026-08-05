@@ -70,7 +70,21 @@ export function isNowVisible(
   return visibleToMs >= lastBarMs - timeframeMs(tf); // right edge within one bar of last
 }
 
-export const LINE_COLORS = { sl: "#fb7185", tp: "#34d399", entry: "#9a97c4" };
+// Time left in the bar forming right now, TradingView-style: "MM:SS", or
+// "H:MM:SS" once a bar is an hour or longer. Buckets are epoch-aligned exactly
+// as the backend's bucket_start is, so this needs no bar data — the clock alone
+// says when the current bar closes.
+export function barCloseCountdown(nowMs: number, tf: Timeframe): string {
+  const size = timeframeMs(tf);
+  const left = size - (((nowMs % size) + size) % size);
+  const s = Math.ceil(left / 1000);
+  const p = (n: number) => String(n).padStart(2, "0");
+  const hh = Math.floor(s / 3600);
+  return hh > 0 ? `${hh}:${p(Math.floor((s % 3600) / 60))}:${p(s % 60)}`
+                : `${p(Math.floor(s / 60))}:${p(s % 60)}`;
+}
+
+export const LINE_COLORS ={ sl: "#fb7185", tp: "#34d399", entry: "#9a97c4" };
 
 export type LiveLineKind = "entry" | "sl" | "tp";
 

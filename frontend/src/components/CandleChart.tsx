@@ -7,7 +7,10 @@ import {
   type IChartApi, type ISeriesApi, type IPriceLine, type UTCTimestamp, type SeriesType,
   type SeriesMarker, type Time,
 } from "lightweight-charts";
-import { toSeconds, isNowVisible, LINE_COLORS, liveLines, type Sym, type Timeframe } from "../lib/candles";
+import {
+  toSeconds, isNowVisible, LINE_COLORS, liveLines, barCloseCountdown,
+  type Sym, type Timeframe,
+} from "../lib/candles";
 import type { ChartSettings } from "../lib/chartPrefs";
 import type { Candle, HoverBar, LiveData, PlannedOrder } from "../lib/types";
 import { wib } from "../lib/format";
@@ -80,6 +83,7 @@ const CandleChart = forwardRef<ChartHandle, {
   draggablePositions?: DraggablePosition[];
   onSlTpChange?: (positionId: number, change: { sl?: number; tp?: number }) => void;
   plannedOrder?: PlannedOrder | null;
+  countdown?: boolean;   // live only: bar-close timer rides the price marker
   fitToRange?: { startMs: number; endMs: number };
   markers?: SeriesMarker<Time>[];
   missing?: [number, number][];
@@ -109,6 +113,19 @@ const CandleChart = forwardRef<ChartHandle, {
   }[]>([]);
   const ghostLine = useRef<IPriceLine | null>(null);
   const [, bumpProjection] = useReducer((c: number) => c + 1, 0);
+
+  // Bar-close countdown (live only). It rides the planned-order entry line —
+  // which sits exactly at the last close by construction (Chart.tsx derives it
+  // from the shown bars) — as that line's title, so the chart keeps ONE price
+  // marker instead of two: the line's own axis label is suppressed below and
+  // the series' built-in last-price label carries the number.
+  const [tick, setTick] = useState(() => Date.now());
+  useEffect(() => {
+    if (!props.countdown) return;
+    const id = setInterval(() => setTick(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [props.countdown]);
+  const entryTitle = props.countdown ? barCloseCountdown(tick, props.tf) : "harga";
 
   // Pointer pixel (relative to the pane) → data coordinates, using the current
   // series/timeScale. candles give a gap-aware bar time from the logical index.
@@ -536,10 +553,11 @@ const CandleChart = forwardRef<ChartHandle, {
     linesMeta.current = [];
 
     const addLine = (positionId: number, kind: LineKind, price: number | null,
-                     color: string, title: string, direction: "buy" | "sell", entryPrice: number | null) => {
+                     color: string, title: string, direction: "buy" | "sell",
+                     entryPrice: number | null, axisLabel = true) => {
       if (price === null || price === undefined || Math.abs(price) < 1e-9) return;
       const line = s.createPriceLine({
-        price, color, lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title,
+        price, color, lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: axisLabel, title,
       });
       priceLines.current.push(line);
       linesMeta.current.push({ line, positionId, kind, direction, entryPrice });
@@ -553,7 +571,10 @@ const CandleChart = forwardRef<ChartHandle, {
     if (props.plannedOrder) {
       const p = props.plannedOrder;
       const dir = p.direction ?? "buy";
-      addLine(PLANNED_ID, "entry", p.entry, LINE_COLORS.entry, "harga", dir, p.entry);
+      // No axis label: this line sits ON the last close, so its label was a
+      // second price badge stacked against the series' own last-price label.
+      // The title (countdown in live, "harga" otherwise) still marks the line.
+      addLine(PLANNED_ID, "entry", p.entry, LINE_COLORS.entry, entryTitle, dir, p.entry, false);
       addLine(PLANNED_ID, "sl", p.sl, LINE_COLORS.sl, "SL rencana", dir, p.entry);
       addLine(PLANNED_ID, "tp", p.tp, LINE_COLORS.tp, "TP rencana", dir, p.entry);
     }
@@ -590,6 +611,17 @@ const CandleChart = forwardRef<ChartHandle, {
     }
   }, [props.live, props.nowVisible, props.symbol, props.settings.liveOverlay,
       props.settings.chartType, props.overlayLines, props.draggablePositions, props.plannedOrder]);
+
+  // Tick the countdown in place. Deliberately NOT a dep of the effect above:
+  // that one tears down and rebuilds every price line, which at 1 Hz would
+  // churn linesMeta under an in-flight drag. applyOptions just repaints the
+  // title. Re-runs on plannedOrder too, since that rebuild drops the old line.
+  useEffect(() => {
+    const meta = linesMeta.current.find(
+      (m) => m.positionId === PLANNED_ID && m.kind === "entry",
+    );
+    meta?.line.applyOptions({ title: entryTitle });
+  }, [entryTitle, props.plannedOrder]);
 
   // Ghost line preview while a SL/TP drag is in progress — shows the
   // to-be-committed value at the cursor's projected price, styled distinctly

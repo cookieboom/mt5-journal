@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   timeframeMs, toSeconds, initialWindow, olderWindow, mergeCandles,
-  isNowVisible, liveLines, LINE_COLORS, capCandles, backfillWindow,
+  isNowVisible, liveLines, LINE_COLORS, capCandles, backfillWindow, barCloseCountdown,
 } from "./candles";
 import type { Candle } from "./types";
 import type { LivePosition } from "./types";
@@ -107,5 +107,20 @@ describe("capCandles", () => {
   it("drops the OLDEST bars beyond maxBars, keeping the newest and order", () => {
     const cs = [bar(1), bar(2), bar(3), bar(4), bar(5)];
     expect(capCandles(cs, 2).map((c) => c.time_msc)).toEqual([4, 5]);
+  });
+});
+
+describe("barCloseCountdown", () => {
+  const bucket = 1_700_000_100_000;            // epoch-aligned to a whole minute
+
+  it("counts down to the end of the CURRENT bucket", () => {
+    expect(barCloseCountdown(bucket, "M1")).toBe("01:00");          // just opened
+    expect(barCloseCountdown(bucket + 56_000, "M1")).toBe("00:04");
+    expect(barCloseCountdown(bucket + 59_900, "M1")).toBe("00:01"); // sub-second rounds up
+  });
+  it("switches to H:MM:SS once more than an hour is left", () => {
+    const h4 = bucket - (bucket % (240 * 60_000));
+    expect(barCloseCountdown(h4 + 60_000, "H4")).toBe("3:59:00");
+    expect(barCloseCountdown(h4 + 239 * 60_000, "H4")).toBe("01:00");
   });
 });

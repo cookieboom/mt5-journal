@@ -29,11 +29,24 @@ def serve_watches(client: MT5Client, conn: sqlite3.Connection, now_msc: int,
         frm = now_msc - (lookback_bars + 1) * size
         bars = client.copy_rates_range(symbol, tf, _ms_to_dt(frm), _ms_to_dt(now_msc))
         cur_bucket = bucket_start(now_msc, tf)
+        # `now_msc` is stamped at the top of live_cycle and only reaches here
+        # after positions_get/poll_once/mirror-write — hundreds of ms with a
+        # position open, seconds when the bridge is slow. Across a rollover it
+        # therefore still points at the PREVIOUS bucket while the bridge already
+        # returns the new bar, and judging "forming" by the clock alone marks the
+        # just-closed bar as forming too. The newer bar then overwrites it in
+        # live_candles and it is never promoted: the chart's history freezes one
+        # bar behind, and the live bar vanishes (mergeForming refuses a two-
+        # interval jump) until the next rollover. A bar with a NEWER bar beside
+        # it in the same response is closed no matter what the clock says, so
+        # only the newest bar can ever be the forming one.
+        newest = max((c.time_msc for c in bars if c.time_msc is not None), default=None)
+        forming_at = cur_bucket if newest is None else max(cur_bucket, newest)
         closed: list = []
         for c in bars:
             if c.time_msc is None:
                 continue
-            if c.time_msc >= cur_bucket:
+            if c.time_msc >= forming_at:
                 ls.upsert_forming(conn, symbol, tf, c, now_msc)   # forming
                 written += 1
             else:

@@ -180,10 +180,17 @@ export default function Chart() {
   // between are lost and a gap opens between the frozen historical tail and
   // the live bar. Mirror replay's cursor-follow above: advance the loaded
   // window to the forming bar's time so newly closed bars get pulled in.
-  const formingMs = forming?.time_msc ?? null;
+  // Keyed on `forming`'s IDENTITY (a fresh object every 5s poll), NOT on
+  // forming.time_msc: on time_msc this fires exactly once per bar, so the single
+  // attempt landing before `journal live` promoted the previous bar makes no
+  // progress (loadUpTo advances toRef only over confirmed coverage) and nothing
+  // retries for the rest of the interval — a whole minute on M1 with the history
+  // a bar short and the live bar hidden, since mergeForming refuses a
+  // two-interval jump. loadUpTo is a cheap no-op once the target is covered, so
+  // re-running it per poll costs nothing and caps that hole at one poll.
   useEffect(() => {
-    if (!replayOpen && formingMs !== null) data.loadUpTo(formingMs);
-  }, [replayOpen, formingMs, data.loadUpTo]);
+    if (!replayOpen && forming) data.loadUpTo(forming.time_msc);
+  }, [replayOpen, forming, data.loadUpTo]);
   // Memoized: CandleChart's data-push effect (and the overlay effect below)
   // re-run on identity change of `candles`/`draggablePositions`. An inline
   // recompute here handed CandleChart a new array on every unrelated Chart.tsx
@@ -330,6 +337,7 @@ export default function Chart() {
               candles={shownCandles}
               draggablePositions={draggableReplay}
               plannedOrder={plannedOrder}
+              countdown={!replayOpen}
               onSlTpChange={handleSlTpChange}
               lastBarMs={data.lastBarMs}
               onHover={setHovered}
