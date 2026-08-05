@@ -59,6 +59,38 @@ def test_bars_to_frame_sorts_and_dedupes():
     assert list(df.index) == [0, MINUTE, 2 * MINUTE]
 
 
+def test_bars_to_frame_dedup_keeps_the_last_inserted_row_not_just_any():
+    """`keep="last"` is documented as "a re-fetched bar is the corrected
+    one" — that only holds if the sort ahead of drop_duplicates is stable.
+    Two concatenated same-order runs of duplicate keys (all stale, then all
+    corrected) is the classic case an unstable sort scrambles: verified this
+    construction fails under kind="quicksort" and passes under
+    kind="stable" before asserting it here."""
+    times = [i * MINUTE for i in range(50)]
+    stale = [
+        Candle(time_msc=t, open=1.0, high=1.0, low=1.0, close=1.5,
+               tick_volume=1, spread=1, real_volume=0)
+        for t in times
+    ]
+    corrected = [
+        Candle(time_msc=t, open=1.0, high=1.0, low=1.0, close=8.0,
+               tick_volume=2, spread=2, real_volume=0)
+        for t in times
+    ]
+    df = bars_to_frame(stale + corrected)
+    assert (df["close"] == 8.0).all()
+    assert (df["tick_volume"] == 2).all()
+    assert (df["spread"] == 2).all()
+
+
+def test_bars_to_frame_empty_has_the_documented_columns_and_index():
+    df = bars_to_frame([])
+    assert list(df.columns) == ["open", "high", "low", "close", "tick_volume", "spread"]
+    assert len(df) == 0
+    assert df.index.name == "time_msc"
+    assert df.index.dtype == np.int64
+
+
 def test_hour_and_dow_come_from_time_msc_utc():
     # 2026-01-01T00:00:00Z is a Thursday -> dow == 3 (Monday = 0)
     epoch = 1_767_225_600_000

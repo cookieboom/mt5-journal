@@ -49,10 +49,11 @@ def bars_to_frame(bars: list[Candle]) -> pd.DataFrame:
         ],
         columns=["time_msc", "open", "high", "low", "close", "tick_volume", "spread"],
     )
-    if df.empty:
-        return df.set_index(pd.Index([], dtype="int64", name="time_msc"))
     df = df.astype({"time_msc": "int64"})
-    df = df.sort_values("time_msc").drop_duplicates("time_msc", keep="last")
+    # kind="stable" (mergesort) is required: quicksort's tie-break order for
+    # equal time_msc is unspecified, so keep="last" would not reliably keep
+    # the last-inserted duplicate (the corrected re-fetch).
+    df = df.sort_values("time_msc", kind="stable").drop_duplicates("time_msc", keep="last")
     return df.set_index("time_msc")
 
 
