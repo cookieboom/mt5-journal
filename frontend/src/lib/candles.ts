@@ -22,6 +22,14 @@ export function toSeconds(ms: number): number {
   return Math.floor(ms / 1000);
 }
 
+// Start of the bar containing `ms`. Buckets are epoch-aligned, exactly as the
+// backend's `domain.resample.bucket_start` is — the two must agree, or a
+// window computed here would not line up with the stored bar times.
+export function bucketStart(ms: number, tf: Timeframe): number {
+  const size = timeframeMs(tf);
+  return Math.floor(ms / size) * size;
+}
+
 export function initialWindow(tf: Timeframe, nowMs: number, bars = 300): [number, number] {
   return [nowMs - timeframeMs(tf) * bars, nowMs];
 }

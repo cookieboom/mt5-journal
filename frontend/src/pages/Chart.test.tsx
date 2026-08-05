@@ -226,7 +226,7 @@ it("a live SL/TP drag previews before it enqueues — never skips straight to th
 // way replay already does via data.loadUpTo(cursor).
 it("live mode keeps the historical window advancing so it never gaps behind the live bar", async () => {
   vi.useFakeTimers();
-  const T0 = 1_700_000_000_000;
+  const T0 = 1_700_000_100_000;   // on an M5 bucket boundary: forward fetches start there
   vi.setSystemTime(T0);
   const M5 = 5 * 60_000;
 

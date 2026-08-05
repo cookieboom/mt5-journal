@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { backfillWindow, capCandles, fetchCandles, initialWindow, mergeCandles, olderWindow, timeframeMs, type Timeframe } from "../lib/candles";
+import { backfillWindow, bucketStart, capCandles, fetchCandles, initialWindow, mergeCandles, olderWindow, timeframeMs, type Timeframe } from "../lib/candles";
 import type { Candle } from "../lib/types";
 
 export type ChartStatus = "loading" | "polling" | "ready" | "gaveup" | "error";
@@ -188,7 +188,17 @@ export function useChartData(
     if (targetMs <= toRef.current) return;    // already loaded past the cursor
     loadingNewerRef.current = true;
     const gen = genRef.current;
-    const from = toRef.current;
+    // Start at the BUCKET START of the cursor, not the raw instant. toRef starts
+    // life as Date.now() (chart opened mid-bar) and later advances to whatever
+    // the backend confirmed covered, which is also mid-bucket whenever the
+    // window ran up to `now`. The backend selects `time_msc BETWEEN from AND to`,
+    // so a mid-bucket `from` skips that bucket's bar for good — its time_msc is
+    // the bucket START, which sits BEFORE `from`, and nothing ever re-requests
+    // behind toRef. Reported as: open /chart, and the bar that was forming at
+    // that moment is missing from the chart forever (one bar, once per open).
+    // Re-fetching one already-held bar each rollover is free — mergeCandles
+    // dedupes by time_msc.
+    const from = bucketStart(toRef.current, tf);
     const to = Math.min(targetMs + timeframeMs(tf) * FORWARD_CHUNK, Date.now());
     try {
       const resp = await fetchCandles(symbol, tf, from, to);

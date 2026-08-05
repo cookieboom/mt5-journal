@@ -17,7 +17,7 @@ function jsonOk(body: unknown) {
 // one left off — nothing else ever re-requests bars behind the cursor.
 it("loadUpTo does not permanently drop a bar the backend hasn't promoted yet", async () => {
   vi.useFakeTimers();
-  const T0 = 1_700_000_000_000;
+  const T0 = 1_700_000_100_000;   // on an M5 bucket boundary: forward fetches start there
   vi.setSystemTime(T0);
   const M5 = 5 * 60_000;
 
@@ -80,6 +80,61 @@ it("loadUpTo does not permanently drop a bar the backend hasn't promoted yet", a
     await act(async () => { await result.current.loadUpTo(T0 + 3 * M5); });
     expect(bridgeCalls[2].from).toBe(T0);
     expect(result.current.missing).toEqual([]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+// Reproduces the reported bug: opening /chart mid-bar loses exactly ONE bar —
+// the one that was still forming at open — and only that once, after which the
+// chart behaves. `toRef` starts at Date.now(), which is mid-bucket, and every
+// forward fetch starts exactly there; the backend selects
+// `time_msc BETWEEN from AND to`, so that bucket's bar (time_msc = bucket
+// start, BEFORE from) can never come back. The next rollover confirms coverage
+// from the following bar onward and the hole is permanent — nothing ever
+// re-requests behind toRef. Forward fetches must therefore start at the BUCKET
+// START of the cursor, not at the raw instant.
+it("loadUpTo re-requests the bucket that was still forming when the chart opened", async () => {
+  vi.useFakeTimers();
+  const M5 = 5 * 60_000;
+  const B = 1_700_000_100_000;   // a bucket boundary (epoch-aligned for M5)
+  const OPEN = B + 150_000;      // chart opened halfway through the B bar
+  vi.setSystemTime(OPEN);
+
+  const froms: number[] = [];
+  const fetchMock = vi.fn((url: string) => {
+    const q = new URL(url, "http://localhost").searchParams;
+    const from = Number(q.get("from"));
+    if (from === OPEN - 3 * M5) {
+      // Initial window: everything up to the last CLOSED bar; B is still forming.
+      return jsonOk({
+        symbol: "XAUUSDc", timeframe: "M5",
+        candles: [{ time_msc: B - M5, o: 1, h: 1, l: 1, c: 1, v: 1 }],
+        missing: [], pending: false,
+      });
+    }
+    froms.push(from);
+    // B has closed and journal live promoted it. The backend filters
+    // time_msc >= from, exactly as `candles_store.load` does.
+    return jsonOk({
+      symbol: "XAUUSDc", timeframe: "M5",
+      candles: [{ time_msc: B, o: 2, h: 2, l: 2, c: 2, v: 1 }].filter((c) => c.time_msc >= from),
+      missing: [[B + M5, B + M5 + 30_000]], pending: true,   // the new forming bar
+    });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+
+  try {
+    const { result } = renderHook(() => useChartData("XAUUSDc", "M5", 3, 50));
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(result.current.lastBarMs).toBe(B - M5);
+
+    // Rollover: the forming bar advances to B + M5, so Chart.tsx tail-follows.
+    vi.setSystemTime(B + M5 + 300);
+    await act(async () => { await result.current.loadUpTo(B + M5); });
+
+    expect(froms[0]).toBeLessThanOrEqual(B);   // must reach back over the B bucket
+    expect(result.current.candles.map((c) => c.time_msc)).toContain(B);
   } finally {
     vi.useRealTimers();
   }
