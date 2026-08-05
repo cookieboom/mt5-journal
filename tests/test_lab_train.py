@@ -10,7 +10,13 @@ import pytest
 from journal.adapter.base import Candle
 from journal.lab.features import bars_to_frame, build_features
 from journal.lab.labels import LabelConfig
-from journal.lab.train import TrainConfig, build_dataset, train_all
+from journal.lab.train import (
+    SIDE_CODE,
+    SIDE_CODE_COLUMN,
+    TrainConfig,
+    build_dataset,
+    train_all,
+)
 
 MINUTE = 60_000
 FEATURES = ("ret_1", "ret_5", "atr_rel", "hour_utc")
@@ -108,3 +114,16 @@ def test_training_is_deterministic_for_a_fixed_seed():
 def test_too_little_data_raises_rather_than_returning_a_fake_model():
     with pytest.raises(ValueError, match="not enough"):
         train_all(_frame(60), _cfg())
+
+
+def test_side_code_contract_is_pinned_for_score_py_to_reconstruct():
+    """A scorer rebuilds the feature vector from TrainedModel.features by
+    appending SIDE_CODE[side] under the SIDE_CODE_COLUMN name. If this
+    encoding ever flips, every timing prediction inverts silently unless a
+    test pins the exact values and column name — this is that test."""
+    assert SIDE_CODE == {"long": 1, "short": 0}
+    assert SIDE_CODE_COLUMN == "side_code"
+    models = train_all(_frame(), _cfg(pooled_min_rows=10**6))
+    for m in models:
+        assert m.features[-1] == SIDE_CODE_COLUMN
+        assert m.features[:-1] == FEATURES

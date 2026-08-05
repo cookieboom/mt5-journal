@@ -3,7 +3,13 @@ rows — logistic regression and LightGBM — and both are returned. If the boos
 model does not beat the glass box, the caller has the numbers to say so.
 
 No sqlite here: `train_all` takes a DataFrame and returns objects. `lab.store`
-does the persistence, which is what keeps the fit out of the WAL writer."""
+does the persistence, which is what keeps the fit out of the WAL writer.
+
+Every estimator is fit on `cfg.features + [SIDE_CODE_COLUMN]`, in that order —
+`TrainedModel.features` records exactly this. `lab.score` (the inference path)
+must reconstruct that same vector: `SIDE_CODE[side]` for the side, taken from
+`SIDE_CODE` here, not restated — a guessed encoding direction would silently
+invert every timing prediction with no test to catch it."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -15,7 +21,8 @@ import pandas as pd
 from .evaluate import aggregate, fold_metrics, purged_folds
 from .labels import REGIMES, SIDES, LabelConfig, barrier_labels, regime_labels
 
-_SIDE_CODE = {"long": 1, "short": 0}
+SIDE_CODE = {"long": 1, "short": 0}
+SIDE_CODE_COLUMN = "side_code"
 
 
 @dataclass(frozen=True)
@@ -38,7 +45,7 @@ class TrainedModel:
     estimator: Any
     metrics: dict
     n_rows: int
-    features: tuple[str, ...]
+    features: tuple[str, ...]  # cfg.features + (SIDE_CODE_COLUMN,), in that order
     pooled: bool = False
 
 
@@ -70,8 +77,10 @@ def build_dataset(df: pd.DataFrame, cfg: TrainConfig) -> pd.DataFrame:
 
 def train_all(df: pd.DataFrame, cfg: TrainConfig) -> list[TrainedModel]:
     data = build_dataset(df, cfg)
-    columns = [*cfg.features, "side_code"]
-    data = data.assign(side_code=data["side"].map(_SIDE_CODE).astype("float64"))
+    columns = [*cfg.features, SIDE_CODE_COLUMN]
+    data = data.assign(**{
+        SIDE_CODE_COLUMN: data["side"].map(SIDE_CODE).astype("float64"),
+    })
     if len(data) < 100:
         raise ValueError(
             f"not enough labelled rows to train: {len(data)}. Fetch more candles "
