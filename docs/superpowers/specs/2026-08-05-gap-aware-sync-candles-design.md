@@ -56,6 +56,7 @@ Out of scope, and deliberately so:
 | Scope of skipping | Coverage-driven only; no symbol/date narrowing, no CLI-vs-live split |
 | Safety valve | Hard cap of N *fetched* windows per invocation |
 | Cap unit | Count of windows, not elapsed seconds (no clock to inject, deterministic in tests) |
+| Who the cap binds | `journal live` only. `sync_candles` takes `max_windows: int \| None = _MAX_FETCH_WINDOWS`; `journal candles` passes `None` and runs uncapped (amended during planning — see below) |
 | Trade order | `close_time_msc DESC` — the trade that just closed is always served first |
 
 ## Design
@@ -196,6 +197,29 @@ must still succeed (definition of done).
 - The loop stays serial. If a *single* `fill_range` call ever blocks for
   minutes on its own, this design does not help; nothing observed suggests it
   does, and the queue-per-cycle redesign remains available if that changes.
+
+## Amendments made during planning
+
+Two things only surfaced when the plan was checked line-by-line against the
+code. Both are recorded here so spec and plan agree.
+
+**1. The cap needs an off switch.** As first written the cap bound every caller,
+including `journal candles`. With 118 uncovered windows against a cap of 5, that
+made priming the backlog a ~24-invocation chore. `sync_candles` therefore takes
+`max_windows: int | None = _MAX_FETCH_WINDOWS`, and the CLI passes `None`. The
+fetch logic itself stays single-path — which is what the "no CLI-vs-live split"
+decision above was protecting — while the foreground command a human is watching
+can drain a backlog in one deliberate run.
+
+**2. The zero-refetch test needs its own fixture.** `adapter/fake.py`'s
+`copy_rates_range` ignores `date_from`/`date_to` and returns every bar under the
+fixture key. The existing `_write_rates` helper writes bars that stop 20 minutes
+after the trade opens, short of the window's end at `close + PAD_BARS`
+(`PAD_BARS = 15`). `record_fetch` claims only to the last bar returned, so under
+the fake that tail can never seal and a second run still fetches once. The test
+uses a new `_write_rates_multi` helper that writes bars past `to_msc`. This is a
+fake-client artifact, not a production behaviour: the real bridge honours the
+requested range, so an old trade's tail seals on the run after its first.
 
 ## Files touched
 
