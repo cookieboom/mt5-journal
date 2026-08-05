@@ -38,8 +38,11 @@ def conn(db_path):
 
 
 @pytest.fixture
-def client(db_path) -> TestClient:
-    return TestClient(create_app(str(db_path)))
+def client(db_path, tmp_path) -> TestClient:
+    # cache_dir isolated under tmp_path, not the repo's real cache/models/ —
+    # training writes real .joblib artifacts, and the sibling lab test files
+    # (test_lab_store.py, test_lab_score.py) already isolate the same way.
+    return TestClient(create_app(str(db_path), cache_dir=str(tmp_path / "cache")))
 
 
 def _seed_candles(conn, n=1500, symbol="XAUUSDc", timeframe="H1"):
@@ -167,19 +170,36 @@ def test_regimes_endpoint_covers_the_requested_window(client, conn):
 
 def test_regime_model_metrics_are_not_surfaced_as_real_rates(client, conn):
     """train.py's `_score` fills a regime fold's auc/expectancy_r/
-    baseline_expectancy_r with placeholder constants (0.5 / 0.0 / 0.0) because
-    a 3-class classifier has no R or probability attached — see train.py's
-    module docstring and `_score`. The HTTP layer must not hand those three
-    numbers to a client at face value; win_rate there is really accuracy and
-    must be labelled as such, not left to be read as a trading win rate."""
+    baseline_expectancy_r/calibration with placeholder constants (0.5 / 0.0 /
+    0.0 / a degenerate one-bucket curve, since proba=ones collapses it)
+    because a 3-class classifier has no R or probability attached — see
+    train.py's module docstring and `_score`. The HTTP layer must not hand
+    those four to a client at face value; win_rate there is really accuracy
+    and must be labelled as such, not left to be read as a trading win rate.
+    The scrub must not over-reach: the timing stage's calibration is real and
+    must survive untouched."""
     _seed_candles(conn)
     body = client.post("/api/lab/train", json=_train_body()).json()
     regime_models = [m for m in body["models"] if m["stage"] == "regime"]
+    timing_models = [m for m in body["models"] if m["stage"] == "timing"]
     assert regime_models
+    assert timing_models
     for m in regime_models:
         metrics = m["metrics"]
-        assert metrics.get("auc") is None
-        assert metrics.get("expectancy_r") is None
-        assert metrics.get("baseline_expectancy_r") is None
+        assert "auc" not in metrics
+        assert "expectancy_r" not in metrics
+        assert "baseline_expectancy_r" not in metrics
+        assert "calibration" not in metrics
         assert "win_rate" not in metrics
         assert "accuracy" in metrics
+        for fold in metrics["folds"]:
+            assert "auc" not in fold
+            assert "expectancy_r" not in fold
+            assert "baseline_expectancy_r" not in fold
+            assert "calibration" not in fold
+            assert "win_rate" not in fold
+            assert "accuracy" in fold
+    for m in timing_models:
+        metrics = m["metrics"]
+        assert "calibration" in metrics
+        assert "win_rate" in metrics

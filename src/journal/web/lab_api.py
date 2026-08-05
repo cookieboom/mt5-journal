@@ -13,15 +13,19 @@ from pathlib import Path
 from ..lab.features import PRICE_FEATURES, bars_to_frame, build_features, usable_columns
 from ..lab.labels import LabelConfig
 from ..lab.score import score_bars
-from ..lab.store import ArtifactMissing, activate, list_models, save_models
+from ..lab.store import activate, list_models, save_models
 from ..lab.train import TrainConfig, train_all
 from ..store.candles_store import load_bars
 
 DEFAULT_SCORE_BARS = 300
 
-# CLAUDE.md rule 8 (§8): metrics computed from fewer than this many samples
-# are suppressed rather than shown at face value.
-_REGIME_FILLER_KEYS = ("auc", "expectancy_r", "baseline_expectancy_r")
+# Keys `train.py::_score` fills with placeholder constants for stage="regime"
+# (proba=ones, r_net=zeros — a 3-class classifier has no probability or R
+# attached), so they measure nothing and must not reach a client at face
+# value. `calibration` is the same defect as the other three, just shaped as
+# a curve instead of a scalar: a constant proba=1.0 collapses it to one
+# degenerate bucket ("predicts 100%, right X% of the time").
+_REGIME_FILLER_KEYS = ("auc", "expectancy_r", "baseline_expectancy_r", "calibration")
 
 
 class LabRequestError(ValueError):
@@ -157,10 +161,12 @@ def _public_model(row: dict) -> dict:
     3-class classifier can be scored through the same machinery as the timing
     model. The consequence (verified in review of Task 5): `auc` is always
     exactly 0.5, `expectancy_r`/`baseline_expectancy_r` are always exactly
-    0.0, and `win_rate` is really classification accuracy. Those three are
-    filler, not measurements, and are stripped/relabelled here — at every
+    0.0, `calibration` collapses to one degenerate bucket (constant
+    proba=1.0), and `win_rate` is really classification accuracy. Those four
+    are filler, not measurements, and are stripped/relabelled here — at every
     fold, not just the aggregate — so nothing downstream can render a
-    regime model's "expectancy" or "AUC" as if it meant something."""
+    regime model's "expectancy", "AUC", or calibration curve as if it meant
+    something."""
     if row.get("stage") != "regime":
         return row
     out = dict(row)

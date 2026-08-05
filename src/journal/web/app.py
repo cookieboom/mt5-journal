@@ -51,11 +51,16 @@ _CACHE_DIR = "cache"
 _FRONTEND_DIST = _HERE.parent.parent.parent / "frontend" / "dist"
 
 
-def create_app(db_path: str | None = None) -> FastAPI:
+def create_app(db_path: str | None = None, cache_dir: str | None = None) -> FastAPI:
     """Build the app. `db_path` falls back to the `JOURNAL_DB` env var, then the
     default `data/journal.db` — so `journal serve --db ...` can pass it through
-    the env when uvicorn imports this factory by string."""
+    the env when uvicorn imports this factory by string. `cache_dir` follows the
+    same shape (env var, then `_CACHE_DIR`) — the lab routes accept a caller-
+    supplied cache dir so tests can point training's joblib artifacts at
+    `tmp_path` instead of the repo's real `cache/models/`; every other route
+    still reads `_CACHE_DIR` directly and is unaffected."""
     db_path = db_path or os.environ.get("JOURNAL_DB", _DEFAULT_DB)
+    cache_dir = cache_dir or os.environ.get("JOURNAL_CACHE_DIR", _CACHE_DIR)
 
     app = FastAPI(title="mt5-journal")
 
@@ -588,7 +593,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
 
     @app.post("/api/lab/train")
     def api_lab_train(body=Body(...), conn: sqlite3.Connection = Depends(get_conn)):
-        return _lab(lab_api.train, conn, body, _CACHE_DIR)
+        return _lab(lab_api.train, conn, body, cache_dir)
 
     @app.get("/api/lab/models")
     def api_lab_models(symbol: str | None = None, timeframe: str | None = None,
@@ -604,13 +609,13 @@ def create_app(db_path: str | None = None) -> FastAPI:
     def api_lab_score(symbol: str, timeframe: str,
                       bars: int = lab_api.DEFAULT_SCORE_BARS,
                       conn: sqlite3.Connection = Depends(get_conn)):
-        return lab_api.score_payload(conn, symbol, timeframe, bars, _CACHE_DIR)
+        return lab_api.score_payload(conn, symbol, timeframe, bars, cache_dir)
 
     @app.get("/api/lab/regimes")
     def api_lab_regimes(symbol: str, timeframe: str, from_ms: int, to_ms: int,
                         conn: sqlite3.Connection = Depends(get_conn)):
         return lab_api.regimes_payload(conn, symbol, timeframe, from_ms, to_ms,
-                                       _CACHE_DIR)
+                                       cache_dir)
 
     # -------------------------------------------------------- storage & maintenance
     @app.get("/api/storage/overview")
