@@ -32,6 +32,15 @@ from ..store import candles_store
 from ..store.db import now_ms, one_account_login
 from .candle_fill import fill_range
 
+# How many windows ONE invocation may fetch from the bridge. `journal live` runs
+# this pipeline inside its serial cycle, so an unbounded backlog (first run after
+# coverage was introduced; a restart after days offline) would stall the forming
+# bar and the liveness beat for as long as the backlog takes. Five windows is
+# roughly twelve seconds against a ~2.5 s round trip — a knob to tune against
+# measured bridge latency, not a derived constant. `journal candles` passes
+# max_windows=None to prime a backlog in one deliberate, foreground run.
+_MAX_FETCH_WINDOWS = 5
+
 
 @dataclass(frozen=True)
 class CandlesReport:
@@ -40,12 +49,21 @@ class CandlesReport:
     trades_skipped_open: int = 0    # open/partially_open -- no close_time yet
     bars_new: int = 0               # bars actually inserted (post PK-dedupe)
     windows_fetched: int = 0        # windows that hit the bridge this run
+    windows_pending: int = 0        # windows left untouched because the cap closed
     symbols: list[str] = field(default_factory=list)
 
 
-def sync_candles(client: MT5Client, conn: sqlite3.Connection) -> CandlesReport:
+def sync_candles(
+    client: MT5Client,
+    conn: sqlite3.Connection,
+    *,
+    max_windows: int | None = _MAX_FETCH_WINDOWS,
+) -> CandlesReport:
     """Fetch and store candles for every closed trade's render window. Idempotent
-    and additive: re-running only inserts bars not already present. One commit."""
+    and additive: coverage is consulted first, so a window already stored costs no
+    bridge call. Newest close first, and at most `max_windows` windows are fetched
+    per invocation (`None` = no cap) — the rest are reported as
+    `windows_pending` and picked up next run."""
     login = one_account_login(conn)
 
     (total_trades,) = conn.execute(
@@ -61,6 +79,7 @@ def sync_candles(client: MT5Client, conn: sqlite3.Connection) -> CandlesReport:
     trades_seen = 0
     bars_new = 0
     windows_fetched = 0
+    windows_pending = 0
     symbols_touched: set[str] = set()
     # A window runs to close + PAD_BARS, so a trade that closed moments ago has a
     # window reaching into the future: the bridge answers with bars only up to
@@ -72,21 +91,28 @@ def sync_candles(client: MT5Client, conn: sqlite3.Connection) -> CandlesReport:
     for r in rows:
         tf = choose_timeframe(r["duration_s"])
         from_msc, to_msc = window_for(r["open_time_msc"], r["close_time_msc"], tf)
-        trades_seen += 1
-        symbols_touched.add(r["symbol"])
         # Coverage decides whether this window costs a bridge round trip at all.
         # This USED to fetch unconditionally: 123 closed trades on this account
         # meant 123 round trips on every single position close, ~5 minutes, and
         # `journal live` is one serial loop — the forming bar, the liveness beat,
         # and any queued order all sat behind it.
         covered = candles_store.read_coverage(conn, r["symbol"], tf)
-        if not candles_store.missing_ranges(covered, (from_msc, to_msc)):
+        needs_fetch = bool(candles_store.missing_ranges(covered, (from_msc, to_msc)))
+        if needs_fetch and max_windows is not None and windows_fetched >= max_windows:
+            # Deferred, not skipped: the next invocation picks it up. Counted so
+            # the caller can say a backlog remains instead of looking complete.
+            windows_pending += 1
             continue
-        # fill_range re-reads coverage internally. That duplicate SELECT is the
-        # price of keeping its signature honest, and it is cheap next to the
-        # network call it replaces.
-        bars_new += fill_range(client, conn, r["symbol"], tf, from_msc, to_msc, now)
-        windows_fetched += 1
+        trades_seen += 1
+        symbols_touched.add(r["symbol"])
+        if needs_fetch:
+            # fill_range re-reads coverage internally. That duplicate SELECT is
+            # the price of keeping its signature honest, and it is cheap next to
+            # the network call it replaces.
+            bars_new += fill_range(
+                client, conn, r["symbol"], tf, from_msc, to_msc, now
+            )
+            windows_fetched += 1
 
     conn.commit()
 
@@ -96,5 +122,6 @@ def sync_candles(client: MT5Client, conn: sqlite3.Connection) -> CandlesReport:
         trades_skipped_open=total_trades - len(rows),
         bars_new=bars_new,
         windows_fetched=windows_fetched,
+        windows_pending=windows_pending,
         symbols=sorted(symbols_touched),
     )

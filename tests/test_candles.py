@@ -340,3 +340,61 @@ def test_sync_candles_does_not_claim_coverage_past_the_bars_it_got(conn, tmp_pat
     ((_, hi),) = cs.read_coverage(conn, "XAUUSDc", "M1")
     assert hi == last_bar + 60_000 - 1
     assert hi < to_msc                              # the unfetched tail stays on offer
+
+
+def test_sync_candles_caps_fetches_and_serves_newest_first(conn, tmp_path):
+    """Backlog protection. With 12 uncovered windows and a cap of 5, one run may
+    hit the bridge 5 times and no more — a restart after `journal live` was down
+    for days must not turn a position close into a multi-minute stall. The 5 it
+    picks are the most recent closes, so the trade that just closed always gets
+    its candles (and therefore its MAE/MFE) in the same run."""
+    from journal.ingest import candles as candles_mod
+
+    base = 1_700_000_000_000
+    anchors = {}
+    for i in range(12):
+        open_msc = base + i * 86_400_000          # one trade per day, no overlap
+        _insert_trade(conn, position_id=600 + i, open_msc=open_msc,
+                      close_msc=open_msc + 373_000, duration_s=373,
+                      symbol=f"T{i:02d}c")
+        anchors[f"T{i:02d}c:M1"] = open_msc
+    fx = tmp_path / "fixtures"
+    _write_rates_multi(fx, anchors)
+    client = CountingClient(fixtures_dir=fx)
+
+    r = sync_candles(client, conn, max_windows=5)
+
+    assert r.windows_fetched == 5
+    assert len(client.fetches) == 5
+    assert r.windows_pending == 7
+    # newest close first: T11..T07
+    assert sorted(sym for sym, _ in client.fetches) == [f"T{i:02d}c" for i in range(7, 12)]
+    assert candles_mod._MAX_FETCH_WINDOWS == 5      # the default the live loop uses
+
+
+def test_sync_candles_backlog_drains_without_refetching(conn, tmp_path):
+    """Repeated capped runs finish the backlog, and no window is ever fetched
+    twice. 12 windows at a cap of 5 = 3 runs, 12 fetches total."""
+    base = 1_700_000_000_000
+    anchors = {}
+    for i in range(12):
+        open_msc = base + i * 86_400_000
+        _insert_trade(conn, position_id=700 + i, open_msc=open_msc,
+                      close_msc=open_msc + 373_000, duration_s=373,
+                      symbol=f"U{i:02d}c")
+        anchors[f"U{i:02d}c:M1"] = open_msc
+    fx = tmp_path / "fixtures"
+    _write_rates_multi(fx, anchors)
+    client = CountingClient(fixtures_dir=fx)
+
+    runs = 0
+    while True:
+        r = sync_candles(client, conn, max_windows=5)
+        runs += 1
+        if r.windows_pending == 0 and r.windows_fetched == 0:
+            break
+        assert runs < 10, "backlog is not draining — a window is being re-offered"
+
+    assert runs == 4                      # 5 + 5 + 2 fetched, then one clean pass
+    assert len(client.fetches) == 12      # every window fetched exactly once
+    assert len(set(client.fetches)) == 12
