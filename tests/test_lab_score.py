@@ -3,6 +3,8 @@ artifact, not enough bars — because /live renders them next to order buttons
 and must never show a stale or invented number."""
 from __future__ import annotations
 
+import json
+
 import numpy as np
 import pytest
 
@@ -88,3 +90,41 @@ def test_too_few_bars_to_compute_features_is_a_status(trained):
     report = score_bars(conn, "XAUUSDc", "M1", bars[:5], cache)
     assert report.status == "no_bars"
     assert report.bars == []
+
+
+def test_stale_feature_schema_is_a_status_not_an_exception(trained):
+    """A model trained on a feature `build_features` no longer produces (or
+    that `usable_columns` dropped this run) must not raise a bare KeyError
+    out of `dropna`/`_matrix` — it needs its own status, distinct from
+    no_bars, so /live can prompt a retrain rather than a data fill."""
+    conn, bars, cache = trained
+    row = conn.execute(
+        "SELECT id, config_json FROM lab_models WHERE stage = 'regime' AND active = 1"
+    ).fetchone()
+    config = json.loads(row["config_json"])
+    config["features"] = [*config["features"], "no_longer_computed"]
+    conn.execute("UPDATE lab_models SET config_json = ? WHERE id = ?",
+                (json.dumps(config), row["id"]))
+    conn.commit()
+
+    report = score_bars(conn, "XAUUSDc", "M1", bars[-200:], cache)
+    assert report.status == "stale_features"
+    assert report.bars == []
+
+
+def test_expectancy_ships_with_its_n_and_is_suppressed_when_thin(trained):
+    conn, bars, cache = trained
+    row = conn.execute(
+        """SELECT id, metrics_json FROM lab_models
+            WHERE stage = 'timing' AND regime IS NULL AND active = 1"""
+    ).fetchone()
+    metrics = json.loads(row["metrics_json"])
+    metrics["n_taken"] = 5  # below evaluate.MIN_BUCKET_N (20)
+    conn.execute("UPDATE lab_models SET metrics_json = ? WHERE id = ?",
+                (json.dumps(metrics), row["id"]))
+    conn.commit()
+
+    report = score_bars(conn, "XAUUSDc", "M1", bars[-200:], cache)
+    assert report.status == "ok"
+    assert report.expectancy_n == 5
+    assert report.expectancy_r is None

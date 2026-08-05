@@ -22,6 +22,7 @@ import pandas as pd
 
 from ..adapter.base import Candle
 from ..store.db import now_ms
+from .evaluate import suppressed
 from .features import bars_to_frame, build_features
 from .labels import REGIMES
 from .store import ArtifactMissing, load_active
@@ -44,14 +45,16 @@ class ScoreReport:
     bars: list[BarScore]
     model_age_ms: int | None
     expectancy_r: float | None
+    expectancy_n: int | None
     pooled: bool
     status: str                 # ok | no_model | artifact_missing | no_bars
+                                 # | stale_features
 
 
 def score_bars(conn: sqlite3.Connection, symbol: str, timeframe: str,
                bars: list[Candle], cache_dir: Path) -> ScoreReport:
     def _empty(status: str) -> ScoreReport:
-        return ScoreReport(symbol, timeframe, [], None, None, False, status)
+        return ScoreReport(symbol, timeframe, [], None, None, None, False, status)
 
     try:
         loaded = load_active(conn, symbol, timeframe, "regime", None, cache_dir)
@@ -67,6 +70,8 @@ def score_bars(conn: sqlite3.Connection, symbol: str, timeframe: str,
     df = build_features(bars_to_frame(bars))
     if df.empty:
         return _empty("no_bars")
+    if _missing_price_features(df, regime_features):
+        return _empty("stale_features")
     usable = df.dropna(subset=price_features)
     if usable.empty:
         return _empty("no_bars")
@@ -85,6 +90,9 @@ def score_bars(conn: sqlite3.Connection, symbol: str, timeframe: str,
         return _empty("artifact_missing")
     if not timing:
         return _empty("no_model")
+    if any(_missing_price_features(usable, row["config"]["features"])
+           for row, _ in timing.values()):
+        return _empty("stale_features")
 
     pooled = None in timing
     long_arr = _timing_proba(timing, predicted, usable, "long", pooled)
@@ -115,12 +123,33 @@ def score_bars(conn: sqlite3.Connection, symbol: str, timeframe: str,
         )
         for i, t in enumerate(usable.index)
     ]
+    # CLAUDE.md §8: expectancy_r ships with its n and is suppressed below
+    # MIN_BUCKET_N — a thin-sample expectancy next to an order button on
+    # /live is exactly the "noise with a decimal point" the rule guards
+    # against. `n_taken` (not `n`) is the right count: it's the number of
+    # rows the model would actually have entered, which is what
+    # expectancy_r itself was averaged over.
+    expectancy_n = chosen_row["metrics"].get("n_taken")
+    expectancy_r = suppressed(
+        chosen_row["metrics"].get("expectancy_r"), expectancy_n or 0
+    )
     return ScoreReport(
         symbol=symbol, timeframe=timeframe, bars=scored,
         model_age_ms=model_age_ms,
-        expectancy_r=chosen_row["metrics"].get("expectancy_r"),  # out-of-sample
+        expectancy_r=expectancy_r,  # out-of-sample, suppressed if thin
+        expectancy_n=expectancy_n,
         pooled=pooled, status="ok",
     )
+
+
+def _missing_price_features(df: pd.DataFrame, features: list[str]) -> set[str]:
+    """Which of a model's recorded feature columns (excluding the synthetic
+    side_code column, which is never a df column — `_matrix` builds it) are
+    absent from `df`. Non-empty means the model was fit on a feature schema
+    this data no longer produces: `features.py` changed, or `usable_columns`
+    dropped this column for this run. That is a retrain signal, not a bug to
+    crash on."""
+    return {f for f in features if f != SIDE_CODE_COLUMN and f not in df.columns}
 
 
 def _matrix(df: pd.DataFrame, features: list[str], side: str | None) -> np.ndarray:
