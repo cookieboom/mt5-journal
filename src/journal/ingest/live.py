@@ -193,7 +193,16 @@ def _run_ingest_pipeline(client: MT5Client, conn: sqlite3.Connection) -> None:
     from ..domain.reconstruct import rebuild as run_rebuild
     from ..ingest import candles
 
-    run_sync(client, conn)
+    t0 = time.monotonic()
+    r = run_sync(client, conn)
+    # Logged because the last time this pipeline froze for ~4 minutes, the only way
+    # to find out which stage owned the time was reconstructing it from row
+    # timestamps afterwards. `history_from_msc` is 0 on a full pull — seeing that
+    # here means the watermark window fell back, which is itself the answer.
+    log.info(
+        "live: deals sync %.1fs — %d new / %d deals seen, history from %d",
+        time.monotonic() - t0, r.deals_new, r.deals_seen, r.history_from_msc,
+    )
     run_rebuild(conn)
     report = candles.sync_candles(client, conn)
     if report.windows_pending:

@@ -22,6 +22,7 @@ from journal.adapter.base import Position, TradeResult, TradeRetcode
 from journal.adapter.fake import FakeMT5Client
 from journal.execute import claim_next, enqueue, get_command
 from journal.ingest.candles import CandlesReport
+from journal.ingest.deals import SyncReport
 from journal.ingest.live import live_cycle, live_loop
 from journal.store.db import connect
 
@@ -111,7 +112,10 @@ def _spy_pipeline(monkeypatch):
     """Record the pipeline order without touching real ingest. Returns the list
     the four stages append their names to as they run."""
     calls: list[str] = []
-    monkeypatch.setattr("journal.ingest.deals.sync", lambda client, conn: calls.append("sync"))
+    monkeypatch.setattr(
+        "journal.ingest.deals.sync",
+        lambda client, conn: (calls.append("sync"), SyncReport())[1],
+    )
     monkeypatch.setattr("journal.domain.reconstruct.rebuild", lambda conn: calls.append("rebuild"))
     monkeypatch.setattr(
         "journal.ingest.candles.sync_candles",
@@ -521,6 +525,7 @@ def test_beat_refreshed_after_the_ingest_pipeline_runs(conn, monkeypatch):
         # Runs mid-ingest, AFTER the step-4 beat: captures what the beacon says
         # while ingest is still running.
         captured["mid_ingest_beat"] = ls.read_heartbeat(conn)
+        return SyncReport()
 
     monkeypatch.setattr("journal.ingest.deals.sync", spy_sync)
     monkeypatch.setattr("journal.domain.reconstruct.rebuild", lambda conn: None)

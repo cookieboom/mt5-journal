@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import time
+from datetime import datetime, timezone
 
 import pytest
 
@@ -53,6 +54,59 @@ class TickClient(FakeMT5Client):
         if self._tick_time is None:
             return None
         return Tick(time=self._tick_time)
+
+
+class WindowSpyClient(FakeMT5Client):
+    """Records the `date_from` each history call was handed. The fake ignores the
+    window and always returns the full fixtures, so the assertions are about what
+    `sync` ASKED for, not what came back."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.deal_froms: list = []
+        self.order_froms: list = []
+
+    def history_deals_get(self, date_from=None, date_to=None):
+        self.deal_froms.append(date_from)
+        return super().history_deals_get(date_from, date_to)
+
+    def history_orders_get(self, date_from=None, date_to=None):
+        self.order_froms.append(date_from)
+        return super().history_orders_get(date_from, date_to)
+
+
+class TxSpyClient(FakeMT5Client):
+    """Records, for every bridge call, whether a write transaction was open on
+    `conn` at that moment. SQLite has ONE writer slot; a bridge call made while it
+    is held starves every other process past its busy_timeout."""
+
+    def __init__(self, conn) -> None:
+        super().__init__()
+        self._conn = conn
+        self.calls: list[tuple[str, bool]] = []
+
+    def _note(self, name: str) -> None:
+        self.calls.append((name, self._conn.in_transaction))
+
+    def account_info(self):
+        self._note("account_info")
+        return super().account_info()
+
+    def history_deals_get(self, date_from=None, date_to=None):
+        self._note("history_deals_get")
+        return super().history_deals_get(date_from, date_to)
+
+    def history_orders_get(self, date_from=None, date_to=None):
+        self._note("history_orders_get")
+        return super().history_orders_get(date_from, date_to)
+
+    def symbol_info(self, symbol):
+        self._note("symbol_info")
+        return super().symbol_info(symbol)
+
+    def symbol_info_tick(self, symbol):
+        self._note("symbol_info_tick")
+        return super().symbol_info_tick(symbol)
 
 
 @pytest.fixture
@@ -209,3 +263,73 @@ def test_offset_survives_sync_without_tick(conn):
         "SELECT server_utc_offset_s FROM sync_state WHERE stream = 'deals'"
     ).fetchone()[0]
     assert after == 0  # COALESCE kept the measured 0, did not overwrite with NULL
+
+
+# --- two-phase: never hold the SQLite writer slot across a bridge call ---------
+
+
+def test_sync_never_calls_the_bridge_while_holding_the_write_lock(conn):
+    # The measured cause of the ~4-minute on-close ingest freeze: `sync` interleaved
+    # bridge fetches with writes, so SQLite's single writer slot stayed held across
+    # full-history round-trips and `journal serve` (a separate process) blocked on
+    # every INSERT for the whole window. Same failure class already fixed in
+    # `candle_fill.fill_range`. Fetch first, write second.
+    c = TxSpyClient(conn)
+    sync(c, conn)
+    assert len(c.calls) >= 5, "spy saw no bridge traffic — test is vacuous"
+    assert [name for name, in_tx in c.calls if in_tx] == []
+
+
+# --- windowed history: stop re-pulling from 2000 on every sync ----------------
+
+
+def _epoch_from():
+    from journal.ingest.deals import _EPOCH_FROM
+
+    return _EPOCH_FROM
+
+
+def test_first_sync_pulls_the_whole_history(conn):
+    c = WindowSpyClient()
+    sync(c, conn)
+    assert c.deal_froms == [_epoch_from()]
+    assert c.order_froms == [_epoch_from()]
+
+
+def test_second_sync_windows_back_from_the_watermark(conn):
+    from journal.ingest.deals import _LOOKBACK_MS
+
+    c = WindowSpyClient()
+    r = sync(c, conn)
+    sync(c, conn)
+
+    wm = min(r.deals_watermark_msc, r.orders_watermark_msc)
+    expected = datetime.fromtimestamp((wm - _LOOKBACK_MS) / 1000, tz=timezone.utc)
+    assert c.deal_froms[1] == expected
+    assert c.order_froms[1] == expected
+    # Still idempotent: the fixtures all fall inside the fake's (ignored) window.
+    assert _count(conn, "deals_raw") == 140
+
+
+def test_full_sync_pulls_from_epoch_again(conn):
+    c = WindowSpyClient()
+    sync(c, conn)
+    sync(c, conn, full=True)
+    assert c.deal_froms[1] == _epoch_from()
+
+
+def test_windowed_sync_does_not_flag_pre_window_deals_as_archived(conn, client):
+    # A windowed sync only ASKS for recent history, so deals older than the window
+    # are absent from the answer by construction — reporting them as archived would
+    # be a lie the size of the whole history. Scope the detector to the window.
+    sync(client, conn)
+    oldest = conn.execute(
+        "SELECT ticket FROM deals_raw ORDER BY time_msc ASC LIMIT 1"
+    ).fetchone()[0]
+
+    r = sync(DropDealClient(oldest), conn)
+    assert r.archived_tickets == []
+
+    # A full sync DOES ask for it, so its absence is real archiving (Trap 16).
+    r_full = sync(DropDealClient(oldest), conn, full=True)
+    assert r_full.archived_tickets == [oldest]

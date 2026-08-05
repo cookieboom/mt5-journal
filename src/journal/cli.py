@@ -128,6 +128,11 @@ def sync(db: str = typer.Option(_DEFAULT_DB, help="SQLite DB path.")) -> None:
     Append-only and idempotent — re-running only captures what is new. This is the
     archive the broker's own history is not (Trap 16): every unsynced day is a day
     something can vanish for good.
+
+    Pulls the FULL history from 2000, unlike the windowed sync inside
+    `journal live`: this is the manual, deliberate command, and a full pull is the
+    only way the archive detector can speak about the whole journal. It is also the
+    slow one (minutes on this bridge) — that is the trade.
     """
     from .adapter.live import LiveMT5Client
     from .ingest.deals import sync as run_sync
@@ -135,7 +140,7 @@ def sync(db: str = typer.Option(_DEFAULT_DB, help="SQLite DB path.")) -> None:
     client = LiveMT5Client()
     conn = connect(db)
     try:
-        r = run_sync(client, conn)
+        r = run_sync(client, conn, full=True)
     finally:
         conn.close()
 
@@ -565,8 +570,19 @@ def live(
     startup marks it failed and tells you to check MT5 by hand. Ctrl+C stops
     cleanly.
     """
+    import logging
+
     from .adapter.live import LiveMT5Client
     from .ingest.live import live_loop
+
+    # The package logs but nothing ever configured a handler, so every `log.info`
+    # in the ingest path went to /dev/null — the last ingest freeze had to be
+    # reconstructed from row timestamps after the fact. This is the only long-lived
+    # process, so it is the one that turns them on. Root logger, INFO, stderr.
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
 
     trading = not no_trading
 

@@ -1,9 +1,15 @@
 """Ingest raw deals/orders/specs and verify the balance invariant.
 
-`sync(client, conn)` pulls everything MT5 knows into the `_raw` tables and is the
+`sync(client, conn)` pulls MT5's history into the `_raw` tables and is the
 archival heart of the project: the broker deletes history (Trap 16), so once a
 deal lands here it must never leave. Writes are `INSERT OR IGNORE` — append-only,
 no UPDATE, no DELETE, ever.
+
+It asks the bridge only for the window since the last watermark; `full=True`
+(what `journal sync` uses) asks from 2000. Narrowing the window can never lose a
+stored deal — deals_raw is append-only, so the window decides only what is
+OFFERED — but it does bound what the archive detector can see, hence the split.
+Every bridge call happens before the write transaction opens; see `sync`.
 
 `verify(conn)` is pure SQL and READ-ONLY: it proves nothing was dropped or
 double-counted via the §6 balance invariant, against the balance SNAPSHOT `sync`
@@ -26,10 +32,18 @@ from ..adapter.base import Account, DealType, MT5Client
 from ..domain.symbols import to_base
 from ..store.db import now_ms, one_account_login
 
-# First backfill takes everything (Trap 8: use datetime(2000,1,1) as `from`). This
-# broker has ~140 deals total, so a full pull every sync is cheap and self-heals
-# any window gap; incremental windowing is a later optimisation, not needed here.
+# First backfill takes everything (Trap 8: use datetime(2000,1,1) as `from`), and
+# `sync(full=True)` goes back here on demand.
 _EPOCH_FROM = datetime(2000, 1, 1, tzinfo=timezone.utc)
+
+# Every later sync asks only for [watermark - _LOOKBACK_MS, now]. A full pull from
+# 2000 was measured at ~3m45s per run on this bridge — the dominant cost of the
+# on-close ingest freeze, and paid again on every position close. The lookback is
+# deliberately generous (a week, not a minute): deals settle late, swaps and
+# corrections land after the fact, and re-offering a deal we already hold costs
+# exactly one ignored INSERT. deals_raw is append-only, so a window only decides
+# what is OFFERED — nothing already stored can be lost by narrowing it.
+_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000
 
 # The invariant's slack. NOT a gap-swallowing tolerance (that is exactly the
 # anti-pattern §6 forbids) — just float-comparison noise. Real discrepancies get a
@@ -55,6 +69,10 @@ class SyncReport:
     offset_measured: bool = False
     deals_watermark_msc: int | None = None
     orders_watermark_msc: int | None = None
+    # Start of the history window this sync actually asked the bridge for. 0 on a
+    # full pull. Reported because "why did that sync take four minutes" is
+    # answerable from it and from nothing else.
+    history_from_msc: int = 0
     # Tickets this journal holds in deals_raw that the broker no longer returns —
     # the real archive detector (Trap 16 / §6). Non-empty is NOT an error: it is
     # proof the journal is the only surviving copy of those deals. The balance
@@ -90,41 +108,66 @@ class VerifyResult:
 # --------------------------------------------------------------------- sync
 
 
-def sync(client: MT5Client, conn: sqlite3.Connection) -> SyncReport:
+def sync(
+    client: MT5Client, conn: sqlite3.Connection, *, full: bool = False
+) -> SyncReport:
     """Pull account/deals/orders/specs into the store. Idempotent: re-running only
-    inserts deals/orders not already captured. One commit at the end."""
+    inserts deals/orders not already captured. One commit at the end.
+
+    Two phases, on purpose — the same shape, and the same reason, as
+    `candle_fill.fill_range`: every bridge call happens FIRST, with no write
+    transaction open, and only then does one short transaction do the local
+    writes. The interleaved version held SQLite's single WAL writer slot across
+    five-plus bridge round-trips, so a `journal serve` in another process blocked
+    on every INSERT for the whole ~4-minute pull. Never hold the write lock across
+    a bridge call. Phase 1 may only read.
+
+    `full=True` asks the bridge for all history from 2000 — the manual
+    `journal sync`, and the only mode in which the archive detector can see the
+    whole journal. The default asks only for the window since the last watermark,
+    which is what the on-close pipeline in `journal live` uses.
+    """
     ts = now_ms()
 
+    # ------------------------------------------------------------------ phase 1
+    # Bridge and read-only SQL. Nothing here may write.
     acct = client.account_info()
     if acct is None:
         raise RuntimeError(
             "account_info() returned None — bridge up but not logged in?"
         )
     login = acct.login
-    _upsert_account(conn, acct, ts)
 
+    from_dt, from_ms = (_EPOCH_FROM, 0) if full else _history_window(conn, login)
     now_utc = datetime.now(timezone.utc)
-    deals = client.history_deals_get(_EPOCH_FROM, now_utc)
-    orders = client.history_orders_get(_EPOCH_FROM, now_utc)
-
-    deals_new, deals_wm = _ingest_deals(conn, deals, login, ts)
-    orders_new, orders_wm = _ingest_orders(conn, orders, login, ts)
+    deals = client.history_deals_get(from_dt, now_utc)
+    orders = client.history_orders_get(from_dt, now_utc)
 
     # Spec every symbol that shows up on a trade deal (non-trade deals carry '').
-    # BTCUSDc/EURUSDc included — gold's specs do NOT transfer (trap 11/14).
+    # BTCUSDc/EURUSDc included — gold's specs do NOT transfer (trap 11/14). A
+    # window with no deals in it re-specs nothing: specs already stored stay, and
+    # they only go stale where trading is actually happening.
     symbols = sorted({d.symbol for d in deals if d.symbol})
-    specced = _ingest_symbol_specs(conn, client, symbols, ts)
+    specs = _fetch_symbol_specs(client, symbols)
 
     offset_s = _measure_offset(client)  # Trap 7: measured, never hardcoded
-    _upsert_sync_state(conn, login, "deals", deals_wm, offset_s, ts)
-    _upsert_sync_state(conn, login, "orders", orders_wm, offset_s, ts)
 
     # Archive detector (Trap 16): tickets we HOLD minus tickets the broker RETURNED.
-    # Read held AFTER ingest so this sync's own deals are on both sides and cancel;
-    # what remains is deals from earlier syncs the broker has since deleted. The
-    # balance invariant is blind to this — archiving moves no money — so it lives
-    # here, not in verify. Empty today; a tripwire for later.
-    archived = _detect_archived(conn, login, deals)
+    # Safe to read BEFORE ingest: deals_raw is append-only, so held-after is exactly
+    # held-before ∪ returned, and subtracting `returned` gives the same survivors
+    # either way — this run's own deals cancel out regardless. What remains is deals
+    # from earlier syncs the broker has since deleted. The balance invariant is blind
+    # to this — archiving moves no money — so it lives here, not in verify.
+    archived = _detect_archived(conn, login, deals, from_ms)
+
+    # ------------------------------------------------------------------ phase 2
+    # Local writes only, one short transaction.
+    _upsert_account(conn, acct, ts)
+    deals_new, deals_wm = _ingest_deals(conn, deals, login, ts)
+    orders_new, orders_wm = _ingest_orders(conn, orders, login, ts)
+    specced = _write_symbol_specs(conn, specs, ts)
+    _upsert_sync_state(conn, login, "deals", deals_wm, offset_s, ts)
+    _upsert_sync_state(conn, login, "orders", orders_wm, offset_s, ts)
 
     conn.commit()
 
@@ -141,18 +184,51 @@ def sync(client: MT5Client, conn: sqlite3.Connection) -> SyncReport:
         offset_measured=offset_s is not None,
         deals_watermark_msc=deals_wm,
         orders_watermark_msc=orders_wm,
+        history_from_msc=from_ms,
         archived_tickets=archived,
     )
 
 
-def _detect_archived(conn, login, returned_deals) -> list[int]:
-    """{ticket held in deals_raw} - {ticket returned this sync}. Sorted for a
-    stable report. Must run after `_ingest_deals` so freshly-returned deals are in
-    both sets and cancel — the survivors are deals the broker deleted (Trap 16)."""
+def _history_window(conn, login) -> tuple[datetime, int]:
+    """(date_from for the bridge, its epoch-ms twin) — the last watermark minus
+    `_LOOKBACK_MS`. Falls back to the full history whenever either stream has no
+    usable watermark yet, so a first sync, a restored backup, and a half-written
+    `sync_state` all self-heal into a complete pull rather than a silent hole.
+
+    Anchored to the WATERMARK, never to `now`: a week of `journal live` downtime
+    widens the window by a week instead of skipping it. That is the whole reason
+    the anchor is not `now - lookback`."""
+    marks = {
+        r[0]: r[1]
+        for r in conn.execute(
+            "SELECT stream, last_synced_msc FROM sync_state "
+            "WHERE account_login = ? AND stream IN ('deals', 'orders')",
+            (login,),
+        )
+    }
+    got = [marks.get("deals"), marks.get("orders")]
+    if any(m is None or m <= 0 for m in got):
+        return _EPOCH_FROM, 0
+    from_ms = min(got) - _LOOKBACK_MS
+    return datetime.fromtimestamp(from_ms / 1000, tz=timezone.utc), from_ms
+
+
+def _detect_archived(conn, login, returned_deals, from_ms: int) -> list[int]:
+    """{ticket held in deals_raw, inside the window} - {ticket returned this sync}.
+    Sorted for a stable report.
+
+    The window scoping is not an optimisation: a windowed sync never ASKS for older
+    deals, so their absence from the answer says nothing at all. Comparing against
+    the whole journal would report the entire pre-window history as archived on
+    every live sync. Only `sync(full=True)` sees everything, and only there can the
+    detector speak about everything. Deals with a NULL `time_msc` sort as 0, so they
+    are visible on a full pull (from_ms=0) and never flagged by a windowed one."""
     held = {
         r[0]
         for r in conn.execute(
-            "SELECT ticket FROM deals_raw WHERE account_login = ?", (login,)
+            "SELECT ticket FROM deals_raw "
+            "WHERE account_login = ? AND COALESCE(time_msc, 0) >= ?",
+            (login, from_ms),
         )
     }
     returned = {d.ticket for d in returned_deals if d.ticket is not None}
@@ -247,14 +323,22 @@ def _ingest_orders(conn, orders, login, ts) -> tuple[int, int | None]:
     return new, watermark
 
 
-def _ingest_symbol_specs(conn, client: MT5Client, symbols, ts) -> list[str]:
+def _fetch_symbol_specs(client: MT5Client, symbols) -> list[tuple]:
+    """Phase 1 half of spec ingest: bridge calls only, no writes. Symbols the
+    bridge cannot describe are dropped here rather than stored half-known."""
+    out = []
+    for sym in symbols:
+        info = client.symbol_info(sym)
+        if info is not None:
+            out.append((sym, info))
+    return out
+
+
+def _write_symbol_specs(conn, specs, ts) -> list[str]:
     """Specs are refetched (brokers change them), so this upserts rather than
     ignores. `tick_value` is in ACCOUNT currency, not currency_profit (trap 14)."""
     specced: list[str] = []
-    for sym in symbols:
-        info = client.symbol_info(sym)
-        if info is None:
-            continue
+    for sym, info in specs:
         conn.execute(
             """
             INSERT INTO symbol_specs
@@ -304,7 +388,16 @@ def _upsert_sync_state(conn, login, stream, watermark, offset_s, ts) -> None:
             (account_login, stream, last_synced_msc, server_utc_offset_s, measured_at)
         VALUES (?, ?, ?, ?, ?)
         ON CONFLICT(account_login, stream) DO UPDATE SET
-            last_synced_msc     = excluded.last_synced_msc,
+            -- Monotonic, never backwards. A windowed sync that happens to return
+            -- nothing carries watermark=NULL; letting that overwrite a real mark
+            -- would make the NEXT sync fall back to the full 2000-onwards pull —
+            -- the exact cost this window exists to avoid. MAX() is NULL if either
+            -- side is, hence the COALESCE chain: max when both are known, the
+            -- known one when only one is, NULL only when neither ever was.
+            last_synced_msc     = COALESCE(
+                                      MAX(excluded.last_synced_msc, sync_state.last_synced_msc),
+                                      excluded.last_synced_msc,
+                                      sync_state.last_synced_msc),
             -- Trap 6 (NULL != known): a sync with no fresh tick measures offset=NULL
             -- (market closed / Sunday / fake). COALESCE keeps the last real reading
             -- instead of erasing it. `0` is a measured value, not NULL — preserved.
