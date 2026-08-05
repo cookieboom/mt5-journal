@@ -81,7 +81,7 @@ def test_migration_009_allows_an_open_command(tmp_path):
     raw.close()
 
     conn = connect(db)
-    assert current_version(conn) == SCHEMA_VERSION == 9
+    assert current_version(conn) == SCHEMA_VERSION == 10
 
     # (a) the pre-existing row survived, intent columns untouched
     old = conn.execute("SELECT * FROM trade_commands WHERE id = 1").fetchone()

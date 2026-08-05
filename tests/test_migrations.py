@@ -68,9 +68,9 @@ def _make_v1(path) -> None:
 # ------------------------------------------------------------------ version
 
 
-def test_schema_version_is_9():
-    """Risk-based auto lot sizing adds the 'open' trade_commands kind (migration 009)."""
-    assert SCHEMA_VERSION == 9
+def test_schema_version_is_10():
+    """lab_models — trained regime/timing models (migration 010)."""
+    assert SCHEMA_VERSION == 10
 
 
 def test_fresh_db_has_training_tables(tmp_path):
@@ -184,7 +184,7 @@ def test_migrate_reports_what_it_applied(tmp_path):
     conn.row_factory = sqlite3.Row
     try:
         applied = migrate(conn)
-        assert applied == [2, 3, 4, 5, 6, 7, 8, 9]
+        assert applied == [2, 3, 4, 5, 6, 7, 8, 9, 10]
     finally:
         conn.close()
 
@@ -347,6 +347,27 @@ def test_candle_requests_defaults_to_pending(tmp_path):
         assert conn.execute("SELECT status FROM candle_requests").fetchone()[0] == "pending"
     finally:
         conn.close()
+
+
+def test_lab_models_table_exists_on_both_paths(tmp_path):
+    """A fresh DB (via schema.sql) and a migrated older DB (via migration 010)
+    must both end up with lab_models and its partial unique index — the same
+    equivalence guarantee as test_migrated_db_matches_a_fresh_db, scoped to the
+    new table."""
+    old = tmp_path / "old.db"
+    _make_v1(old)
+    migrated = connect(old)
+    fresh = connect(tmp_path / "fresh.db")
+    try:
+        for conn in (migrated, fresh):
+            names = {r[0] for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type IN ('table','index')"
+            )}
+            assert "lab_models" in names
+            assert "lab_models_active" in names
+    finally:
+        migrated.close()
+        fresh.close()
 
 
 def test_migration_files_are_numbered_contiguously_from_2():
