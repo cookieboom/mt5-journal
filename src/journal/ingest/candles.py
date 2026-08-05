@@ -4,8 +4,9 @@ Mirrors `ingest/deals.py`: takes an `MT5Client` by parameter, never constructs
 `LiveMT5Client` (CLAUDE.md rule 1), so `sync_candles` runs under `FakeMT5Client`
 with no bridge. For each CLOSED trade, fetches the render window
 (`render.chart.choose_timeframe` / `window_for`) at the trade's own chosen
-timeframe and appends new bars via `candles_store.insert_candle` -- deduped on the
-`candles` primary key `(symbol, timeframe, time_msc)`, safe to re-run.
+timeframe via `candle_fill.fill_range`, which consults `candle_coverage` first
+and asks the bridge only for the ranges not already stored. A trade whose
+window is fully covered costs one SELECT and no bridge call at all.
 Overlapping windows from nearby trades on the same symbol just collide
 harmlessly on that key; central storage means a bar fetched for one trade is
 free for its neighbours (schema.sql: "Dedupes across trades on the same
@@ -24,26 +25,22 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 
 from ..adapter.base import MT5Client
 from ..render.chart import choose_timeframe, window_for
 from ..store import candles_store
 from ..store.db import now_ms, one_account_login
+from .candle_fill import fill_range
 
 
 @dataclass(frozen=True)
 class CandlesReport:
     account_login: int | None = None
-    trades_seen: int = 0            # closed trades a window was fetched for
+    trades_seen: int = 0            # closed trades processed this run
     trades_skipped_open: int = 0    # open/partially_open -- no close_time yet
-    bars_seen: int = 0              # bars returned by the client, across all fetches
     bars_new: int = 0               # bars actually inserted (post PK-dedupe)
+    windows_fetched: int = 0        # windows that hit the bridge this run
     symbols: list[str] = field(default_factory=list)
-
-
-def _ms_to_dt(msc: int) -> datetime:
-    return datetime.fromtimestamp(msc / 1000, tz=timezone.utc)
 
 
 def sync_candles(client: MT5Client, conn: sqlite3.Connection) -> CandlesReport:
@@ -56,12 +53,14 @@ def sync_candles(client: MT5Client, conn: sqlite3.Connection) -> CandlesReport:
     ).fetchone()
     rows = conn.execute(
         "SELECT symbol, open_time_msc, close_time_msc, duration_s FROM trades "
-        "WHERE account_login = ? AND status = 'closed'",
+        "WHERE account_login = ? AND status = 'closed' "
+        "ORDER BY close_time_msc DESC",
         (login,),
     ).fetchall()
 
-    bars_seen = 0
+    trades_seen = 0
     bars_new = 0
+    windows_fetched = 0
     symbols_touched: set[str] = set()
     # A window runs to close + PAD_BARS, so a trade that closed moments ago has a
     # window reaching into the future: the bridge answers with bars only up to
@@ -73,25 +72,29 @@ def sync_candles(client: MT5Client, conn: sqlite3.Connection) -> CandlesReport:
     for r in rows:
         tf = choose_timeframe(r["duration_s"])
         from_msc, to_msc = window_for(r["open_time_msc"], r["close_time_msc"], tf)
-        candles = client.copy_rates_range(
-            r["symbol"], tf, _ms_to_dt(from_msc), _ms_to_dt(to_msc)
-        )
+        trades_seen += 1
         symbols_touched.add(r["symbol"])
-        stored: list[int] = []
-        for c in candles:
-            bars_seen += 1
-            bars_new += candles_store.insert_candle(conn, r["symbol"], tf, c)
-            if c.time_msc is not None:
-                stored.append(c.time_msc)
-        candles_store.record_fetch(conn, r["symbol"], tf, from_msc, to_msc, stored, now)
+        # Coverage decides whether this window costs a bridge round trip at all.
+        # This USED to fetch unconditionally: 123 closed trades on this account
+        # meant 123 round trips on every single position close, ~5 minutes, and
+        # `journal live` is one serial loop — the forming bar, the liveness beat,
+        # and any queued order all sat behind it.
+        covered = candles_store.read_coverage(conn, r["symbol"], tf)
+        if not candles_store.missing_ranges(covered, (from_msc, to_msc)):
+            continue
+        # fill_range re-reads coverage internally. That duplicate SELECT is the
+        # price of keeping its signature honest, and it is cheap next to the
+        # network call it replaces.
+        bars_new += fill_range(client, conn, r["symbol"], tf, from_msc, to_msc, now)
+        windows_fetched += 1
 
     conn.commit()
 
     return CandlesReport(
         account_login=login,
-        trades_seen=len(rows),
+        trades_seen=trades_seen,
         trades_skipped_open=total_trades - len(rows),
-        bars_seen=bars_seen,
         bars_new=bars_new,
+        windows_fetched=windows_fetched,
         symbols=sorted(symbols_touched),
     )

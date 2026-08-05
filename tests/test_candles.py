@@ -67,6 +67,42 @@ def _write_rates(fx_dir, key, open_msc, n_before=20, n_after=20, tf_seconds=60):
     (fx_dir / "rates.json").write_text(json.dumps({key: bars}))
 
 
+def _write_rates_multi(fx_dir, anchors, n_before=20, n_after=22, tf_seconds=60):
+    """One rates.json holding several `SYMBOL:TF` keys at once.
+
+    `anchors` maps a fixture key to the anchor ms the bars are centred on.
+    `n_after=22` is deliberate: for an M1 trade of 373 s the render window ends
+    at `open_msc + 1_273_000` (PAD_BARS=15), and the last bar written here opens
+    at `open_msc + 1_260_000`, so `record_fetch` claims the window to its very
+    end. A shorter tail leaves the window permanently unsealed under
+    FakeMT5Client, which ignores the requested date range.
+    """
+    fx_dir.mkdir(parents=True, exist_ok=True)
+    out = {}
+    for key, anchor_msc in anchors.items():
+        base_s = anchor_msc // 1000
+        out[key] = [
+            {"time": base_s + i * tf_seconds, "open": 4035.0, "high": 4035.2,
+             "low": 4034.8, "close": 4035.1, "tick_volume": 10, "spread": 1,
+             "real_volume": 0}
+            for i in range(-n_before, n_after)
+        ]
+    (fx_dir / "rates.json").write_text(json.dumps(out))
+
+
+class CountingClient(FakeMT5Client):
+    """FakeMT5Client that records every bridge fetch, so a test can assert that
+    an already-covered window costs ZERO round trips."""
+
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self.fetches: list[tuple[str, str]] = []
+
+    def copy_rates_range(self, symbol, timeframe, date_from, date_to):
+        self.fetches.append((symbol, timeframe))
+        return super().copy_rates_range(symbol, timeframe, date_from, date_to)
+
+
 # --------------------------------------------------------------- choose_timeframe
 
 
@@ -160,6 +196,30 @@ def test_sync_candles_skips_open_trades(conn, tmp_path):
     r = sync_candles(client, conn)
     assert r.trades_seen == 0
     assert r.trades_skipped_open == 1
+
+
+def test_sync_candles_refetches_nothing_once_covered(conn, tmp_path):
+    """The five-minute stall: sync_candles wrote coverage but never read it, so
+    every position close re-fetched all 123 closed-trade windows from the bridge.
+    Once a window is covered it must cost zero round trips."""
+    open_msc = 1_700_000_000_000
+    close_msc = open_msc + 373_000
+    _insert_trade(conn, position_id=555, open_msc=open_msc, close_msc=close_msc,
+                  duration_s=373)
+    fx = tmp_path / "fixtures"
+    _write_rates_multi(fx, {"XAUUSDc:M1": open_msc})
+    client = CountingClient(fixtures_dir=fx)
+
+    first = sync_candles(client, conn)
+    assert first.windows_fetched == 1
+    assert len(client.fetches) == 1
+
+    client.fetches.clear()
+    second = sync_candles(client, conn)
+    assert client.fetches == []          # the whole point
+    assert second.windows_fetched == 0
+    assert second.bars_new == 0
+    assert second.trades_seen == 1       # still processed, just for free
 
 
 # --------------------------------------------------- Trap 15 regression tripwire
