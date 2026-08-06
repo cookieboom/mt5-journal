@@ -262,3 +262,100 @@ export interface PlannedOrder {
   tp: number | null;
   direction: "buy" | "sell" | null;
 }
+
+// Lab: regime + entry-timing models (mirrors web/lab_api.py). Everything here
+// is candle-derived and reports its own out-of-sample score + age (CLAUDE.md
+// rule 9) — nothing in this feature sizes or places an order.
+export type LabStage = "regime" | "timing";
+export type LabKind = "logreg" | "lgbm";
+export type Regime = "trend_up" | "trend_down" | "range";
+
+export interface LabCalibrationBucket {
+  bucket: number;
+  predicted: number;
+  realised: number;
+  n: number;
+}
+
+// A timing-stage fold (and the aggregate across folds) carries every metric —
+// win_rate/expectancy_r/auc/baseline_expectancy_r/calibration are real
+// measurements for a binary "did TP hit first" classifier.
+export interface LabTimingFoldMetrics {
+  n: number;
+  n_taken: number;
+  win_rate: number | null;
+  expectancy_r: number | null;
+  auc: number | null;
+  baseline_expectancy_r: number | null;
+  calibration: LabCalibrationBucket[];
+}
+export interface LabTimingMetrics extends LabTimingFoldMetrics {
+  folds: LabTimingFoldMetrics[];
+}
+
+// A regime-stage fold has none of those four: the backend
+// (`lab_api._scrub_regime_metrics`) strips them because the 3-class classifier is scored
+// through the same binary helper fed a constant probability, which would
+// make auc always exactly 0.5 and expectancy_r always exactly 0.0. `win_rate`
+// is relabelled `accuracy` because that's what it actually measures here.
+// Omitting the fields (not typing them optional) is the point: it is a
+// compile error to read `.auc` off a regime model's metrics.
+export interface LabRegimeFoldMetrics {
+  n: number;
+  n_taken: number;
+  accuracy: number | null;
+  confusion: Record<Regime, Record<Regime, number>>;
+}
+export interface LabRegimeMetrics {
+  n: number;
+  n_taken: number;
+  accuracy: number | null;
+  folds: LabRegimeFoldMetrics[];
+}
+
+interface LabModelBase {
+  id: number;
+  created_ms: number;
+  symbol: string;
+  timeframe: string;
+  kind: LabKind;
+  pooled: boolean;
+  active: boolean;
+  n_rows: number;
+  train_from_ms: number;
+  train_to_ms: number;
+  config: Record<string, unknown>;
+}
+
+export type LabModel =
+  | (LabModelBase & { stage: "regime"; regime: null; metrics: LabRegimeMetrics })
+  | (LabModelBase & { stage: "timing"; regime: Regime | null; metrics: LabTimingMetrics });
+
+export interface LabBarScore {
+  time_msc: number;
+  regime: Regime;
+  regime_proba: Record<Regime, number>;
+  p_tp_long: number | null;
+  p_tp_short: number | null;
+}
+
+// Every failure a status, never a thrown HTTP error (lab/score.py's own
+// framing): "stale_features" means the model was fit on a feature schema
+// this data no longer has (retrain); "no_bars" means not enough candle data
+// (fill). Keep this a closed union — widening either to `string` loses the
+// distinction the UI exists to show.
+export type LabScoreStatus =
+  | "ok" | "no_model" | "artifact_missing" | "no_bars" | "stale_features";
+
+export interface LabScore {
+  symbol: string;
+  timeframe: string;
+  status: LabScoreStatus;
+  model_age_ms: number | null;
+  // Suppressed to null below n=20 (CLAUDE.md §8); expectancy_n is the raw
+  // count so the UI can render "n = 14, suppressed" instead of a bare dash.
+  expectancy_r: number | null;
+  expectancy_n: number | null;
+  pooled: boolean;
+  bars: LabBarScore[];
+}
