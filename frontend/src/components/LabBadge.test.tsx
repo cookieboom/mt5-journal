@@ -52,4 +52,28 @@ describe("LabBadge", () => {
     render(<LabBadge score={null} />);
     expect(screen.queryByText(/%/)).not.toBeInTheDocument();
   });
+
+  // Text-only assertions above would pass even if every status rendered as
+  // identical unstyled text — regression coverage for exactly that: the DOM
+  // must mark an ok reading, a stale one, and a degraded one as provably
+  // different, not merely say different words.
+  it("marks an ok reading, a stale reading, and a degraded reading with different DOM status markers", () => {
+    const { container: ok } = render(<LabBadge score={score()} />);
+    const { container: stale } = render(<LabBadge score={score({ model_age_ms: 40 * 86_400_000 })} />);
+    const { container: noModel } = render(<LabBadge score={score({ status: "no_model", bars: [] })} />);
+    const { container: loading } = render(<LabBadge score={null} />);
+
+    const statusOf = (c: HTMLElement) => c.querySelector("[data-status]")?.getAttribute("data-status");
+    expect(statusOf(ok)).toBe("ok");
+    expect(statusOf(stale)).toBe("stale");
+    expect(statusOf(noModel)).toBe("no_model");
+    expect(statusOf(loading)).toBe("loading");
+
+    // Distinct markers imply distinct class lists (the actual styling bug):
+    // an "ok" reading must not share its container class string with a
+    // degraded one.
+    const classesOf = (c: HTMLElement) => c.querySelector("[data-status]")?.className;
+    expect(classesOf(ok)).not.toBe(classesOf(noModel));
+    expect(classesOf(ok)).not.toBe(classesOf(stale));
+  });
 });
