@@ -656,6 +656,14 @@ const CandleChart = forwardRef<ChartHandle, {
 
   useImperativeHandle(ref, () => ({
     jumpToNow: () => chart.current?.timeScale().scrollToRealTime(),
+    // Reads chart.current at CALL time (not closure-capture time), so this
+    // stays correct across pan/zoom/resize without needing its own deps.
+    timeToX: (timeMsc: number) => {
+      const c = chart.current;
+      if (!c) return null;
+      const x = c.timeScale().timeToCoordinate((timeMsc / 1000) as UTCTimestamp);
+      return x === null ? null : (x as number);
+    },
   }));
 
   const theme = props.settings.theme === "light" ? LIGHT : DARK;

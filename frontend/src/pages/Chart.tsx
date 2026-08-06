@@ -29,7 +29,15 @@ import RiskSizePanel from "../components/RiskSizePanel";
 import { useChartData } from "../hooks/useChartData";
 import { PLANNED_ID } from "../lib/sltpDrag";
 
-export interface ChartHandle { jumpToNow: () => void }
+export interface ChartHandle {
+  jumpToNow: () => void;
+  // Epoch ms -> pixel x on the chart's own time scale, or null when the chart
+  // isn't mounted yet or the time falls outside the current coordinate space.
+  // Lets an external sibling overlay (Lab's RegimeOverlay/probability strip)
+  // project by TIME the same way CandleChart's own internal overlays do,
+  // without a second chart instance.
+  timeToX: (timeMsc: number) => number | null;
+}
 
 export default function Chart() {
   const [params, setParams] = useSearchParams();

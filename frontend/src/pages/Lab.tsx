@@ -1,17 +1,41 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import CandleChart from "../components/CandleChart";
 import LabMetrics from "../components/LabMetrics";
+import RegimeOverlay from "../components/RegimeOverlay";
+import { SYMBOLS, TIMEFRAMES as ALL_TIMEFRAMES, initialWindow, type Sym, type Timeframe } from "../lib/candles";
+import { DEFAULT_SETTINGS } from "../lib/chartPrefs";
 import {
   DEFAULT_TRAIN_FORM,
   LAB_FEATURES,
   activateModel,
   fetchModels,
+  fetchRegimes,
+  formatAge,
   trainModels,
   type TrainForm,
   type TrainResponse,
 } from "../lib/lab";
-import type { LabModel } from "../lib/types";
+import { toBands } from "../lib/regimeBands";
+import type { ChartHandle } from "./Chart";
+import type { LabModel, LabScore, LabScoreStatus } from "../lib/types";
+import { useChartData } from "../hooks/useChartData";
 
 const TIMEFRAMES = ["M1", "M5", "M15", "H1"];
+const CHART_HEIGHT = 360;
+const STRIP_HEIGHT = 32;
+
+// "stale_features"/"no_bars" must read as a distinct prompt (retrain vs.
+// fill), not interchangeable "something's wrong" text — CLAUDE.md rule 9 /
+// task brief. The other two are less common backend states, worded plainly.
+function scoreStatusText(status: LabScoreStatus): string {
+  switch (status) {
+    case "no_model": return "No model trained yet for this symbol/timeframe — train one above.";
+    case "artifact_missing": return "Model file missing on disk — train again to restore it.";
+    case "stale_features": return "RETRAIN — this model was fit on features the current data no longer has.";
+    case "no_bars": return "FILL — not enough candle data cached for this range.";
+    default: return "";
+  }
+}
 const fieldText = "bg-white/5 rounded px-2 py-1 text-ink w-full";
 const field = fieldText + " num";
 
@@ -42,6 +66,58 @@ export default function Lab() {
 
   useEffect(() => { void reload(); }, [reload]);
 
+  // The form's symbol field is free text (unlike the timeframe <select>, which
+  // only ever offers a Timeframe member); the chart below needs the narrower
+  // Sym/Timeframe types CandleChart is typed against. Falls back to null
+  // (chart section hidden) rather than casting a value the account has never
+  // traded.
+  const symbol: Sym | null = (SYMBOLS as string[]).includes(form.symbol) ? (form.symbol as Sym) : null;
+  const tf: Timeframe | null =
+    (ALL_TIMEFRAMES as string[]).includes(form.timeframe) ? (form.timeframe as Timeframe) : null;
+
+  const chartRef = useRef<ChartHandle>(null);
+  const [nowVisible, setNowVisible] = useState(false);
+  const data = useChartData(
+    symbol ?? DEFAULT_SETTINGS.defaultSymbol, tf ?? DEFAULT_SETTINGS.defaultTimeframe,
+    DEFAULT_SETTINGS.initialBars, DEFAULT_SETTINGS.maxBars,
+  );
+  const hasBars = data.candles.length > 0;
+
+  const [score, setScore] = useState<LabScore | null>(null);
+  const [scoreError, setScoreError] = useState<string | null>(null);
+
+  // The scored window mirrors the chart's own initial window (same tf, same
+  // bar count) rather than data.candles' actual bounds — decoupled from
+  // useChartData's own async fill/poll cycle, and re-derivable at the two
+  // moments the brief calls for: right after training, and on symbol/tf
+  // change (below).
+  const loadScore = useCallback(async (sym: Sym, timeframe: Timeframe) => {
+    const [fromMs, toMs] = initialWindow(timeframe, Date.now(), DEFAULT_SETTINGS.initialBars);
+    try {
+      setScore(await fetchRegimes(sym, timeframe, fromMs, toMs));
+      setScoreError(null);
+    } catch (e) {
+      setScore(null);
+      setScoreError(e instanceof Error ? e.message : String(e));
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!symbol || !tf) return;
+    void loadScore(symbol, tf);
+  }, [symbol, tf, loadScore]);
+
+  const bands = useMemo(
+    () => (score && score.status === "ok" ? toBands(score.bars) : []),
+    [score],
+  );
+  // Fresh each render on purpose: reads chartRef.current.timeToX, which is
+  // only ever correct AT CALL TIME (the chart's time scale after the latest
+  // pan/zoom) — memoizing the closure itself would be fine, but there is
+  // nothing to memoize against here. Re-renders are driven by
+  // onNowVisibleChange below, which CandleChart already fires on load/pan/zoom.
+  const toX = (timeMsc: number): number | null => chartRef.current?.timeToX(timeMsc) ?? null;
+
   const setNum = (key: keyof TrainForm) => (e: { target: { value: string } }) =>
     setForm((f) => ({ ...f, [key]: Number(e.target.value) }));
 
@@ -59,6 +135,7 @@ export default function Lab() {
     try {
       setResult(await trainModels(form));
       await reload();
+      if (symbol && tf) void loadScore(symbol, tf);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -150,6 +227,81 @@ export default function Lab() {
       {modelsError && <p className="text-neg text-[12px] mb-3">Failed to load models: {modelsError}</p>}
 
       <LabMetrics models={models} onActivate={onActivate} />
+
+      <section className="glass p-4 mt-4">
+        <h2 className="text-[10px] uppercase tracking-wider text-muted mb-2">
+          Chart · regime shading &amp; take-profit probability
+        </h2>
+
+        {score && score.status === "ok" && (
+          <p className="text-[11px] text-muted mb-2">
+            model age {formatAge(score.model_age_ms)}
+            {score.expectancy_r !== null
+              ? ` · expectancy ${score.expectancy_r >= 0 ? "+" : ""}${score.expectancy_r.toFixed(2)}R (n=${score.expectancy_n})`
+              : score.expectancy_n !== null
+                ? ` · expectancy suppressed (n=${score.expectancy_n} < 20)`
+                : ""}
+          </p>
+        )}
+
+        {!symbol || !tf ? (
+          <p className="text-muted text-[12px] py-6">Enter a symbol this account trades to see its chart.</p>
+        ) : !hasBars ? (
+          <p className="text-muted text-[12px] py-6">
+            {data.status === "error" ? `Failed to load candles: ${data.error}` : "Loading chart…"}
+          </p>
+        ) : (
+          <>
+            <div className="relative" style={{ height: CHART_HEIGHT }}>
+              <CandleChart
+                ref={chartRef}
+                symbol={symbol}
+                tf={tf}
+                settings={DEFAULT_SETTINGS}
+                candles={data.candles}
+                onHover={() => {}}
+                onNowVisibleChange={setNowVisible}
+                onRequestOlder={data.loadOlder}
+                lastBarMs={data.lastBarMs}
+                live={null}
+                nowVisible={nowVisible}
+              />
+              {bands.length > 0 && <RegimeOverlay bands={bands} toX={toX} height={CHART_HEIGHT} />}
+              {score && score.status !== "ok" && (
+                <div className="absolute inset-0 flex items-center justify-center text-center px-6
+                                 text-[12px] text-muted bg-bg/70">
+                  {scoreStatusText(score.status)}
+                </div>
+              )}
+            </div>
+
+            <div className="relative mt-1" style={{ height: STRIP_HEIGHT }}>
+              {score && score.status === "ok" ? (
+                <svg width="100%" height={STRIP_HEIGHT} className="block">
+                  {score.bars.map((b) => {
+                    if (b.p_tp_long === null) return null;
+                    const x = toX(b.time_msc);
+                    if (x === null) return null;
+                    const h = Math.max(1, b.p_tp_long * STRIP_HEIGHT);
+                    return (
+                      <rect key={b.time_msc} x={x - 1} y={STRIP_HEIGHT - h} width={2} height={h}
+                            fill="rgba(34,211,238,0.7)" />
+                    );
+                  })}
+                </svg>
+              ) : (
+                <p className="text-muted text-[11px]">
+                  {score ? scoreStatusText(score.status) : ""}
+                </p>
+              )}
+            </div>
+
+            {scoreError && (
+              <p className="text-neg text-[12px] mt-1">Failed to load regime scores: {scoreError}</p>
+            )}
+          </>
+        )}
+      </section>
     </div>
   );
 }
