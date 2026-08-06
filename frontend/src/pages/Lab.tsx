@@ -28,10 +28,16 @@ export default function Lab() {
   const [result, setResult] = useState<TrainResponse | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [modelsError, setModelsError] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
-    const { models } = await fetchModels(form.symbol, form.timeframe);
-    setModels(models);
+    try {
+      const { models } = await fetchModels(form.symbol, form.timeframe);
+      setModels(models);
+      setModelsError(null);
+    } catch (e) {
+      setModelsError(e instanceof Error ? e.message : String(e));
+    }
   }, [form.symbol, form.timeframe]);
 
   useEffect(() => { void reload(); }, [reload]);
@@ -101,7 +107,7 @@ export default function Lab() {
           <label className="flex flex-col gap-1 text-muted">Folds
             <input className={field} type="number" value={form.n_folds} onChange={setNum("n_folds")} />
           </label>
-          <label className="flex flex-col gap-1 text-muted">Default points (unmeasured)
+          <label className="flex flex-col gap-1 text-muted">Assumed spread (points)
             <input className={field} type="number" value={form.default_spread_points} onChange={setNum("default_spread_points")} />
           </label>
         </div>
@@ -131,7 +137,7 @@ export default function Lab() {
       {error && <p className="text-neg text-[12px] mb-3">{error}</p>}
 
       {result && Object.keys(result.dropped_features).length > 0 && (
-        <p className="text-[12px] text-amber-400 mb-3">
+        <p data-testid="dropped-features-warning" className="text-[12px] text-amber-400 mb-3">
           Dropped {Object.entries(result.dropped_features)
             .map(([k, v]) => `${k} (${Math.round(v * 100)}% unknown)`)
             .join(", ")}
@@ -140,6 +146,8 @@ export default function Lab() {
             : ""}
         </p>
       )}
+
+      {modelsError && <p className="text-neg text-[12px] mb-3">Failed to load models: {modelsError}</p>}
 
       <LabMetrics models={models} onActivate={onActivate} />
     </div>

@@ -78,14 +78,29 @@ describe("Lab page", () => {
       dropped_features: { spread: 0.9 }, spread_assumed: true, n_bars_read: 900 });
     render(<Lab />);
     await userEvent.click(screen.getByRole("button", { name: /train/i }));
-    expect(await screen.findByText(/spread/i)).toBeInTheDocument();
+    // Scoped to the warning itself (data-testid), not a bare /spread/i text
+    // search — "spread" also appears in the form's field label and the
+    // feature checklist, and an unanchored matcher can't tell those apart
+    // from the warning it's meant to target.
+    expect(await screen.findByTestId("dropped-features-warning")).toHaveTextContent(/spread/i);
   });
 
-  it("shows the server's message when training is refused", async () => {
+  it("shows the server's message when training is refused, and un-sticks the button", async () => {
     trainModels.mockRejectedValue(new Error("not enough labelled rows to train: 12"));
     render(<Lab />);
-    await userEvent.click(screen.getByRole("button", { name: /train/i }));
+    const button = screen.getByRole("button", { name: /train/i });
+    await userEvent.click(button);
     expect(await screen.findByText(/not enough labelled rows/i)).toBeInTheDocument();
+    // A rejected trainModels must not leave the button reading "Training…"
+    // forever — the busy state has to clear even on the error path.
+    expect(button).toHaveTextContent(/^train$/i);
+    expect(button).not.toBeDisabled();
+  });
+
+  it("shows a visible error when the model list fails to load", async () => {
+    fetchModels.mockReset().mockRejectedValue(new Error("database is locked"));
+    render(<Lab />);
+    expect(await screen.findByText(/database is locked/i)).toBeInTheDocument();
   });
 
   it("activates a model when its button is pressed", async () => {
