@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import CandleChart from "../components/CandleChart";
 import LabMetrics from "../components/LabMetrics";
 import RegimeOverlay from "../components/RegimeOverlay";
@@ -77,6 +77,22 @@ export default function Lab() {
 
   const chartRef = useRef<ChartHandle>(null);
   const [nowVisible, setNowVisible] = useState(false);
+  // onNowVisibleChange carries a DERIVED BOOLEAN (isNowVisible) — React 18
+  // bails out of re-rendering when a setter is called with an Object.is-equal
+  // value, so setNowVisible alone is a no-op for most of a pan (nowVisible
+  // stays false the whole gesture) or a zoom that keeps "now" on screen
+  // (stays true). RegimeOverlay/the probability strip read chartRef.current
+  // .timeToX() at RENDER time, so without an unconditional re-render they
+  // keep the x-coordinates from the last actual boolean flip while the chart
+  // underneath has moved. Same fix CandleChart already uses on itself
+  // (bumpProjection) for its own internal overlays — a counter bumped on
+  // every call, independent of the value, forces the projection to
+  // recompute; nowVisible stays around only because CandleChart requires it.
+  const [, bumpProjection] = useReducer((c: number) => c + 1, 0);
+  const onNowVisibleChange = useCallback((v: boolean) => {
+    setNowVisible(v);
+    bumpProjection();
+  }, []);
   const data = useChartData(
     symbol ?? DEFAULT_SETTINGS.defaultSymbol, tf ?? DEFAULT_SETTINGS.defaultTimeframe,
     DEFAULT_SETTINGS.initialBars, DEFAULT_SETTINGS.maxBars,
@@ -260,7 +276,7 @@ export default function Lab() {
                 settings={DEFAULT_SETTINGS}
                 candles={data.candles}
                 onHover={() => {}}
-                onNowVisibleChange={setNowVisible}
+                onNowVisibleChange={onNowVisibleChange}
                 onRequestOlder={data.loadOlder}
                 lastBarMs={data.lastBarMs}
                 live={null}
