@@ -81,11 +81,22 @@ export function bestModel(models: LabModel[], stage: LabStage): LabModel | null 
   return ofStage.reduce((a, b) => (b.created_ms > a.created_ms ? b : a));
 }
 
-export const trainModels = (form: TrainForm) =>
-  postJson<TrainResponse>("/api/lab/train", form);
+// NOTE: deliberately NOT the house pattern (caller checks .ok/.data, as
+// replayApi.ts/storageApi.ts do and as this file's own Task-9 commit
+// documents). Lab.tsx (Task 10) is the sole consumer and needs a plain
+// resolve-with-payload / reject-on-failure promise — unwrap here instead of
+// at the call site so a bad response surfaces as a catchable Error.
+export async function trainModels(form: TrainForm): Promise<TrainResponse> {
+  const r = await postJson<TrainResponse>("/api/lab/train", form);
+  if (!r.ok || !r.data) throw new Error(r.error ?? "training failed");
+  return r.data;
+}
 
-export const activateModel = (id: number) =>
-  postJson<{ ok: boolean; id: number }>(`/api/lab/models/${id}/activate`, {});
+export async function activateModel(id: number): Promise<{ ok: boolean; id: number }> {
+  const r = await postJson<{ ok: boolean; id: number }>(`/api/lab/models/${id}/activate`, {});
+  if (!r.ok || !r.data) throw new Error(r.error ?? "activation failed");
+  return r.data;
+}
 
 async function getJson<T>(path: string, params: Record<string, string>): Promise<T> {
   const r = await fetch(`${path}?${new URLSearchParams(params)}`);

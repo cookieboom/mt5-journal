@@ -9,6 +9,7 @@ const LINKS = [
   { to: "/weekly", label: "Weekly" },
   { to: "/commands", label: "Commands" },
   { to: "/storage", label: "Storage" },
+  { to: "/lab", label: "Lab" },
 ];
 
 export default function Sidebar() {
