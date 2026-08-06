@@ -99,6 +99,7 @@ src/journal/
   store/     schema.sql | db.py | migrations/
   render/    chart.py         <- mplfinance
   analytics/
+  lab/       features.py | labels.py | evaluate.py | train.py | store.py | score.py
   cli.py
 ```
 
@@ -109,6 +110,8 @@ src/journal/
   silently wrong data.
 - Touching the schema → read `src/journal/store/schema.sql`. Schema changes need
   a migration file; do not edit `schema.sql` in place once data exists.
+- Touching anything in `lab/` → read `docs/lab-models.md` first. The label
+  definitions and the purge gap are the parts that are easy to break silently.
 
 ## Pipeline
 
@@ -150,6 +153,7 @@ M0 doctor · M1 ingest deals · M2 reconstruct trades · M3 candles + renderer
 positions + trade interaction + auto-ingest on close + UI redesign (`journal live`, `/live`; trading ON by default, 1.00-lot cap)
 · **Frontend rework** (Jinja→React SPA, served at `/`; Jinja UI retired at
 Phase 5 cutover)
+· M10 lab: regime + entry-timing models on candle data (`/lab`, badge on `/live`)
 
 Currently on: **Everything above is merged, running, and human-verified as of
 2026-08-05 — no pending human run anywhere.** The SPA is the sole UI at `/`

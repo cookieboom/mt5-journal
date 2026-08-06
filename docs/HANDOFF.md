@@ -36,7 +36,72 @@ home each, and a second copy is a future lie. Point, never duplicate.
 
 ## CURRENT STATE — update this section every session
 
-**Last updated:** 2026-08-05
+**Last updated:** 2026-08-06
+
+**2026-08-06 — M10 (the lab) shipped.** `src/journal/lab/` (six modules:
+`features.py`, `labels.py`, `evaluate.py`, `train.py`, `store.py`, `score.py` —
+`evaluate.py` was split out of `train.py` mid-build so the walk-forward maths
+could be tested without fitting anything), migration 010 / `SCHEMA_VERSION =
+10` (`lab_models` table), five `/api/lab` routes, and the frontend (`/lab`
+page, regime shading + probability strip there, and a badge on `/live`). Two
+new dependencies: `scikit-learn`, `lightgbm` (CLAUDE.md rule 8 updated). Rule 9
+is rewritten and now scopes prediction to `lab/` alone — everywhere else in
+the codebase still only describes past data. Full reference: `docs/lab-models.md`.
+
+Gates run on this branch (worktree `lab-regime-timing`, verbatim in the task-13
+report): `uv run pytest` **677 passed**; `cd frontend && npx vitest run` **219
+passed** (33 files); `npx tsc --noEmit` silent; `npm run build` succeeds;
+`uv run journal rebuild` succeeds and all 8 `lab_models` rows (one regime ×
+2 kinds, three regimes × timing × 2 kinds) survived it unchanged.
+
+**A real model has now been trained against real data — this was the first
+thing pending and it is no longer pending.** This worktree had no `data/` at
+all (fresh checkout, `data/` is gitignored per rule 10), so verifying end to
+end required `journal sync` (262 deals) → `journal rebuild` (128 trades) →
+`journal candles-warm XAUUSDc H1 --from ... --to ...` (11,816 new H1 bars, ~2
+years) → `journal serve` → train, both via a direct `POST /api/lab/train` call
+and by clicking Train on `/lab` in a real browser (confirmed rendering: full
+metrics table, `n` on every figure, expectancy beside baseline, "just now"
+ages). Numbers from the first (curl) run, defaults (`n_bars=24, k_atr=1,
+rr=2, er_threshold=0.35`), XAUUSDc H1, `n_bars_read=11816`, no dropped
+features, no assumed spread:
+
+- **Regime (lgbm, active):** accuracy 0.728 over n=19,571 test rows (5 purged
+  folds). The confusion matrix is heavily `range`-biased — this account's H1
+  XAUUSDc history is mostly range by the ER threshold, which is exactly why
+  the timing-stage split below matters.
+- **Timing / trend_up (lgbm, active):** n_taken=1406/3774, win_rate 73.5%,
+  **expectancy +1.19R vs baseline +0.14R**, AUC 0.869. Model clearly adds
+  value in this regime.
+- **Timing / trend_down (lgbm, active):** n_taken=535/1666, win_rate 74.4%,
+  **expectancy +1.22R vs baseline +0.14R**, AUC 0.876. Same story.
+- **Timing / range (lgbm, active):** n_taken=926/18104, win_rate 29.7%,
+  **expectancy −0.09R vs baseline −0.03R, AUC 0.51 — the model LOSES to
+  baseline here.** Recorded exactly as measured, not smoothed over: in the
+  regime that dominates this account's H1 history, the timing model is worse
+  than entering at random. `/lab`'s "a model is only interesting where it
+  beats the baseline" framing is not decoration — this is the case it's
+  warning about. Do not activate the range-regime timing model in a workflow
+  that treats its probability as informative without re-checking this table
+  after every retrain.
+- Pooled fallback did NOT trigger — every regime had ≥500 rows
+  (`pooled_min_rows` default), so all three trained per-regime as expected.
+- `GET /api/lab/score` returned `status: "ok"` for a live 50-bar XAUUSDc H1
+  window with real regime/probability output per bar.
+
+`/live`'s badge was not visually confirmed against an open position — there
+was no open position and no `journal live` heartbeat running in this worktree,
+and opening one is out of scope for a docs task. `LabBadge.tsx`'s rendering
+logic (regime label, both probabilities, age with staleness threshold,
+out-of-sample expectancy with its `n`, pooled note, and the five status texts)
+is covered by 8 green `LabBadge.test.tsx` cases instead; a live-position visual
+pass is still a reasonable thing for a human to do opportunistically.
+
+**Previous entry — 2026-08-05:**
+
+**Everything up to and including M9 and the frontend rework is merged,
+running, and human-verified as of 2026-08-05 — no pending human run
+anywhere at that point.**
 
 **2026-08-05 — nothing is pending a human run any more.** The human confirmed,
 in person and against the live bridge, every item this file and the project
