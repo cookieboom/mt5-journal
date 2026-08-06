@@ -106,9 +106,17 @@ def test_metrics_carry_n_and_a_baseline():
 def test_training_is_deterministic_for_a_fixed_seed():
     a = train_all(_frame(), _cfg(pooled_min_rows=10**6))
     b = train_all(_frame(), _cfg(pooled_min_rows=10**6))
-    lhs = {(m.stage, m.kind, m.regime): m.metrics["n"] for m in a}
-    rhs = {(m.stage, m.kind, m.regime): m.metrics["n"] for m in b}
-    assert lhs == rhs
+    # `n` is both seed- and data-independent, so comparing it asserts nothing.
+    # `auc`/`expectancy_r` are the numbers a different fit would move — they
+    # are what docs/lab-models.md § Reproducing actually promises.
+    def fingerprint(models):
+        return {(m.stage, m.kind, m.regime):
+                (m.metrics["n"], m.metrics["auc"], m.metrics["expectancy_r"])
+                for m in models}
+
+    assert fingerprint(a) == fingerprint(b)
+    assert any(v[1] is not None or v[2] is not None for v in fingerprint(a).values()), \
+        "a fingerprint of all-None would pass regardless of the seed"
 
 
 def test_too_little_data_raises_rather_than_returning_a_fake_model():

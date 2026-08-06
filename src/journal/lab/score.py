@@ -46,6 +46,11 @@ class ScoreReport:
     model_age_ms: int | None
     expectancy_r: float | None
     expectancy_n: int | None
+    # The same model's random-entry baseline over the same rows. Expectancy
+    # without it is unreadable: +0.10R against a +0.14R baseline is a losing
+    # model rendering as an unqualified positive R.
+    baseline_expectancy_r: float | None
+    baseline_n: int | None
     pooled: bool
     status: str                 # ok | no_model | artifact_missing | no_bars
                                  # | stale_features
@@ -54,7 +59,8 @@ class ScoreReport:
 def score_bars(conn: sqlite3.Connection, symbol: str, timeframe: str,
                bars: list[Candle], cache_dir: Path) -> ScoreReport:
     def _empty(status: str) -> ScoreReport:
-        return ScoreReport(symbol, timeframe, [], None, None, None, False, status)
+        return ScoreReport(symbol, timeframe, [], None, None, None, None, None,
+                           False, status)
 
     try:
         loaded = load_active(conn, symbol, timeframe, "regime", None, cache_dir)
@@ -106,12 +112,15 @@ def score_bars(conn: sqlite3.Connection, symbol: str, timeframe: str,
         *(row["created_ms"] for row, _ in timing.values()),
     )
 
-    # Provenance for expectancy_r: whichever timing model scored the LAST bar
-    # — pooled if present, else the model for that bar's predicted regime,
-    # else whatever is loaded (a run that trained only some regimes is
-    # possible, so this falls back rather than KeyError).
+    # Provenance for expectancy_r: the timing model that actually scored the
+    # LAST bar — the one for that bar's predicted regime, or the pooled model
+    # if that is what is active (never both: `store.activate` keeps pooled and
+    # per-regime mutually exclusive). A run that trained only some regimes can
+    # leave the last bar's regime with no model at all; that reports no
+    # expectancy rather than an unrelated regime's, which is also what its
+    # p_tp_long/short already do.
     latest_regime = str(predicted[-1])
-    chosen_row, _ = timing.get(None) or timing.get(latest_regime) or next(iter(timing.values()))
+    chosen = timing.get(latest_regime) or timing.get(None)
 
     scored = [
         BarScore(
@@ -126,18 +135,22 @@ def score_bars(conn: sqlite3.Connection, symbol: str, timeframe: str,
     # CLAUDE.md §8: expectancy_r ships with its n and is suppressed below
     # MIN_BUCKET_N — a thin-sample expectancy next to an order button on
     # /live is exactly the "noise with a decimal point" the rule guards
-    # against. `n_taken` (not `n`) is the right count: it's the number of
-    # rows the model would actually have entered, which is what
-    # expectancy_r itself was averaged over.
-    expectancy_n = chosen_row["metrics"].get("n_taken")
-    expectancy_r = suppressed(
-        chosen_row["metrics"].get("expectancy_r"), expectancy_n or 0
-    )
+    # against. `n_taken` (not `n`) is the right count for expectancy: it's the
+    # number of rows the model would actually have entered, which is what
+    # expectancy_r itself was averaged over. The baseline averages EVERY row,
+    # so it is gated on `n` instead.
+    metrics = chosen[0]["metrics"] if chosen else {}
+    expectancy_n = metrics.get("n_taken")
+    baseline_n = metrics.get("n")
     return ScoreReport(
         symbol=symbol, timeframe=timeframe, bars=scored,
         model_age_ms=model_age_ms,
-        expectancy_r=expectancy_r,  # out-of-sample, suppressed if thin
+        # out-of-sample, each suppressed if thin
+        expectancy_r=suppressed(metrics.get("expectancy_r"), expectancy_n or 0),
         expectancy_n=expectancy_n,
+        baseline_expectancy_r=suppressed(
+            metrics.get("baseline_expectancy_r"), baseline_n or 0),
+        baseline_n=baseline_n,
         pooled=pooled, status="ok",
     )
 

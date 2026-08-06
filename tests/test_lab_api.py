@@ -203,3 +203,28 @@ def test_regime_model_metrics_are_not_surfaced_as_real_rates(client, conn):
         metrics = m["metrics"]
         assert "calibration" in metrics
         assert "win_rate" in metrics
+
+
+@pytest.mark.parametrize("field,value", [
+    ("n_bars", 0), ("n_bars", -3), ("n_bars", "eight"),
+    ("k_atr", 0), ("k_atr", -1.0), ("k_atr", "wide"),
+    ("rr", 0), ("rr", -2.0), ("rr", None),
+])
+def test_train_rejects_a_nonsense_label_parameter_as_a_400(client, conn, field, value):
+    """Form input is caller error, not a server fault: `n_bars=0` reached
+    `labels.py` and came back out as `IndexError: index 5 is out of bounds`,
+    which app.py's `_lab` (LabRequestError only) turns into a 500. The choke
+    point is the request boundary, not the label code."""
+    _seed_candles(conn, n=300)
+    r = client.post("/api/lab/train", json=_train_body(**{field: value}))
+    assert r.status_code == 400
+    assert field in r.json()["detail"]
+
+
+def test_score_ships_the_baseline_next_to_the_expectancy(client, conn):
+    _seed_candles(conn)
+    client.post("/api/lab/train", json=_train_body())
+    body = client.get("/api/lab/score?symbol=XAUUSDc&timeframe=H1&bars=200").json()
+    assert body["status"] == "ok"
+    assert "baseline_expectancy_r" in body
+    assert "baseline_n" in body

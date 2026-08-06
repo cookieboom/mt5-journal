@@ -154,6 +154,54 @@ describe("Lab page", () => {
     await waitFor(() => expect(activateModel).toHaveBeenCalledWith(7));
   });
 
+  // The chart shading, the probability strip and the "model age … expectancy"
+  // header all come from whichever model is ACTIVE — switching it and
+  // reloading only the table leaves those three showing the old model.
+  it("reloads the score after activating a different model", async () => {
+    fetchModels.mockResolvedValue({
+      models: [model({ id: 7, kind: "logreg", active: false })],
+    });
+    render(<Lab />);
+    await waitFor(() => expect(fetchRegimes).toHaveBeenCalledTimes(1));
+    await userEvent.click(await screen.findByRole("button", { name: /activate/i }));
+    await waitFor(() => expect(fetchRegimes).toHaveBeenCalledTimes(2));
+  });
+
+  it("shows a visible error when activation is rejected", async () => {
+    fetchModels.mockResolvedValue({
+      models: [model({ id: 7, kind: "logreg", active: false })],
+    });
+    activateModel.mockRejectedValue(new Error("no lab model with id 7"));
+    render(<Lab />);
+    await userEvent.click(await screen.findByRole("button", { name: /activate/i }));
+    expect(await screen.findByText(/no lab model with id 7/i)).toBeInTheDocument();
+  });
+
+  it("suppresses AUC below 20 rows like every other rate on the row", async () => {
+    fetchModels.mockResolvedValue({
+      models: [model({ metrics: { n: 5, n_taken: 5, win_rate: 0.8,
+        expectancy_r: 3.0, auc: 0.99, baseline_expectancy_r: 0,
+        calibration: [], folds: [] } })],
+    });
+    render(<Lab />);
+    expect(await screen.findByText(/n\s*=\s*5/)).toBeInTheDocument();
+    expect(screen.queryByText("0.99")).not.toBeInTheDocument();
+  });
+
+  it("shows the baseline beside the score's expectancy on the chart header", async () => {
+    stubFetch([{ time_msc: 0, o: 1, h: 1, l: 1, c: 1, v: 1 }]);
+    fetchRegimes.mockResolvedValue({
+      symbol: "XAUUSDc", timeframe: "H1", status: "ok", model_age_ms: 3_600_000,
+      expectancy_r: 0.1, expectancy_n: 400, baseline_expectancy_r: 0.14,
+      baseline_n: 900, pooled: true,
+      bars: [{ time_msc: 0, regime: "range",
+               regime_proba: { trend_up: 0, trend_down: 0, range: 1 },
+               p_tp_long: 0.5, p_tp_short: 0.5 }],
+    });
+    render(<Lab />);
+    expect(await screen.findByText(/vs baseline \+0\.14R \(n=900\)/)).toBeInTheDocument();
+  });
+
   // Regression for the staleness bug found in review: Lab.tsx used to force a
   // re-render only via setNowVisible(v), a DERIVED BOOLEAN — React bails out
   // of re-rendering on an Object.is-equal setter call, so a pan that never

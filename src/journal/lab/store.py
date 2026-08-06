@@ -81,7 +81,17 @@ def save_models(conn: sqlite3.Connection, *, symbol: str, timeframe: str,
 def activate(conn: sqlite3.Connection, model_id: int) -> None:
     """Make one model the active one for its group, clearing the previous
     holder in the same transaction so the partial unique index never rejects a
-    legitimate switch."""
+    legitimate switch.
+
+    A timing model also clears the COMPLEMENTARY family. Pooled timing
+    (`regime IS NULL`) and the three per-regime models are alternatives —
+    `train_all` produces one shape or the other, never both — but the partial
+    unique index keys on `COALESCE(regime,'')`, so they are four independent
+    groups to it. Left alone, a superseded pooled row stays active after a
+    per-regime retrain and `lab.score._timing_proba` takes its pooled branch
+    for every bar while /lab's table shows the per-regime rows as active. The
+    invariant belongs here, at the one place `active` is ever set, rather than
+    being re-derived at every read."""
     row = conn.execute(
         "SELECT symbol, timeframe, stage, regime FROM lab_models WHERE id = ?",
         (model_id,),
@@ -94,6 +104,15 @@ def activate(conn: sqlite3.Connection, model_id: int) -> None:
               AND COALESCE(regime, '') = COALESCE(?, '') AND active = 1""",
         (row["symbol"], row["timeframe"], row["stage"], row["regime"]),
     )
+    if row["stage"] == "timing":
+        complement = ("regime IS NOT NULL" if row["regime"] is None
+                      else "regime IS NULL")
+        conn.execute(
+            f"""UPDATE lab_models SET active = 0
+                 WHERE symbol = ? AND timeframe = ? AND stage = 'timing'
+                   AND {complement} AND active = 1""",
+            (row["symbol"], row["timeframe"]),
+        )
     conn.execute("UPDATE lab_models SET active = 1 WHERE id = ?", (model_id,))
     conn.commit()
 

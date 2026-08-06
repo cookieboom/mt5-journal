@@ -24,6 +24,15 @@ function pct(value: number | null): string {
   return value === null ? "—" : `${Math.round(value * 100)}%`;
 }
 
+// The backend already suppressed this below n=20 (CLAUDE.md §8) — `n` ships
+// alongside so a thin sample reads as thin rather than as missing.
+function rMultiple(value: number | null | undefined, n: number | null | undefined): string {
+  if (value === null || value === undefined) {
+    return typeof n === "number" ? `— (n=${n} < 20)` : "—";
+  }
+  return `${value >= 0 ? "+" : ""}${value.toFixed(2)}R${typeof n === "number" ? ` (n=${n})` : ""}`;
+}
+
 // Real Tailwind utilities, not bespoke class names — this codebase has no
 // lab-badge/-regime/-probs/-provenance/muted/stale CSS anywhere, so those
 // names rendered as plain unstyled text with every status looking identical.
@@ -58,9 +67,12 @@ export default function LabBadge({ score }: { score: LabScore | null }) {
         <span>long {pct(latest.p_tp_long)}</span>
         <span>short {pct(latest.p_tp_short)}</span>
       </div>
-      {/* Age and out-of-sample expectancy are not optional decoration: a
-          probability rendered beside an order button without them is a
-          recommendation, which this tool does not make (CLAUDE.md rule 9). */}
+      {/* Age, out-of-sample expectancy AND its baseline are not optional
+          decoration: a probability rendered beside an order button without
+          them is a recommendation, which this tool does not make (CLAUDE.md
+          rule 9). The baseline is what makes the expectancy readable at all —
+          +0.10R against a +0.14R baseline is a model doing nothing, and
+          without the second number it renders as an unqualified positive R. */}
       <div className="text-muted mt-0.5">
         <span className={stale ? "text-neg font-semibold" : ""}>
           {formatAge(score.model_age_ms)}{stale ? " · stale" : ""}
@@ -72,6 +84,8 @@ export default function LabBadge({ score }: { score: LabScore | null }) {
             ? n !== null ? `— (n=${n} < 20)` : "—"
             : `${expectancy >= 0 ? "+" : ""}${expectancy.toFixed(2)}R${n !== null ? ` (n=${n})` : ""}`}
         </span>
+        {" · "}
+        <span>vs baseline {rMultiple(score.baseline_expectancy_r, score.baseline_n)}</span>
         {score.pooled && <span> · pooled model</span>}
       </div>
     </div>

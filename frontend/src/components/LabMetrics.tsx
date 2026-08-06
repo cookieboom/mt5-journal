@@ -15,6 +15,12 @@ function r(value: number | null, n: number): string {
   return `${value >= 0 ? "+" : ""}${value.toFixed(2)}R`;
 }
 
+/** AUC is a rate too — §8 applies to it exactly as it does to the others. */
+function auc(value: number | null | undefined, n: number): string {
+  if (value === null || value === undefined || n < MIN_BUCKET_N) return "—";
+  return value.toFixed(2);
+}
+
 const rowClass = (active: boolean) => "border-t border-white/5" + (active ? " bg-cyan/5" : "");
 const naCell = <td className="py-2 num text-muted" title="not measured for a regime model">—</td>;
 
@@ -76,7 +82,7 @@ function ModelRow({ model, onActivate }: { model: LabModel; onActivate: (id: num
       <td className="py-2 num whitespace-nowrap">{r(m.expectancy_r, m.n_taken)}</td>
       <td className="py-2 num whitespace-nowrap">{r(m.baseline_expectancy_r, n)}</td>
       <td className="py-2 num whitespace-nowrap">{rate(m.win_rate, m.n_taken)}</td>
-      <td className="py-2 num">{m.auc?.toFixed(2) ?? "—"}</td>
+      <td className="py-2 num">{auc(m.auc, n)}</td>
       <td className="py-2 num whitespace-nowrap">n = {n}</td>
       {ageCell}
       <ActivateCell model={model} onActivate={onActivate} />

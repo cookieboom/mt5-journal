@@ -164,6 +164,27 @@ model loaded — pooled or per-regime), not just whichever model produced the
 reported `expectancy_r`. A fresh timing model behind a six-month-old regime
 model still reports six months old.
 
+A score report carries `expectancy_r`/`expectancy_n` **and**
+`baseline_expectancy_r`/`baseline_n` — the same pair the metrics table shows,
+for the same model, each suppressed on its own `n` (`n_taken` for expectancy,
+`n` for the baseline). Both render on `LabBadge` and in `/lab`'s chart header:
+an expectancy without its baseline is unreadable, and the near-miss is the
+dangerous case — +0.10R against a +0.14R baseline is a model doing nothing
+while rendering as an unqualified positive R next to the order buttons.
+
+Those two numbers belong to **the timing model that scored the last bar** —
+the model for that bar's predicted regime, or the pooled model when that is
+what is active. If the last bar's regime has no active timing model (a run
+that trained only some regimes), the report ships `null` for all four rather
+than quoting an unrelated regime's expectancy; that bar's `p_tp_long`/
+`p_tp_short` are already `null` for the same reason.
+
+Label geometry is validated at the request boundary: `n_bars`, `k_atr` and
+`rr` must parse and be `> 0` or `/api/lab/train` answers **400**
+(`lab_api._positive`). `n_bars=0` used to reach `labels.py` and come back as
+an `IndexError`, which `app.py`'s `_lab` wrapper turns into a 500 — a form
+value is caller error, so it is checked before any work starts.
+
 ## Pooled fallback
 
 `lab/train.py::train_all` trains one timing model per regime only when *every*
@@ -172,6 +193,19 @@ regime is thin, **all three fall back to a single pooled timing model** — this
 is all-or-nothing, not "skip the thin regime and keep the other two
 per-regime." `TrainedModel.pooled` and the score report's `pooled` field carry
 this through to the UI (`LabBadge` shows "pooled model" when applicable).
+
+**Pooled and per-regime are mutually exclusive as ACTIVE models.** The partial
+unique index keys on `COALESCE(regime,'')`, so to sqlite a pooled timing row
+and the three per-regime rows are four independent groups — train thin (pooled)
+then fill more candles and retrain (per-regime) and all four would stay active,
+with `score.py` taking the superseded pooled branch for every bar while `/lab`'s
+table shows the per-regime rows as active. `lab/store.py::activate` therefore
+also clears the *complementary* family whenever a timing model is activated:
+activating a pooled row deactivates every per-regime row for that
+symbol/timeframe, and activating a per-regime row deactivates the pooled one.
+That is the one place `active` is ever set — both `save_models` and `/lab`'s
+Activate button route through it, so the invariant holds at the source rather
+than being re-derived at every read.
 
 ## Cross-module contract
 
@@ -238,7 +272,17 @@ byte-for-byte with the same seed:
 it does not render `CandleChart`. There is therefore no regime shading on
 `/live`; the only lab surface there is `LabBadge` (regime label, both
 probabilities, model age with a staleness threshold, out-of-sample expectancy
-with its `n`, and a "pooled model" note when applicable). Regime shading and
-the probability strip exist only on `/lab`, via `RegimeOverlay`. Do not
-document or assume chart shading on `/live` — it was scoped out because there
-is no chart to shade.
+and its baseline each with its `n`, and a "pooled model" note when
+applicable). Regime shading and the probability strip exist only on `/lab`,
+via `RegimeOverlay`. Do not document or assume chart shading on `/live` — it
+was scoped out because there is no chart to shade.
+
+Because there is no chart there is also no timeframe selector, and the page's
+chart default (`M5`) is not what `/lab` trains by default (`H1`) — asking for
+the chart default rendered "No model trained for this symbol and timeframe" on
+an account whose H1 model was trained and working.
+`components/LiveLabBadge.tsx` therefore asks `/api/lab/models?symbol=…` first
+and reads the timeframe off that symbol's active (else newest) timing model
+(`lab.ts::modelTimeframe`), falling back to the user's saved chart preference
+only when the symbol has nothing trained at all. The badge header always
+states the timeframe the reading describes.

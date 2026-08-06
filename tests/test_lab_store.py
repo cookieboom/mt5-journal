@@ -79,10 +79,53 @@ def test_only_one_model_is_active_per_group(conn, tmp_path):
     assert [r["id"] for r in active] == [first]
 
 
-def test_a_pooled_model_and_a_regime_model_do_not_collide(conn, tmp_path):
-    _save(conn, tmp_path, [_model(regime=None), _model(regime="range")])
-    active = [r for r in list_models(conn) if r["active"]]
-    assert len(active) == 2
+def _active_timing_regimes(conn) -> set:
+    return {r["regime"] for r in list_models(conn)
+            if r["active"] and r["stage"] == "timing"}
+
+
+def test_a_later_per_regime_run_deactivates_the_pooled_timing_model(conn, tmp_path):
+    """Pooled timing and per-regime timing are ALTERNATIVES, not four
+    independent slots. A first thin run trains one pooled model; a second run
+    with more candles trains three per-regime ones. If the pooled row stays
+    active, `lab.score` keeps scoring every bar with the superseded model
+    (its `pooled` branch wins unconditionally) while /lab's table shows the
+    three fresh rows as active — two surfaces disagreeing about which model
+    is in effect."""
+    _save(conn, tmp_path, [_model(regime=None)])
+    assert _active_timing_regimes(conn) == {None}
+
+    _save(conn, tmp_path, [_model(regime=r) for r in
+                           ("trend_up", "trend_down", "range")])
+    assert _active_timing_regimes(conn) == {"trend_up", "trend_down", "range"}
+
+
+def test_a_later_pooled_run_deactivates_the_per_regime_timing_models(conn, tmp_path):
+    """The symmetric case: three stale per-regime rows left active behind a
+    fresh pooled model inflate `model_age_ms` (worst-case across every model
+    consulted) to the old age and falsely trip LabBadge's staleness styling."""
+    _save(conn, tmp_path, [_model(regime=r) for r in
+                           ("trend_up", "trend_down", "range")])
+    _save(conn, tmp_path, [_model(regime=None)])
+    assert _active_timing_regimes(conn) == {None}
+
+
+def test_activating_a_pooled_row_by_hand_clears_the_per_regime_ones(conn, tmp_path):
+    """Same invariant through the other caller — /lab's Activate button."""
+    _save(conn, tmp_path, [_model(regime=r) for r in
+                           ("trend_up", "trend_down", "range")])
+    pooled_id = _save(conn, tmp_path, [_model(regime=None, kind="logreg")])[0]
+    activate(conn, pooled_id)
+    assert _active_timing_regimes(conn) == {None}
+
+
+def test_a_pooled_timing_model_and_the_regime_model_do_not_collide(conn, tmp_path):
+    """Cross-STAGE independence still holds: the regime classifier and the
+    timing model are different stages and are active at the same time."""
+    _save(conn, tmp_path, [_model(stage="regime", regime=None),
+                           _model(regime=None)])
+    active = [(r["stage"], r["regime"]) for r in list_models(conn) if r["active"]]
+    assert sorted(active) == [("regime", None), ("timing", None)]
 
 
 def test_missing_artifact_raises_a_named_error(conn, tmp_path):

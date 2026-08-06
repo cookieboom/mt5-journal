@@ -159,9 +159,21 @@ export default function Lab() {
     }
   };
 
+  // The score (chart shading, probability strip, the header line below) comes
+  // from whichever model is ACTIVE — so switching the active model has to
+  // reload it too, or the table says lgbm/logreg while the chart still shows
+  // the other one's regimes and expectancy. And activateModel is throw-style
+  // (lib/lab.ts): without a catch, a rejected activation was an unhandled
+  // promise rejection with nothing visible on a page that shows errors for
+  // both its other operations.
   const onActivate = async (id: number) => {
-    await activateModel(id);
-    await reload();
+    try {
+      await activateModel(id);
+      await reload();
+      if (symbol && tf) await loadScore(symbol, tf);
+    } catch (e) {
+      setError(`Failed to activate model ${id}: ${e instanceof Error ? e.message : String(e)}`);
+    }
   };
 
   return (
@@ -185,14 +197,16 @@ export default function Lab() {
               {TIMEFRAMES.map((tf) => <option key={tf} value={tf}>{tf}</option>)}
             </select>
           </label>
+          {/* `min` is a convenience only — the server validates these three
+              and answers 400; a browser is not a trust boundary. */}
           <label className="flex flex-col gap-1 text-muted">Bars ahead (N)
-            <input className={field} type="number" value={form.n_bars} onChange={setNum("n_bars")} />
+            <input className={field} type="number" min="1" value={form.n_bars} onChange={setNum("n_bars")} />
           </label>
           <label className="flex flex-col gap-1 text-muted">Risk (k × ATR)
-            <input className={field} type="number" step="0.1" value={form.k_atr} onChange={setNum("k_atr")} />
+            <input className={field} type="number" min="0.1" step="0.1" value={form.k_atr} onChange={setNum("k_atr")} />
           </label>
           <label className="flex flex-col gap-1 text-muted">Reward ratio
-            <input className={field} type="number" step="0.1" value={form.rr} onChange={setNum("rr")} />
+            <input className={field} type="number" min="0.1" step="0.1" value={form.rr} onChange={setNum("rr")} />
           </label>
           <label className="flex flex-col gap-1 text-muted">Regime threshold
             <input className={field} type="number" step="0.05" value={form.er_threshold} onChange={setNum("er_threshold")} />
@@ -256,6 +270,14 @@ export default function Lab() {
               ? ` · expectancy ${score.expectancy_r >= 0 ? "+" : ""}${score.expectancy_r.toFixed(2)}R (n=${score.expectancy_n})`
               : score.expectancy_n !== null
                 ? ` · expectancy suppressed (n=${score.expectancy_n} < 20)`
+                : ""}
+            {/* A model is only interesting where it beats this — the sentence
+                at the top of the page states the standard, so the number it
+                is measured against has to be here too. */}
+            {typeof score.baseline_expectancy_r === "number"
+              ? ` · vs baseline ${score.baseline_expectancy_r >= 0 ? "+" : ""}${score.baseline_expectancy_r.toFixed(2)}R (n=${score.baseline_n})`
+              : typeof score.baseline_n === "number"
+                ? ` · baseline suppressed (n=${score.baseline_n} < 20)`
                 : ""}
           </p>
         )}

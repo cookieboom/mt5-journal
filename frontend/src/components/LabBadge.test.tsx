@@ -6,7 +6,8 @@ import type { LabScore } from "../lib/types";
 const score = (over: Partial<LabScore> = {}): LabScore =>
   ({
     symbol: "XAUUSDc", timeframe: "M15", status: "ok",
-    model_age_ms: 3 * 86_400_000, expectancy_r: 0.08, pooled: false,
+    model_age_ms: 3 * 86_400_000, expectancy_r: 0.08, expectancy_n: 120,
+    baseline_expectancy_r: 0.02, baseline_n: 400, pooled: false,
     bars: [{ time_msc: 1, regime: "trend_up",
              regime_proba: { trend_up: 0.7, trend_down: 0.1, range: 0.2 },
              p_tp_long: 0.62, p_tp_short: 0.31 }],
@@ -25,6 +26,18 @@ describe("LabBadge", () => {
     render(<LabBadge score={score()} />);
     expect(screen.getByText(/3d ago/)).toBeInTheDocument();
     expect(screen.getByText(/\+0\.08R/)).toBeInTheDocument();
+  });
+
+  // Without the baseline, a +0.10R model against a +0.14R baseline reads as
+  // an unqualified positive R on the surface nearest the order buttons.
+  it("shows the baseline the expectancy has to beat", () => {
+    render(<LabBadge score={score({ expectancy_r: 0.10, baseline_expectancy_r: 0.14 })} />);
+    expect(screen.getByText(/vs baseline \+0\.14R \(n=400\)/)).toBeInTheDocument();
+  });
+
+  it("says the baseline is thin rather than dashing it silently", () => {
+    render(<LabBadge score={score({ baseline_expectancy_r: null, baseline_n: 9 })} />);
+    expect(screen.getByText(/vs baseline — \(n=9 < 20\)/)).toBeInTheDocument();
   });
 
   it("marks a model older than 30 days as stale", () => {

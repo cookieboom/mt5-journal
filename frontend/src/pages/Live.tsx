@@ -4,30 +4,18 @@ import { money } from "../lib/format";
 import StalenessBadge from "../components/StalenessBadge";
 import LivePositionCard from "../components/LivePositionCard";
 import ConfirmModal from "../components/ConfirmModal";
-import LabBadge from "../components/LabBadge";
+import LiveLabBadge from "../components/LiveLabBadge";
 import { useLiveCommand } from "../hooks/useLiveCommand";
-import { useLabScore } from "../hooks/useLabScore";
-import { SYMBOLS, timeframeMs, type Sym } from "../lib/candles";
-import { DEFAULT_SETTINGS } from "../lib/chartPrefs";
-
-// One badge per distinct open symbol, at the page's default timeframe — /live
-// has no chart/timeframe selector of its own to read one from (unlike
-// /chart), so this reuses the same default the chart page falls back to
-// rather than inventing a second notion of "current timeframe".
-function LiveLabBadge({ symbol }: { symbol: Sym }) {
-  const tf = DEFAULT_SETTINGS.defaultTimeframe;
-  const { score, error } = useLabScore(symbol, tf, timeframeMs(tf));
-  return (
-    <div>
-      <div className="text-[10px] text-muted uppercase tracking-wider mb-1">{symbol} · {tf}</div>
-      {error ? <div className="text-neg text-[11px]">Lab: {error}</div> : <LabBadge score={score} />}
-    </div>
-  );
-}
+import { useChartPrefs } from "../hooks/useChartPrefs";
+import { SYMBOLS, type Sym } from "../lib/candles";
 
 export default function Live() {
   const { data, error, loading } = useApi<LiveData>("/api/live", 2500);
   const cmd = useLiveCommand();
+  // Only the FALLBACK for a symbol with nothing trained — LiveLabBadge reads
+  // the timeframe off the symbol's own model. The user's saved preference
+  // (not the hardcoded default) is the right guess when there is no model.
+  const { settings } = useChartPrefs();
 
   if (loading) return <div className="text-muted p-6">Memuat…</div>;
   if (error) return <div className="glass p-6 text-neg">Gagal memuat: {error}</div>;
@@ -59,7 +47,9 @@ export default function Live() {
           rule 9: nothing here may read as an instruction to act). */}
       {openSymbols.length > 0 && (
         <div className="glass p-3 mb-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          {openSymbols.map((s) => <LiveLabBadge key={s} symbol={s} />)}
+          {openSymbols.map((s) => (
+            <LiveLabBadge key={s} symbol={s} fallbackTf={settings.defaultTimeframe} />
+          ))}
         </div>
       )}
 

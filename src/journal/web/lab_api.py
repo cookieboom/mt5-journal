@@ -33,6 +33,20 @@ class LabRequestError(ValueError):
     `app.py` turns this into a 400 with the message intact."""
 
 
+def _positive(value, name: str, cast):
+    """Label geometry must be > 0. `n_bars=0` used to escape as an
+    `IndexError` out of `labels.py` and land as a 500; a form value is caller
+    error, so it is checked at the request boundary — the one place every
+    caller passes through — not inside the label code."""
+    try:
+        out = cast(value)
+    except (TypeError, ValueError) as exc:
+        raise LabRequestError(f"{name} must be a number, got {value!r}") from exc
+    if out <= 0:
+        raise LabRequestError(f"{name} must be greater than 0, got {out}")
+    return out
+
+
 def train(conn: sqlite3.Connection, body: dict, cache_dir: Path) -> dict:
     symbol = str(body["symbol"])
     timeframe = str(body["timeframe"])
@@ -60,9 +74,9 @@ def train(conn: sqlite3.Connection, body: dict, cache_dir: Path) -> dict:
         raise LabRequestError("every requested feature was unusable on this range")
 
     label = LabelConfig(
-        n_bars=int(body.get("n_bars", 24)),
-        k_atr=float(body.get("k_atr", 1.0)),
-        rr=float(body.get("rr", 2.0)),
+        n_bars=_positive(body.get("n_bars", 24), "n_bars", int),
+        k_atr=_positive(body.get("k_atr", 1.0), "k_atr", float),
+        rr=_positive(body.get("rr", 2.0), "rr", float),
         er_threshold=float(body.get("er_threshold", 0.35)),
     )
     cfg = TrainConfig(
@@ -139,6 +153,8 @@ def _report_to_dict(report) -> dict:
         "model_age_ms": report.model_age_ms,
         "expectancy_r": report.expectancy_r,
         "expectancy_n": report.expectancy_n,
+        "baseline_expectancy_r": report.baseline_expectancy_r,
+        "baseline_n": report.baseline_n,
         "pooled": report.pooled,
         "bars": [
             {

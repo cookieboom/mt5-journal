@@ -2,6 +2,7 @@
 // bestModel are pure and tested. Mirrors src/journal/lab/features.py
 // PRICE_FEATURES and web/lab_api.py's payload shapes — see lib/types.ts.
 import { postJson } from "./api";
+import { TIMEFRAMES, type Timeframe } from "./candles";
 import type { LabModel, LabScore, LabStage } from "./types";
 
 // Mirrors src/journal/lab/features.py::PRICE_FEATURES verbatim.
@@ -71,6 +72,16 @@ export function formatAge(ms: number | null): string {
   return "just now";
 }
 
+// Which timeframe to READ for a symbol that has no timeframe selector of its
+// own (/live). The page's chart default is M5 while /lab trains H1 by default,
+// so asking for the chart default renders "no model trained" on a machine
+// that has a perfectly good model — ask the models themselves instead, and
+// only fall back when the symbol has nothing trained at all.
+export function modelTimeframe(models: LabModel[], fallback: Timeframe): Timeframe {
+  const tf = bestModel(models, "timing")?.timeframe;
+  return (TIMEFRAMES as string[]).includes(tf ?? "") ? (tf as Timeframe) : fallback;
+}
+
 // The active model for a stage, else the newest one trained. Null when the
 // stage has no models at all.
 export function bestModel(models: LabModel[], stage: LabStage): LabModel | null {
@@ -113,8 +124,11 @@ async function getJson<T>(path: string, params: Record<string, string>): Promise
   return (await r.json()) as T;
 }
 
-export function fetchModels(symbol: string, timeframe: string) {
-  return getJson<{ models: LabModel[] }>("/api/lab/models", { symbol, timeframe });
+// `timeframe` is optional — /live asks for every timeframe a symbol has, then
+// picks one with modelTimeframe (the API's own filter is optional too).
+export function fetchModels(symbol: string, timeframe?: string) {
+  return getJson<{ models: LabModel[] }>(
+    "/api/lab/models", timeframe ? { symbol, timeframe } : { symbol });
 }
 
 export function fetchScore(symbol: string, timeframe: string, bars = 300) {

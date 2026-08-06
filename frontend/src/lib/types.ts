@@ -356,6 +356,11 @@ export interface LabScore {
   // count so the UI can render "n = 14, suppressed" instead of a bare dash.
   expectancy_r: number | null;
   expectancy_n: number | null;
+  // The same model's random-entry baseline over the same rows, suppressed
+  // below its own n=20. Expectancy is only readable against it — see
+  // docs/lab-models.md § Reading the metrics table.
+  baseline_expectancy_r: number | null;
+  baseline_n: number | null;
   pooled: boolean;
   bars: LabBarScore[];
 }
