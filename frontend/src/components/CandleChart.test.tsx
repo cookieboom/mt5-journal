@@ -693,4 +693,26 @@ describe("drawing gesture", () => {
     fireEvent.keyDown(input, { key: "Enter" });
     expect(props.onUpdate).toHaveBeenCalledWith({ ...label, text: "new" });
   });
+
+  it("does not let a text-tool press over an existing drawing select it", () => {
+    const hline = { id: "h1", kind: "hline" as const, price: 105 };
+    const props = drawingProps({ items: [hline] });
+    const { container, getByTestId } = render(<CandleChart {...base} drawings={props} />);
+    fireEvent.click(container.querySelector('[aria-label="teks"]')!);
+    const pane = container.querySelector(".w-full.h-full > div")! as HTMLElement;
+    // price 105 sits at y=150 — exactly on the hline's projected pixel, so a
+    // masked-to-cursor gesture hook would hit-test and grab it here.
+    fireEvent.pointerDown(pane, { clientX: 40, clientY: 150 });
+    fireEvent.pointerUp(window, { clientX: 40, clientY: 150 });
+
+    const input = getByTestId("text-drawing-input") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "note" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    // If the hline got silently selected by the press above, this Delete
+    // (fired outside the now-unmounted input) would delete it instead of
+    // being a no-op.
+    fireEvent.keyDown(window, { key: "Delete" });
+    expect(props.onDelete).not.toHaveBeenCalledWith("h1");
+  });
 });

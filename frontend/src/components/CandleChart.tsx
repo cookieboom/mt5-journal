@@ -735,11 +735,17 @@ const CandleChart = forwardRef<ChartHandle, {
 
   const gesture = useDrawingGesture({
     node: el.current,
-    enabled: !!drawings?.editable,
     // The text tool never enters the draw reducer's drag path — a single
-    // press just opens the inline editor below — so it's masked to "cursor"
-    // here (select/drag existing objects only) and handled by its own effect.
-    tool: tool === "text" ? "cursor" : tool,
+    // press just opens the inline editor below, handled by its own effect —
+    // so the hook is disabled outright while the text tool is armed. Masking
+    // `tool` to "cursor" instead (so the hook still ran) let its hit-test
+    // branch silently grab/select whatever drawing sat under the press, which
+    // then became the Delete key's target instead of the label just typed.
+    // `tool` snaps back to "cursor" the instant the press lands (see the text
+    // effect below), so this disables the hook only for the brief moment
+    // between arming the tool and the next press.
+    enabled: !!drawings?.editable && tool !== "text",
+    tool,
     items: drawings?.items ?? [],
     projected: projectedDrawings,
     toAnchor,
