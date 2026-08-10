@@ -30,9 +30,28 @@ export function useDrawingGesture(o: DrawingGestureOpts): {
   draft: Drawing | null;
   selectedId: string | null;
 } {
-  const [state, setState] = useState<DrawState>(DRAW_IDLE);
+  // stateRef is the single source of truth; React's state exists only to
+  // trigger re-renders. Every state read below goes through stateRef (never
+  // the React `state` binding, which lags a render behind at event time).
+  const stateRef = useRef<DrawState>(DRAW_IDLE);
+  const [state, setReactState] = useState<DrawState>(DRAW_IDLE);
   const opts = useRef(o);
   opts.current = o;
+
+  // Resolves an updater synchronously against stateRef and always hands React
+  // a plain value, never a function. That's what keeps every transition here
+  // side-effect-free from React's point of view: StrictMode double-invokes an
+  // updater FUNCTION passed straight to its setState (by design, to surface
+  // impure updaters) — passing a plain value sidesteps that, so callers do
+  // side effects (onAdd/onUpdate/onDelete/onToolDone/suppressPan) around this
+  // call, in the handler, never inside a function given to it.
+  const setState = (next: DrawState | ((s: DrawState) => DrawState)) => {
+    const resolved = typeof next === "function"
+      ? (next as (s: DrawState) => DrawState)(stateRef.current)
+      : next;
+    stateRef.current = resolved;
+    setReactState(resolved);
+  };
 
   useEffect(() => {
     const node = o.node;
@@ -79,26 +98,27 @@ export function useDrawingGesture(o: DrawingGestureOpts): {
       });
     };
 
+    // Reads the state snapshot once, runs side effects against it, then
+    // commits — never inside the setState call itself (see the note above).
     const onUp = () => {
-      setState((s) => {
-        const { items, onAdd, onUpdate, onToolDone, suppressPan } = opts.current;
-        if (s.phase === "drawing") {
-          suppressPan(false);
-          onToolDone();
-          // A press with no drag leaves both anchors coincident — that is a
-          // stray click, not an object.
-          if (isDegenerate(s.draft)) return DRAW_IDLE;
-          onAdd(s.draft);
-          return drawReducer(s, { t: "commit" });
-        }
-        if (s.phase === "dragging") {
-          suppressPan(false);
-          const target = items.find((d) => d.id === s.id);
-          if (target && s.at) onUpdate(moveDrawing(target, s.handle, s.from, s.at));
-          return drawReducer(s, { t: "commit" });
-        }
-        return s;
-      });
+      const s = stateRef.current;
+      const { items, onAdd, onUpdate, onToolDone, suppressPan } = opts.current;
+      if (s.phase === "drawing") {
+        suppressPan(false);
+        onToolDone();
+        // A press with no drag leaves both anchors coincident — that is a
+        // stray click, not an object.
+        if (isDegenerate(s.draft)) { setState(DRAW_IDLE); return; }
+        onAdd(s.draft);
+        setState(drawReducer(s, { t: "commit" }));
+        return;
+      }
+      if (s.phase === "dragging") {
+        suppressPan(false);
+        const target = items.find((d) => d.id === s.id);
+        if (target && s.at) onUpdate(moveDrawing(target, s.handle, s.from, s.at));
+        setState(drawReducer(s, { t: "commit" }));
+      }
     };
 
     const onKey = (e: KeyboardEvent) => {
@@ -108,11 +128,15 @@ export function useDrawingGesture(o: DrawingGestureOpts): {
         return;
       }
       if (e.key === "Delete" || e.key === "Backspace") {
-        setState((s) => {
-          if (s.phase !== "selected") return s;
-          opts.current.onDelete(s.id);
-          return DRAW_IDLE;
-        });
+        // Never eat a Delete/Backspace meant for a text field elsewhere on the
+        // page (lot-size input, replay-config dialog, Task 10's own text-tool
+        // input) — onDelete is the persisting path, so a false hit here is
+        // real data loss, not a UI glitch.
+        if (isEditableTarget(e.target)) return;
+        const s = stateRef.current;
+        if (s.phase !== "selected") return;
+        opts.current.onDelete(s.id);
+        setState(DRAW_IDLE);
       }
     };
 
@@ -129,6 +153,9 @@ export function useDrawingGesture(o: DrawingGestureOpts): {
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("pointercancel", onCancel);
+      // Don't leave pan/zoom suppressed if this effect tears down mid-drag
+      // (enabled/node changing) while the chart stays mounted.
+      opts.current.suppressPan(false);
     };
   }, [o.node, o.enabled]);
 
@@ -143,4 +170,9 @@ function isDegenerate(d: Drawing): boolean {
   if (d.kind === "text") return d.text.length === 0;
   return Math.abs(d.a.timeMs - d.b.timeMs) < 1
     && Math.abs(d.a.price - d.b.price) < 1e-9;
+}
+
+function isEditableTarget(t: EventTarget | null): boolean {
+  if (!(t instanceof HTMLElement)) return false;
+  return t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable;
 }

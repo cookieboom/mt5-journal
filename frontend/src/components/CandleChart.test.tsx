@@ -599,6 +599,24 @@ describe("drawing gesture", () => {
     expect(props.onUpdate).not.toHaveBeenCalled();
   });
 
+  it("lets a double-click-hold measure gesture win over a drawing at the same pixel", () => {
+    // A drawing sits exactly where the double-click-hold lands (price 105 → y=150).
+    const props = drawingProps({ items: [{ id: "h1", kind: "hline", price: 105 }] });
+    const { container } = render(<CandleChart {...base} drawings={props} />);
+    const pane = container.querySelector(".w-full.h-full > div")! as HTMLElement;
+
+    // First press+release, then a second down within DBLCLICK_MS/DBLCLICK_PX
+    // — the same trigger the pre-existing SL/TP double-click test uses.
+    fireEvent.pointerDown(pane, { clientX: 40, clientY: 150 });
+    fireEvent.pointerUp(window, { clientX: 40, clientY: 150 });
+    fireEvent.pointerDown(pane, { clientX: 41, clientY: 151 });
+    fireEvent.pointerMove(window, { clientX: 41, clientY: 130 });
+
+    expect(props.onUpdate).not.toHaveBeenCalled();
+    // …the measure gesture, not a drawing re-grab, is what actually ran
+    expect(container.querySelector('[data-testid="measure-overlay"]')).toBeTruthy();
+  });
+
   it("attaches no drawing listeners when read-only", () => {
     const props = drawingProps({ editable: false, items: [{ id: "h1", kind: "hline", price: 105 }] });
     const { container } = render(<CandleChart {...base} drawings={props} />);

@@ -45,6 +45,12 @@ const CROSSHAIR = {
   normal: CrosshairMode.Normal, magnet: CrosshairMode.Magnet, hidden: CrosshairMode.Hidden,
 } as const;
 
+// A pane that hasn't laid out yet (pre-paint, or a ResizeObserver-less test
+// DOM) reports clientWidth 0 — never a genuine zero-width chart — so an
+// hline's projected span falls back to this instead of collapsing its
+// hit-test segment to a point.
+const FALLBACK_PANE_WIDTH_PX = 2000;
+
 // Candle/bar carry OHLC; line/area carry a single value (close).
 function isOHLC(t: ChartSettings["chartType"]): boolean {
   return t === "candle" || t === "bar";
@@ -697,11 +703,7 @@ const CandleChart = forwardRef<ChartHandle, {
   // containing bar, so a level drawn on M15 still renders on H1).
   const drawings = props.drawings;
   const drawCtx = {
-    // A real 0px width only ever means "not laid out yet" (pre-paint, or a
-    // ResizeObserver-less test DOM) — never a genuine zero-width pane, so it
-    // falls back to a generous sentinel rather than collapsing the hline's
-    // hit-test segment to a point.
-    width: el.current?.clientWidth || 2000,
+    width: el.current?.clientWidth || FALLBACK_PANE_WIDTH_PX,
     candles: props.candles,
     logicalToX: (i: number) => {
       const x = chart.current?.timeScale().logicalToCoordinate(i as never);
