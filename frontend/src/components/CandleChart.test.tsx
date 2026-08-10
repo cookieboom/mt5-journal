@@ -61,6 +61,7 @@ vi.mock("lightweight-charts", async () => {
       // finite logical index) so toPoint() only fails on genuine price-axis
       // nulls, matching real-browser behavior where both axes resolve.
       ts.coordinateToLogical = (x: number) => x;
+      ts.logicalToCoordinate = (i: number) => i;
       return chart;
     },
   };
@@ -468,5 +469,145 @@ describe("planned-order lines", () => {
     const { priceLines } = renderChart({ plannedOrder, draggablePositions });
     expect(priceLines.map((l) => l.price).sort((a, b) => a - b))
       .toEqual([3990, 4000, 4030, 4035]);
+  });
+});
+
+describe("drawing gesture", () => {
+  // Only items/editable are ever overridden below — narrowed to those two
+  // (rather than the full Partial<drawings>) so the spread doesn't widen
+  // onAdd/onUpdate/onDelete/onClearAll's type away from vi.fn()'s Mock, which
+  // would otherwise lose `.mock.calls` under tsc (vitest itself doesn't
+  // typecheck, so this only surfaces via `tsc -b`).
+  const drawingProps = (
+    over: Partial<Pick<NonNullable<ComponentProps<typeof CandleChart>["drawings"]>, "items" | "editable">> = {},
+  ) => ({
+    items: [],
+    editable: true,
+    onAdd: vi.fn(),
+    onUpdate: vi.fn(),
+    onDelete: vi.fn(),
+    onClearAll: vi.fn(),
+    ...over,
+  });
+
+  const base = {
+    symbol: "XAUUSDc" as const,
+    tf: "M1" as const,
+    settings: DEFAULT_SETTINGS,
+    candles: mockCandles,
+    onHover: () => {},
+    onNowVisibleChange: () => {},
+    onRequestOlder: () => {},
+    lastBarMs: null,
+    live: null,
+    nowVisible: false,
+  };
+
+  it("renders neither palette nor overlay when the drawings prop is absent", () => {
+    const { container, queryByTestId } = render(<CandleChart {...base} />);
+    expect(queryByTestId("drawing-overlay")).toBeNull();
+    expect(container.querySelector('[aria-label="trendline"]')).toBeNull();
+  });
+
+  it("renders the palette when editable and hides it when read-only", () => {
+    const { container, rerender } = render(<CandleChart {...base} drawings={drawingProps()} />);
+    expect(container.querySelector('[aria-label="trendline"]')).toBeTruthy();
+    rerender(<CandleChart {...base} drawings={drawingProps({ editable: false })} />);
+    expect(container.querySelector('[aria-label="trendline"]')).toBeNull();
+  });
+
+  it("draws a trendline from press to release and returns the tool to cursor", () => {
+    const props = drawingProps();
+    const { container } = render(<CandleChart {...base} drawings={props} />);
+    fireEvent.click(container.querySelector('[aria-label="trendline"]')!);
+    const pane = container.querySelector(".w-full.h-full > div")! as HTMLElement;
+
+    fireEvent.pointerDown(pane, { clientX: 10, clientY: 200 });
+    fireEvent.pointerMove(window, { clientX: 60, clientY: 100 });
+    fireEvent.pointerUp(window, { clientX: 60, clientY: 100 });
+
+    expect(props.onAdd).toHaveBeenCalledTimes(1);
+    const added = props.onAdd.mock.calls[0][0];
+    expect(added.kind).toBe("trend");
+    expect(added.a.price).toBeCloseTo(100, 6);
+    expect(added.b.price).toBeCloseTo(110, 6);
+    // one object per tool click: the palette falls back to cursor afterwards
+    expect(container.querySelector('[aria-label="kursor"]')!.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("discards a degenerate object drawn with no movement", () => {
+    const props = drawingProps();
+    const { container } = render(<CandleChart {...base} drawings={props} />);
+    fireEvent.click(container.querySelector('[aria-label="kotak"]')!);
+    const pane = container.querySelector(".w-full.h-full > div")! as HTMLElement;
+    fireEvent.pointerDown(pane, { clientX: 10, clientY: 200 });
+    fireEvent.pointerUp(window, { clientX: 10, clientY: 200 });
+    expect(props.onAdd).not.toHaveBeenCalled();
+  });
+
+  it("escape cancels an in-progress draw", () => {
+    const props = drawingProps();
+    const { container } = render(<CandleChart {...base} drawings={props} />);
+    fireEvent.click(container.querySelector('[aria-label="trendline"]')!);
+    const pane = container.querySelector(".w-full.h-full > div")! as HTMLElement;
+    fireEvent.pointerDown(pane, { clientX: 10, clientY: 200 });
+    fireEvent.pointerMove(window, { clientX: 60, clientY: 100 });
+    fireEvent.keyDown(window, { key: "Escape" });
+    fireEvent.pointerUp(window, { clientX: 60, clientY: 100 });
+    expect(props.onAdd).not.toHaveBeenCalled();
+  });
+
+  it("selects an existing drawing and deletes it with the Delete key", () => {
+    const hline = { id: "h1", kind: "hline" as const, price: 105 };
+    const props = drawingProps({ items: [hline] });
+    const { container } = render(<CandleChart {...base} drawings={props} />);
+    const pane = container.querySelector(".w-full.h-full > div")! as HTMLElement;
+    // price 105 sits at y=150 under the harness mapping
+    fireEvent.pointerDown(pane, { clientX: 40, clientY: 150 });
+    fireEvent.pointerUp(window, { clientX: 40, clientY: 150 });
+    fireEvent.keyDown(window, { key: "Delete" });
+    expect(props.onDelete).toHaveBeenCalledWith("h1");
+  });
+
+  it("drags a selected hline to a new price", () => {
+    const hline = { id: "h1", kind: "hline" as const, price: 105 };
+    const props = drawingProps({ items: [hline] });
+    const { container } = render(<CandleChart {...base} drawings={props} />);
+    const pane = container.querySelector(".w-full.h-full > div")! as HTMLElement;
+    fireEvent.pointerDown(pane, { clientX: 40, clientY: 150 });
+    fireEvent.pointerMove(window, { clientX: 40, clientY: 100 });
+    fireEvent.pointerUp(window, { clientX: 40, clientY: 100 });
+    expect(props.onUpdate).toHaveBeenCalledTimes(1);
+    expect(props.onUpdate.mock.calls[0][0].price).toBeCloseTo(110, 6);
+  });
+
+  it("lets an SL/TP line win over a drawing at the same pixel", () => {
+    const onSlTpChange = vi.fn();
+    const positions: DraggablePosition[] = [
+      { id: 5, direction: "buy", entry_price: 105, sl: 100, tp: 110 },
+    ];
+    // A drawing sits exactly on the SL line (price 100 → y=200).
+    const props = drawingProps({ items: [{ id: "h1", kind: "hline", price: 100 }] });
+    const { container } = render(
+      <CandleChart {...base} drawings={props} draggablePositions={positions} onSlTpChange={onSlTpChange} />,
+    );
+    const pane = container.querySelector(".w-full.h-full > div")! as HTMLElement;
+    fireEvent.pointerDown(pane, { clientX: 40, clientY: 200 });
+    fireEvent.pointerMove(window, { clientX: 40, clientY: 190 });
+    fireEvent.pointerUp(window, { clientX: 40, clientY: 190 });
+    expect(onSlTpChange).toHaveBeenCalledTimes(1);
+    expect(props.onUpdate).not.toHaveBeenCalled();
+  });
+
+  it("attaches no drawing listeners when read-only", () => {
+    const props = drawingProps({ editable: false, items: [{ id: "h1", kind: "hline", price: 105 }] });
+    const { container } = render(<CandleChart {...base} drawings={props} />);
+    const pane = container.querySelector(".w-full.h-full > div")! as HTMLElement;
+    fireEvent.pointerDown(pane, { clientX: 40, clientY: 150 });
+    fireEvent.pointerMove(window, { clientX: 40, clientY: 100 });
+    fireEvent.pointerUp(window, { clientX: 40, clientY: 100 });
+    expect(props.onUpdate).not.toHaveBeenCalled();
+    // …but the object is still drawn
+    expect(container.querySelector('[data-testid="drawing-h1"]')).toBeTruthy();
   });
 });

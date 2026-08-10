@@ -25,6 +25,12 @@ import { classifyGaps } from "../lib/coverage";
 import {
   resolveDragTarget, ghostTitle, HIT_THRESHOLD_PX, PLANNED_ID, type DraggablePosition, type LineKind,
 } from "../lib/sltpDrag";
+import DrawingOverlay from "./DrawingOverlay";
+import DrawingPalette from "./DrawingPalette";
+import { useDrawingGesture } from "../hooks/useDrawingGesture";
+import {
+  moveDrawing, projectDrawing, type Anchor, type Drawing, type Projected, type Tool,
+} from "../lib/drawings";
 
 const DARK = {
   bg: "transparent", text: "#9a97c4", grid: "rgba(255,255,255,0.06)",
@@ -89,6 +95,14 @@ const CandleChart = forwardRef<ChartHandle, {
   missing?: [number, number][];
   shadeCoverage?: boolean;
   hideDate?: boolean;
+  drawings?: {
+    items: Drawing[];
+    editable: boolean;
+    onAdd: (d: Drawing) => void;
+    onUpdate: (d: Drawing) => void;
+    onDelete: (id: string) => void;
+    onClearAll: () => void;
+  };
 }>(function CandleChart(props, ref) {
   const el = useRef<HTMLDivElement>(null);
   const chart = useRef<IChartApi | null>(null);
@@ -107,6 +121,7 @@ const CandleChart = forwardRef<ChartHandle, {
     direction: "buy" | "sell"; entryPrice: number | null;
   } | null>(null);
   const [sltpGhost, setSltpGhost] = useState<{ price: number; kind: "sl" | "tp" } | null>(null);
+  const [tool, setTool] = useState<Tool>("cursor");
   const linesMeta = useRef<{
     line: IPriceLine; positionId: number; kind: LineKind;
     direction: "buy" | "sell"; entryPrice: number | null;
@@ -221,6 +236,7 @@ const CandleChart = forwardRef<ChartHandle, {
     s.applyOptions({ priceLineVisible: props.settings.lastPriceLine });
     chart.current = c;
     series.current = s;
+    bumpProjection();   // refs just set: re-render so drawing projections use them
 
     c.subscribeCrosshairMove((param) => {
       const cur = series.current;
@@ -270,6 +286,7 @@ const CandleChart = forwardRef<ChartHandle, {
     if (!node || typeof ResizeObserver === "undefined") return;
     const ro = new ResizeObserver(() => bumpProjection());
     ro.observe(node);
+    bumpProjection();   // el.current is now set: re-render so gesture listeners attach
     return () => ro.disconnect();
   }, []);
 
@@ -675,6 +692,72 @@ const CandleChart = forwardRef<ChartHandle, {
     if (x === null || y === null) return null;
     return { x: x as number, y: y as number };
   };
+
+  // Drawing projection context (anchorToX inside projectDrawing snaps to the
+  // containing bar, so a level drawn on M15 still renders on H1).
+  const drawings = props.drawings;
+  const drawCtx = {
+    // A real 0px width only ever means "not laid out yet" (pre-paint, or a
+    // ResizeObserver-less test DOM) — never a genuine zero-width pane, so it
+    // falls back to a generous sentinel rather than collapsing the hline's
+    // hit-test segment to a point.
+    width: el.current?.clientWidth || 2000,
+    candles: props.candles,
+    logicalToX: (i: number) => {
+      const x = chart.current?.timeScale().logicalToCoordinate(i as never);
+      return x === null || x === undefined ? null : (x as number);
+    },
+    priceToY: (p: number) => {
+      const y = series.current?.priceToCoordinate(p);
+      return y === null || y === undefined ? null : (y as number);
+    },
+  };
+  const projectedDrawings: Projected[] = drawings
+    ? drawings.items.map((d) => projectDrawing(d, drawCtx))
+    : [];
+
+  const toAnchor = useCallback((x: number, y: number): Anchor | null => {
+    const p = toPoint(x, y);
+    return p === null ? null : { timeMs: p.barTimeMs, price: p.price };
+  }, [toPoint]);
+
+  const gesture = useDrawingGesture({
+    node: el.current,
+    enabled: !!drawings?.editable,
+    tool,
+    items: drawings?.items ?? [],
+    projected: projectedDrawings,
+    toAnchor,
+    // An SL/TP line and the measure double-click-hold both outrank a drawing.
+    reserved: (_x, y, e) =>
+      hitTestLine(y) !== null
+      || (lastUp.current !== null
+          && isDoubleClickHold(lastUp.current.ms, lastUp.current.x, lastUp.current.y,
+                               e.timeStamp, _x, y)),
+    onAdd: (d) => drawings?.onAdd(d),
+    onUpdate: (d) => drawings?.onUpdate(d),
+    onDelete: (id) => drawings?.onDelete(id),
+    onToolDone: () => setTool("cursor"),
+    suppressPan: (off) => chart.current?.applyOptions({ handleScroll: !off, handleScale: !off }),
+  });
+
+  // Live preview: in-progress draft, or the object under an active drag —
+  // neither is committed until pointerup.
+  let previewProjected = projectedDrawings;
+  if (gesture.draft) {
+    previewProjected = [...projectedDrawings, projectDrawing(gesture.draft, drawCtx)];
+  } else {
+    const gs = gesture.state;
+    if (gs.phase === "dragging" && gs.at && drawings) {
+      const target = drawings.items.find((d) => d.id === gs.id);
+      if (target) {
+        const moved = moveDrawing(target, gs.handle, gs.from, gs.at);
+        previewProjected = projectedDrawings.map((p) =>
+          p.d.id === gs.id ? projectDrawing(moved, drawCtx) : p);
+      }
+    }
+  }
+
   let overlay: JSX.Element | null = null;
   if (measure.phase !== "idle") {
     const a = project(measure.anchor);
@@ -719,6 +802,17 @@ const CandleChart = forwardRef<ChartHandle, {
       <div ref={el} className="w-full h-full" />
       {overlay}
       {shadeOverlay}
+      {drawings && (
+        <DrawingOverlay projected={previewProjected} selectedId={gesture.selectedId} />
+      )}
+      {drawings?.editable && (
+        <DrawingPalette
+          tool={tool}
+          onTool={setTool}
+          onClearAll={drawings.onClearAll}
+          count={drawings.items.length}
+        />
+      )}
     </div>
   );
 });
