@@ -204,15 +204,25 @@ stays correct until reload.
 
 ## Page scope
 
+Corrected against the code: `/live` (`pages/Live.tsx`) renders **no chart at
+all** — it only reads `useChartPrefs` for styling. The three pages that mount
+`CandleChart` are `Chart.tsx`, `TradeView.tsx` and `Lab.tsx`.
+
 | Page | Palette | Drawings rendered |
 |---|---|---|
-| `/chart` (normal, live) | yes | yes, editable |
+| `/chart` (normal + live overlay) | yes | yes, editable |
 | `/chart` replay mode | yes | yes, editable, session-scoped |
 | `/trades/:id/view` | no | yes, read-only |
-| `/live` | no | yes, read-only |
+| `/lab` | no | no |
+| `/live` | — | — (no chart exists) |
 
-Read-only is a single `editable={false}` prop: the palette is not rendered and
-`useDrawingGesture` does not attach its listeners.
+Drawings are **opt-in per mount**: `CandleChart` renders nothing drawing-related
+unless the caller passes a `drawings` prop. `Lab.tsx` passes nothing and is
+therefore untouched — its pane already carries `RegimeOverlay` and a probability
+strip, and model output must not be visually confused with hand annotations.
+
+Read-only is `drawings={{ items, editable: false }}`: the palette is not
+rendered and `useDrawingGesture` attaches no listeners.
 
 ## Replay interaction
 
