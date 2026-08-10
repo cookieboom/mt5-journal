@@ -433,12 +433,6 @@ const CandleChart = forwardRef<ChartHandle, {
     // drawing's projected y goes stale until something else happens to bump
     // it. The axis renders inside `node`, so its own pointerup/wheel reach
     // this listener same as everything else here.
-    // A drag/wheel on the right price axis rescales priceToCoordinate without
-    // touching the logical range, so it fires neither
-    // subscribeVisibleLogicalRangeChange nor the ResizeObserver above — every
-    // drawing's projected y goes stale until something else happens to bump
-    // it. The axis renders inside `node`, so its own pointerup/wheel reach
-    // this listener same as everything else here.
     node.addEventListener("pointerup", bumpProjection);
     node.addEventListener("wheel", bumpProjection, { passive: true });
 
