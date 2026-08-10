@@ -20,6 +20,13 @@ export function useDrawings(symbol: string, sessionId: number | null, enabled: b
   clear: () => void;
 } {
   const [items, setItems] = useState<Drawing[]>([]);
+  // Mirrors `items` synchronously (updated both on every render AND inline by
+  // `apply`, below) so mutation handlers can read the latest value without
+  // going through a setState updater function — StrictMode double-invokes an
+  // updater function passed straight to setState, which is exactly the hazard
+  // useDrawingGesture's own comments spend six lines avoiding.
+  const itemsRef = useRef<Drawing[]>(items);
+  itemsRef.current = items;
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const target = useRef(url(symbol, sessionId));
   target.current = url(symbol, sessionId);
@@ -33,10 +40,14 @@ export function useDrawings(symbol: string, sessionId: number | null, enabled: b
   const pending = useRef<{ to: string; next: Drawing[] } | null>(null);
 
   useEffect(() => {
-    if (!enabled) return;
-    let alive = true;
+    // Reset BEFORE the enabled guard: disabling (e.g. a replay session still
+    // starting — see Chart.tsx's drawingsReady) must clear whatever the
+    // previous key showed, not leave it on screen (and editable) under the
+    // new, wrong key.
     dirty.current = false;
     setItems([]);                       // never show one symbol's drawings on another
+    if (!enabled) return;
+    let alive = true;
     fetch(url(symbol, sessionId))
       .then((r) => (r.ok ? r.json() : null))
       .then((body: { drawings: unknown } | null) => {
@@ -47,11 +58,14 @@ export function useDrawings(symbol: string, sessionId: number | null, enabled: b
     return () => { alive = false; };
   }, [symbol, sessionId, enabled]);
 
-  const doPut = useCallback((to: string, next: Drawing[]) => {
+  const doPut = useCallback((to: string, next: Drawing[], keepalive = false) => {
     void fetch(to, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ v: BLOB_VERSION, items: next }),
+      keepalive,
+    }).then((r) => {
+      if (!r.ok) console.warn(`drawings PUT to ${to} failed with status ${r.status}`);
     }).catch(() => { /* offline — annotations only */ });
   }, []);
 
@@ -75,13 +89,15 @@ export function useDrawings(symbol: string, sessionId: number | null, enabled: b
     }, DEBOUNCE_MS);
   }, [doPut]);
 
+  // The side effect (schedule) runs in the handler body, against a ref, never
+  // inside the setItems updater — a plain-value setItems call can't be
+  // double-invoked by StrictMode, so there is nothing to guard against here.
   const apply = useCallback((fn: (prev: Drawing[]) => Drawing[]) => {
     dirty.current = true;
-    setItems((prev) => {
-      const next = fn(prev);
-      schedule(next);
-      return next;
-    });
+    const next = fn(itemsRef.current);
+    itemsRef.current = next;
+    setItems(next);
+    schedule(next);
   }, [schedule]);
 
   const add = useCallback((d: Drawing) => apply((prev) => [...prev, d]), [apply]);
@@ -93,7 +109,17 @@ export function useDrawings(symbol: string, sessionId: number | null, enabled: b
   );
   const clear = useCallback(() => apply(() => []), [apply]);
 
-  useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
+  // A pending debounced write must survive unmount (navigating away from
+  // /chart inside the 400ms window is the common case, not an edge case) —
+  // flush it immediately instead of dropping it on the floor. keepalive lets
+  // the request outlive a real tab close, same guarantee a real navigation
+  // needs less of but doesn't hurt.
+  useEffect(() => () => {
+    if (timer.current) {
+      clearTimeout(timer.current);
+      if (pending.current) doPut(pending.current.to, pending.current.next, true);
+    }
+  }, [doPut]);
 
   return { items, add, update, remove, clear };
 }

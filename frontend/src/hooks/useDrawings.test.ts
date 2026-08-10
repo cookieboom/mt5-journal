@@ -146,4 +146,61 @@ describe("useDrawings", () => {
     expect(puts[0][0]).toBe("/api/drawings?symbol=XAUUSDc");
     expect(JSON.parse(puts[0][1]!.body as string)).toEqual({ v: 1, items: [hline] });
   });
+
+  // IMPORTANT 2: navigating away from /chart within the 400ms debounce window
+  // must not silently drop the edit. Unmount previously only cleared the
+  // timer — the pending write vanished. Flush it instead, with keepalive so
+  // it also survives a real tab close.
+  it("flushes a pending debounced PUT on unmount instead of dropping it", async () => {
+    const f = mockFetch({ drawings: { v: 1, items: [] } });
+    vi.stubGlobal("fetch", f);
+    const { result, unmount } = renderHook(() => useDrawings("XAUUSDc", null, true));
+    await waitFor(() => expect(result.current.items).toEqual([]));
+
+    act(() => { result.current.add(hline); });
+    expect(result.current.items).toEqual([hline]);
+
+    // Unmount well inside the 400ms debounce window — the timer would not
+    // have fired on its own yet.
+    unmount();
+
+    const puts = f.mock.calls.filter((c) => (c[1] as RequestInit | undefined)?.method === "PUT");
+    expect(puts).toHaveLength(1);
+    expect(puts[0][0]).toBe("/api/drawings?symbol=XAUUSDc");
+    expect(JSON.parse(puts[0][1]!.body as string)).toEqual({ v: 1, items: [hline] });
+    expect((puts[0][1] as RequestInit).keepalive).toBe(true);
+  });
+
+  // MINOR 4: a 400 (e.g. the backend's size cap) was previously swallowed
+  // exactly like an offline failure — undiagnosable. It must at least warn.
+  it("warns on a non-ok PUT response instead of swallowing it silently", async () => {
+    const f = vi.fn((_url: string, init?: RequestInit) => {
+      if (init?.method === "PUT") {
+        return Promise.resolve({ ok: false, status: 400, json: () => Promise.resolve({ error: "too big" }) } as Response);
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ drawings: { v: 1, items: [] } }) } as Response);
+    });
+    vi.stubGlobal("fetch", f);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { result } = renderHook(() => useDrawings("XAUUSDc", null, true));
+    await waitFor(() => expect(result.current.items).toEqual([]));
+
+    act(() => { result.current.add(hline); });
+    await act(async () => { vi.advanceTimersByTime(500); });
+
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("does not fire a flush PUT on unmount when nothing is pending", async () => {
+    const f = mockFetch({ drawings: { v: 1, items: [] } });
+    vi.stubGlobal("fetch", f);
+    const { result, unmount } = renderHook(() => useDrawings("XAUUSDc", null, true));
+    await waitFor(() => expect(result.current.items).toEqual([]));
+
+    unmount();
+
+    const puts = f.mock.calls.filter((c) => (c[1] as RequestInit | undefined)?.method === "PUT");
+    expect(puts).toHaveLength(0);
+  });
 });

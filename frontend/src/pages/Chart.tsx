@@ -71,8 +71,18 @@ export default function Chart() {
   // Replay drawings live under their own session key: a live annotation was
   // made knowing what happened next, so showing it during training would leak
   // the answer. Passing null outside replay selects the per-symbol live key.
+  //
+  // `replay.start(cfg)` is an async POST — `setReplayOpen(true)` above lands
+  // synchronously, well before `replay.session` is assigned from the
+  // response. For that whole window `replayOpen` is true but `replay.session`
+  // is still null, so a naive `replay.session?.id ?? null` falls back to the
+  // LIVE per-symbol key — showing live drawings, editable, on the replay
+  // chart, with an edit in that window persisting to the live key. Gate the
+  // hook itself on `drawingsReady` so it neither reads nor writes ANY key
+  // until the real session key is known.
   const drawingSession = replayOpen ? replay.session?.id ?? null : null;
-  const drawings = useDrawings(symbol, drawingSession, true);
+  const drawingsReady = !replayOpen || replay.session != null;
+  const drawings = useDrawings(symbol, drawingSession, drawingsReady);
 
   const [compRound, setCompRound] = useState(1);
   // Closed positions of the FINISHED scenarios. Each round is its own backend
@@ -284,12 +294,15 @@ export default function Chart() {
   );
   const drawingsProp = useMemo(() => ({
     items: drawings.items,
-    editable: true,
+    // Not editable while the replay-session key is still pending (see
+    // drawingsReady above): the palette itself must not render, or a draw
+    // made in that window would target the live key underneath it.
+    editable: drawingsReady,
     onAdd: drawings.add,
     onUpdate: drawings.update,
     onDelete: drawings.remove,
     onClearAll: drawings.clear,
-  }), [drawings.items, drawings.add, drawings.update, drawings.remove, drawings.clear]);
+  }), [drawings.items, drawings.add, drawings.update, drawings.remove, drawings.clear, drawingsReady]);
 
   const competitive = replayPrefs.prefs.competitiveMode;
   const { data: career } = useApi<TrainingSummary>(

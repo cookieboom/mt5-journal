@@ -496,4 +496,35 @@ describe("risk sizing panel", () => {
       expect(urls.some((u) => u.startsWith("/api/drawings?") && u.includes("session_id=1"))).toBe(true);
     });
   });
+
+  // IMPORTANT 1: replay.start(cfg) is an async POST. setReplayOpen(true) lands
+  // synchronously, well before the response assigns replay.session — so there
+  // is a real window where replayOpen is true but replay.session is still
+  // null. A naive `replay.session?.id ?? null` falls back to the LIVE
+  // per-symbol key during that whole window, rendering it editable on the
+  // replay chart; an edit landing there would persist to the live key. This
+  // test drives that exact window: the mocked useReplaySession.start() never
+  // assigns replaySession.session (standing in for "POST still in flight").
+  it("does not read the live drawings key or render it editable while a replay session is starting", async () => {
+    const { fetchMock } = renderChartPage({ replayOpen: false });
+    await screen.findByTestId("candle-chart");
+    // The initial (non-replay) mount already read the live key once — clear
+    // so only what happens AFTER entering replay is under test.
+    fetchMock.mockClear();
+
+    fireEvent.click(screen.getByRole("button", { name: /replay/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^mulai$/i }));
+
+    // Confirms the window this test targets is real: start() was invoked but
+    // (per the mock) never resolved a session.
+    expect(replaySession.session).toBeNull();
+
+    const urls = fetchMock.mock.calls.map(([u]: [string, RequestInit?]) => u);
+    expect(urls).not.toContain("/api/drawings?symbol=XAUUSDc");
+
+    const calls = mockCandleChart.mock.calls;
+    const props = calls[calls.length - 1][0];
+    expect(props.drawings.editable).toBe(false);
+    expect(props.drawings.items).toEqual([]);
+  });
 });
