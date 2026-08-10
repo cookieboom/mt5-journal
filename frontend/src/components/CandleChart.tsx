@@ -427,12 +427,29 @@ const CandleChart = forwardRef<ChartHandle, {
       setMeasure((s) => measureReducer(s, { t: "clear" }));
     };
 
+    // A drag/wheel on the right price axis rescales priceToCoordinate without
+    // touching the logical range, so it fires neither
+    // subscribeVisibleLogicalRangeChange nor the ResizeObserver above — every
+    // drawing's projected y goes stale until something else happens to bump
+    // it. The axis renders inside `node`, so its own pointerup/wheel reach
+    // this listener same as everything else here.
+    // A drag/wheel on the right price axis rescales priceToCoordinate without
+    // touching the logical range, so it fires neither
+    // subscribeVisibleLogicalRangeChange nor the ResizeObserver above — every
+    // drawing's projected y goes stale until something else happens to bump
+    // it. The axis renders inside `node`, so its own pointerup/wheel reach
+    // this listener same as everything else here.
+    node.addEventListener("pointerup", bumpProjection);
+    node.addEventListener("wheel", bumpProjection, { passive: true });
+
     node.addEventListener("pointerdown", onDown);
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
     window.addEventListener("keydown", onKey);
     window.addEventListener("pointercancel", onCancel);
     return () => {
+      node.removeEventListener("pointerup", bumpProjection);
+      node.removeEventListener("wheel", bumpProjection);
       node.removeEventListener("pointerdown", onDown);
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
@@ -760,6 +777,10 @@ const CandleChart = forwardRef<ChartHandle, {
     onDelete: (id) => drawings?.onDelete(id),
     onToolDone: () => setTool("cursor"),
     suppressPan: (off) => chart.current?.applyOptions({ handleScroll: !off, handleScale: !off }),
+    // See useDrawingGesture's onUp: a completed draw/drag must not leave its
+    // release point sitting in lastUp, or the next nearby press reads as the
+    // second half of a measure double-click instead of a re-grab.
+    clearMeasureSeed: () => { lastUp.current = null; },
   });
 
   // Text tool: a single press places the anchor and opens the inline editor —

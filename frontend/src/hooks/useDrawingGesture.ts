@@ -20,6 +20,10 @@ export interface DrawingGestureOpts {
   onDelete: (id: string) => void;
   onToolDone: () => void;
   suppressPan: (off: boolean) => void;
+  // Called when a NEW object finishes drawing, or an EXISTING one finishes an
+  // actual drag (not a plain select-click) — see the comment at both call
+  // sites in onUp for why a no-move grab/release must NOT call this.
+  clearMeasureSeed: () => void;
 }
 
 // Owns every pointer/key listener for drawing. Listens in the CAPTURE phase and
@@ -102,7 +106,7 @@ export function useDrawingGesture(o: DrawingGestureOpts): {
     // commits — never inside the setState call itself (see the note above).
     const onUp = () => {
       const s = stateRef.current;
-      const { items, onAdd, onUpdate, onToolDone, suppressPan } = opts.current;
+      const { items, onAdd, onUpdate, onToolDone, suppressPan, clearMeasureSeed } = opts.current;
       if (s.phase === "drawing") {
         suppressPan(false);
         onToolDone();
@@ -110,13 +114,28 @@ export function useDrawingGesture(o: DrawingGestureOpts): {
         // stray click, not an object.
         if (isDegenerate(s.draft)) { setState(DRAW_IDLE); return; }
         onAdd(s.draft);
+        // A NEW drawing's release lands exactly where the user is most likely
+        // to press next (to nudge the endpoint they just placed) — CandleChart
+        // records every pointerup as a potential double-click-hold seed
+        // regardless of source, so without this a "draw it, then nudge it"
+        // flow gets misread as the second half of a measure double-click.
+        // Deliberately NOT called for a no-move grab/release below — that
+        // exact shape (press+release, then a second nearby press) is what the
+        // measure-priority test relies on to trigger a real double-click-hold.
+        clearMeasureSeed();
         setState(drawReducer(s, { t: "commit" }));
         return;
       }
       if (s.phase === "dragging") {
         suppressPan(false);
         const target = items.find((d) => d.id === s.id);
-        if (target && s.at) onUpdate(moveDrawing(target, s.handle, s.from, s.at));
+        if (target && s.at) {
+          onUpdate(moveDrawing(target, s.handle, s.from, s.at));
+          // Same reasoning as the draw-commit branch above: an actual drag
+          // (not a plain select-click, which leaves `s.at` unset) ends where
+          // the user may want to grab again next.
+          clearMeasureSeed();
+        }
         setState(drawReducer(s, { t: "commit" }));
       }
     };

@@ -12,6 +12,11 @@ let capturedMarkers: SeriesMarker<Time>[] | null = null;
 let capturedLogicalRange: { from: number; to: number } | null = null;
 let capturedPriceLines: { price: number; color: string; title: string; axisLabelVisible?: boolean }[] = [];
 let capturedSeriesOptions: Record<string, unknown> = {};
+// The series instance itself, so a test can monkeypatch priceToCoordinate
+// mid-test to simulate a price-axis-only rescale (drag/wheel on the axis) —
+// a real rescale changes what that function returns without touching the
+// logical range, which is exactly the case IMPORTANT 3 covers.
+let capturedSeries: { priceToCoordinate: (price: number) => number } | null = null;
 
 vi.mock("lightweight-charts", async () => {
   const actual: any = await vi.importActual("lightweight-charts");
@@ -45,6 +50,7 @@ vi.mock("lightweight-charts", async () => {
         // y=150 <-> price=105 (entry line); 1px = 0.1 price unit elsewhere.
         s.priceToCoordinate = (price: number) => 200 - (price - 100) * 10;
         s.coordinateToPrice = (y: number) => 100 + (200 - y) / 10;
+        capturedSeries = s;
         return s;
       };
       const ts = chart.timeScale();
@@ -89,6 +95,7 @@ beforeEach(() => {
   capturedLogicalRange = null;
   capturedPriceLines = [];
   capturedSeriesOptions = {};
+  capturedSeries = null;
 
   vi.stubGlobal("matchMedia", vi.fn().mockImplementation((query: string) => ({
     matches: false, media: query, onchange: null,
@@ -714,5 +721,80 @@ describe("drawing gesture", () => {
     // being a no-op.
     fireEvent.keyDown(window, { key: "Delete" });
     expect(props.onDelete).not.toHaveBeenCalledWith("h1");
+  });
+
+  // IMPORTANT 3: dragging/wheeling the right PRICE AXIS rescales
+  // priceToCoordinate without touching the logical range, so neither
+  // subscribeVisibleLogicalRangeChange nor the ResizeObserver re-projects the
+  // drawings — every one of them sits at a stale y until something else
+  // happens to force a re-render. The axis renders inside the pane node, so a
+  // pointerup/wheel there must bump the projection too.
+  describe("re-projects drawings after a price-axis-only rescale", () => {
+    const hline = { id: "h1", kind: "hline" as const, price: 105 };
+
+    it("on pointerup", () => {
+      const props = drawingProps({ items: [hline] });
+      const { container } = render(<CandleChart {...base} drawings={props} />);
+      const pane = container.querySelector(".w-full.h-full > div")! as HTMLElement;
+      const line = () => container.querySelector('[data-testid="drawing-h1"]')!;
+      expect(line().getAttribute("y1")).toBe("150"); // price 105 under the initial mapping
+
+      // Simulate the axis rescale: priceToCoordinate now returns something
+      // else for the same price — nothing else about the chart changed.
+      capturedSeries!.priceToCoordinate = () => 999;
+      fireEvent.pointerUp(pane, { clientX: 5, clientY: 5 });
+
+      expect(line().getAttribute("y1")).toBe("999");
+    });
+
+    it("on wheel", () => {
+      const props = drawingProps({ items: [hline] });
+      const { container } = render(<CandleChart {...base} drawings={props} />);
+      const pane = container.querySelector(".w-full.h-full > div")! as HTMLElement;
+      const line = () => container.querySelector('[data-testid="drawing-h1"]')!;
+      expect(line().getAttribute("y1")).toBe("150");
+
+      capturedSeries!.priceToCoordinate = () => 777;
+      fireEvent.wheel(pane);
+
+      expect(line().getAttribute("y1")).toBe("777");
+    });
+  });
+
+  // MINOR 6: CandleChart's own onUp records EVERY pointerup as a potential
+  // double-click-hold seed, regardless of source — including the release that
+  // just completed a brand-new drawing. Without clearMeasureSeed, grabbing
+  // that endpoint right back (the natural "draw it, then nudge it" flow)
+  // lands inside that window and gets misread as the second half of a
+  // measure double-click instead of a re-grab.
+  it("lets an immediate re-grab of a just-drawn endpoint move it, not start a measurement", () => {
+    const props = drawingProps();
+    const { container, rerender } = render(<CandleChart {...base} drawings={props} />);
+    fireEvent.click(container.querySelector('[aria-label="trendline"]')!);
+    const pane = container.querySelector(".w-full.h-full > div")! as HTMLElement;
+
+    // Draw a real trendline (actual movement, not a plain click) ending at
+    // (5, 100) — within the mock candle range so x maps 1:1 to a bar index
+    // and the endpoint projects back to exactly where it was drawn.
+    fireEvent.pointerDown(pane, { clientX: 2, clientY: 200 });
+    fireEvent.pointerMove(window, { clientX: 5, clientY: 100 });
+    fireEvent.pointerUp(window, { clientX: 5, clientY: 100 });
+    expect(props.onAdd).toHaveBeenCalledTimes(1);
+    const added = props.onAdd.mock.calls[0][0];
+
+    // Mirrors the real app: onAdd's result comes back down as `items` on the
+    // next render (Chart.tsx re-renders CandleChart once useDrawings' state
+    // updates).
+    const props2 = { ...props, items: [added] };
+    rerender(<CandleChart {...base} drawings={props2} />);
+
+    // Immediately re-grab the endpoint the draw just ended at, to nudge it —
+    // within the same double-click-hold window the SL/TP test above uses.
+    fireEvent.pointerDown(pane, { clientX: 6, clientY: 99 });
+    fireEvent.pointerMove(window, { clientX: 6, clientY: 60 });
+    fireEvent.pointerUp(window, { clientX: 6, clientY: 60 });
+
+    expect(props2.onUpdate).toHaveBeenCalledTimes(1);
+    expect(container.querySelector('[data-testid="measure-overlay"]')).toBeNull();
   });
 });
