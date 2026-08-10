@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import type { Tool } from "../lib/drawings";
 
 const TOOLS: { tool: Tool; icon: string; label: string }[] = [
@@ -9,9 +9,14 @@ const TOOLS: { tool: Tool; icon: string; label: string }[] = [
   { tool: "text", icon: "T", label: "teks" },
 ];
 
+const CONFIRM_TIMEOUT_MS = 3000; // ponytail: auto-expiry after 3s; extend if users find it too fast
+
 // Vertical icon column on the pane's left edge (TradingView layout). Clearing
 // every drawing is destructive and unrecoverable, so it takes two clicks — a
 // modal would be heavier than the action deserves, but one click is too few.
+// Auto-expiry on the confirmation state (via timer) covers browsers where blur
+// never fires (Safari, historical Firefox on macOS); onBlur remains as a
+// secondary fast-path for other browsers.
 export default function DrawingPalette({
   tool, onTool, onClearAll, count,
 }: {
@@ -21,11 +26,21 @@ export default function DrawingPalette({
   count: number;
 }) {
   const [confirming, setConfirming] = useState(false);
+
+  // Auto-expiry timer ensures the confirm state cannot outlive user intent,
+  // even when blur doesn't fire (macOS Safari/Firefox).
+  useEffect(() => {
+    if (!confirming) return;
+    const timer = setTimeout(() => setConfirming(false), CONFIRM_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [confirming]);
+
   return (
     <div className="glass absolute left-2 top-2 z-20 flex flex-col p-1 gap-1 text-[13px]">
       {TOOLS.map(({ tool: t, icon, label }) => (
         <button
           key={t}
+          type="button"
           aria-label={label}
           aria-pressed={tool === t}
           title={label}
@@ -40,6 +55,7 @@ export default function DrawingPalette({
       ))}
       {count > 0 && (
         <button
+          type="button"
           aria-label={confirming ? "yakin hapus semua" : "hapus semua"}
           title={confirming ? "Klik lagi untuk menghapus" : "Hapus semua gambar"}
           onClick={() => {
