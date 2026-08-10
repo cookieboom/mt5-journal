@@ -611,6 +611,10 @@ describe("drawing gesture", () => {
     fireEvent.pointerUp(window, { clientX: 40, clientY: 150 });
     fireEvent.pointerDown(pane, { clientX: 41, clientY: 151 });
     fireEvent.pointerMove(window, { clientX: 41, clientY: 130 });
+    // The trailing release matters: without the reserved() guard, this second
+    // press would have grabbed the hline instead of deferring to measure, and
+    // this pointerup is what would commit that grab as an onUpdate call.
+    fireEvent.pointerUp(window, { clientX: 41, clientY: 130 });
 
     expect(props.onUpdate).not.toHaveBeenCalled();
     // …the measure gesture, not a drawing re-grab, is what actually ran
