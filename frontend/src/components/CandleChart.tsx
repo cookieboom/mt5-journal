@@ -27,9 +27,10 @@ import {
 } from "../lib/sltpDrag";
 import DrawingOverlay from "./DrawingOverlay";
 import DrawingPalette from "./DrawingPalette";
+import TextDrawingInput from "./TextDrawingInput";
 import { useDrawingGesture } from "../hooks/useDrawingGesture";
 import {
-  moveDrawing, projectDrawing, type Anchor, type Drawing, type Projected, type Tool,
+  hitTest, moveDrawing, projectDrawing, type Anchor, type Drawing, type Projected, type Tool,
 } from "../lib/drawings";
 
 const DARK = {
@@ -128,6 +129,14 @@ const CandleChart = forwardRef<ChartHandle, {
   } | null>(null);
   const [sltpGhost, setSltpGhost] = useState<{ price: number; kind: "sl" | "tp" } | null>(null);
   const [tool, setTool] = useState<Tool>("cursor");
+  const toolRef = useRef<Tool>("cursor");
+  toolRef.current = tool;
+  const projectedRef = useRef<Projected[]>([]);
+  // Open text editor: either a fresh label being placed, or an existing one
+  // being re-edited (`id` set).
+  const [textEdit, setTextEdit] = useState<
+    { id: string | null; anchor: Anchor; px: { x: number; y: number }; initial: string } | null
+  >(null);
   const linesMeta = useRef<{
     line: IPriceLine; positionId: number; kind: LineKind;
     direction: "buy" | "sell"; entryPrice: number | null;
@@ -717,6 +726,7 @@ const CandleChart = forwardRef<ChartHandle, {
   const projectedDrawings: Projected[] = drawings
     ? drawings.items.map((d) => projectDrawing(d, drawCtx))
     : [];
+  projectedRef.current = projectedDrawings;
 
   const toAnchor = useCallback((x: number, y: number): Anchor | null => {
     const p = toPoint(x, y);
@@ -726,7 +736,10 @@ const CandleChart = forwardRef<ChartHandle, {
   const gesture = useDrawingGesture({
     node: el.current,
     enabled: !!drawings?.editable,
-    tool,
+    // The text tool never enters the draw reducer's drag path — a single
+    // press just opens the inline editor below — so it's masked to "cursor"
+    // here (select/drag existing objects only) and handled by its own effect.
+    tool: tool === "text" ? "cursor" : tool,
     items: drawings?.items ?? [],
     projected: projectedDrawings,
     toAnchor,
@@ -742,6 +755,50 @@ const CandleChart = forwardRef<ChartHandle, {
     onToolDone: () => setTool("cursor"),
     suppressPan: (off) => chart.current?.applyOptions({ handleScroll: !off, handleScale: !off }),
   });
+
+  // Text tool: a single press places the anchor and opens the inline editor —
+  // there is nothing to drag, so this never enters the draw reducer. A
+  // double-click on an existing label reopens it. Both paths are capture-phase
+  // so they land before the measure gesture, which needs a HOLD and therefore
+  // never competes for a plain click.
+  useEffect(() => {
+    const node = el.current;
+    if (!node || !props.drawings?.editable) return;
+
+    const rel = (e: { clientX: number; clientY: number }) => {
+      const r = node.getBoundingClientRect();
+      return { x: e.clientX - r.left, y: e.clientY - r.top };
+    };
+
+    const onDown = (e: PointerEvent) => {
+      if (toolRef.current !== "text") return;
+      const { x, y } = rel(e);
+      const at = toAnchor(x, y);
+      if (!at) return;
+      setTextEdit({ id: null, anchor: at, px: { x, y }, initial: "" });
+      setTool("cursor");
+      e.preventDefault();
+      e.stopPropagation();
+    };
+
+    const onDouble = (e: MouseEvent) => {
+      const { x, y } = rel(e);
+      const hit = hitTest(projectedRef.current, { x, y });
+      if (!hit) return;
+      const target = cbs.current.drawings?.items.find((d) => d.id === hit.id);
+      if (!target || target.kind !== "text") return;
+      setTextEdit({ id: target.id, anchor: target.a, px: { x, y }, initial: target.text });
+      e.preventDefault();
+      e.stopPropagation();
+    };
+
+    node.addEventListener("pointerdown", onDown, true);
+    node.addEventListener("dblclick", onDouble, true);
+    return () => {
+      node.removeEventListener("pointerdown", onDown, true);
+      node.removeEventListener("dblclick", onDouble, true);
+    };
+  }, [props.drawings?.editable, toAnchor]);
 
   // Live preview: in-progress draft, or the object under an active drag —
   // neither is committed until pointerup.
@@ -813,6 +870,25 @@ const CandleChart = forwardRef<ChartHandle, {
           onTool={setTool}
           onClearAll={drawings.onClearAll}
           count={drawings.items.length}
+        />
+      )}
+      {drawings?.editable && textEdit && (
+        <TextDrawingInput
+          x={textEdit.px.x}
+          y={textEdit.px.y}
+          initial={textEdit.initial}
+          onCommit={(text) => {
+            const edit = textEdit;
+            setTextEdit(null);
+            if (text.length === 0) return;      // blank label = discarded
+            if (edit.id === null) {
+              drawings.onAdd({ id: crypto.randomUUID(), kind: "text", a: edit.anchor, text });
+            } else {
+              const target = drawings.items.find((d) => d.id === edit.id);
+              if (target && target.kind === "text") drawings.onUpdate({ ...target, text });
+            }
+          }}
+          onCancel={() => setTextEdit(null)}
         />
       )}
     </div>

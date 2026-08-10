@@ -632,4 +632,65 @@ describe("drawing gesture", () => {
     // …but the object is still drawn
     expect(container.querySelector('[data-testid="drawing-h1"]')).toBeTruthy();
   });
+
+  it("opens an input for the text tool and commits the label on Enter", () => {
+    const props = drawingProps();
+    const { container, getByTestId } = render(<CandleChart {...base} drawings={props} />);
+    fireEvent.click(container.querySelector('[aria-label="teks"]')!);
+    const pane = container.querySelector(".w-full.h-full > div")! as HTMLElement;
+    fireEvent.pointerDown(pane, { clientX: 40, clientY: 150 });
+    fireEvent.pointerUp(window, { clientX: 40, clientY: 150 });
+
+    const input = getByTestId("text-drawing-input") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "supply zone" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(props.onAdd).toHaveBeenCalledTimes(1);
+    const added = props.onAdd.mock.calls[0][0];
+    expect(added.kind).toBe("text");
+    expect(added.text).toBe("supply zone");
+    expect(added.a.price).toBeCloseTo(105, 6);
+  });
+
+  it("discards an empty label instead of storing a blank note", () => {
+    const props = drawingProps();
+    const { container, getByTestId, queryByTestId } = render(<CandleChart {...base} drawings={props} />);
+    fireEvent.click(container.querySelector('[aria-label="teks"]')!);
+    const pane = container.querySelector(".w-full.h-full > div")! as HTMLElement;
+    fireEvent.pointerDown(pane, { clientX: 40, clientY: 150 });
+    fireEvent.pointerUp(window, { clientX: 40, clientY: 150 });
+
+    const input = getByTestId("text-drawing-input") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "   " } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(props.onAdd).not.toHaveBeenCalled();
+    expect(queryByTestId("text-drawing-input")).toBeNull();
+  });
+
+  it("escape closes the text input without adding anything", () => {
+    const props = drawingProps();
+    const { container, getByTestId, queryByTestId } = render(<CandleChart {...base} drawings={props} />);
+    fireEvent.click(container.querySelector('[aria-label="teks"]')!);
+    const pane = container.querySelector(".w-full.h-full > div")! as HTMLElement;
+    fireEvent.pointerDown(pane, { clientX: 40, clientY: 150 });
+    fireEvent.pointerUp(window, { clientX: 40, clientY: 150 });
+    fireEvent.keyDown(getByTestId("text-drawing-input"), { key: "Escape" });
+    expect(props.onAdd).not.toHaveBeenCalled();
+    expect(queryByTestId("text-drawing-input")).toBeNull();
+  });
+
+  it("double-click on an existing label reopens it for editing", () => {
+    const label = { id: "x1", kind: "text" as const, a: { timeMs: mockCandles[2].time_msc, price: 105 }, text: "old" };
+    const props = drawingProps({ items: [label] });
+    const { container, getByTestId } = render(<CandleChart {...base} drawings={props} />);
+    const pane = container.querySelector(".w-full.h-full > div")! as HTMLElement;
+    // the label is projected at logical index 2 → x=2 under the identity stub
+    fireEvent.doubleClick(pane, { clientX: 6, clientY: 150 });
+    const input = getByTestId("text-drawing-input") as HTMLInputElement;
+    expect(input.value).toBe("old");
+    fireEvent.change(input, { target: { value: "new" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(props.onUpdate).toHaveBeenCalledWith({ ...label, text: "new" });
+  });
 });
