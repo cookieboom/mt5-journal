@@ -151,7 +151,11 @@ function textBox(p: PixelPoint, text: string): { x0: number; y0: number; x1: num
 }
 
 // Topmost-first: later items are drawn on top, so they must win the hit.
-// Endpoint handles beat the body so a drag on an endpoint moves that endpoint.
+// Closest feature wins: compute distance to each endpoint and to the body/edges,
+// return whichever is nearest within threshold. Endpoints win ties (if equidistant
+// to endpoint and body, grab the endpoint). This prevents distant endpoints from
+// stealing clicks on line bodies: clicking a trend at x=5 (2px from line, 5px from
+// endpoint-a) grabs the line, not the endpoint.
 // Rect hits on its EDGES only — a filled zone would otherwise swallow every
 // click inside it, including one meant for the chart underneath.
 export function hitTest(
@@ -159,6 +163,8 @@ export function hitTest(
   p: PixelPoint,
   threshold: number = HIT_THRESHOLD_PX,
 ): Hit | null {
+  const EPSILON = 1e-9;
+
   for (let i = projected.length - 1; i >= 0; i--) {
     const { d, a, b } = projected[i];
     if (a === null) continue;
@@ -173,36 +179,45 @@ export function hitTest(
     }
     if (b === null) continue;
 
-    // Endpoints require a tighter tolerance (half of body threshold) so that
-    // a click on a line body is not stolen by a distant endpoint. This prevents
-    // "clicking a trend line at x=5 when endpoint-a is at x=0 from grabbing
-    // endpoint-a at distance 5 instead of the body at distance 2".
-    const endpointThreshold = threshold / 2;
-
-    // hline has no endpoints to grab: its whole span is body.
-    if (d.kind !== "hline" && d.kind !== "rect") {
-      if (Math.hypot(p.x - a.x, p.y - a.y) <= endpointThreshold) return { id: d.id, handle: "a" };
-      if (Math.hypot(p.x - b.x, p.y - b.y) <= endpointThreshold) return { id: d.id, handle: "b" };
-    }
+    const distA = Math.hypot(p.x - a.x, p.y - a.y);
+    const distB = Math.hypot(p.x - b.x, p.y - b.y);
 
     if (d.kind === "rect") {
       const c1 = { x: a.x, y: b.y }, c2 = { x: b.x, y: a.y };
       const edges: [PixelPoint, PixelPoint][] = [[a, c1], [c1, b], [b, c2], [c2, a]];
-      if (edges.some(([e0, e1]) => distToSegment(p, e0, e1) <= threshold)) {
-        // Rect is hollow: only its edges are hittable, not the interior.
-        // A point in the interior passes the edge-distance check if it's close
-        // to an edge, but we exclude it if it's strictly inside the rect bounds.
+      const minEdgeDist = Math.min(...edges.map(([e0, e1]) => distToSegment(p, e0, e1)));
+      const minEndpointDist = Math.min(distA, distB);
+      const minDist = Math.min(minEndpointDist, minEdgeDist);
+
+      if (minDist <= threshold) {
+        // Endpoints win ties.
+        if (Math.abs(distA - minDist) < EPSILON) return { id: d.id, handle: "a" };
+        if (Math.abs(distB - minDist) < EPSILON) return { id: d.id, handle: "b" };
+        // Edge hit, but verify not in interior (hollow rect).
         const minX = Math.min(a.x, b.x);
         const maxX = Math.max(a.x, b.x);
         const minY = Math.min(a.y, b.y);
         const maxY = Math.max(a.y, b.y);
-        // Interior: strictly inside both x and y bounds.
         const isInterior = p.x > minX && p.x < maxX && p.y > minY && p.y < maxY;
         if (!isInterior) return { id: d.id, handle: "body" };
       }
       continue;
     }
 
+    if (d.kind !== "hline") {
+      // Trend: endpoints vs body line, closest wins, endpoints win ties.
+      const distBody = distToSegment(p, a, b);
+      const minDist = Math.min(distA, distB, distBody);
+
+      if (minDist <= threshold) {
+        if (Math.abs(distA - minDist) < EPSILON) return { id: d.id, handle: "a" };
+        if (Math.abs(distB - minDist) < EPSILON) return { id: d.id, handle: "b" };
+        return { id: d.id, handle: "body" };
+      }
+      continue;
+    }
+
+    // hline: body only.
     if (distToSegment(p, a, b) <= threshold) return { id: d.id, handle: "body" };
   }
   return null;
