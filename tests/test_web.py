@@ -788,3 +788,66 @@ def test_risk_prefs_round_trip(conn):
 
     resp2 = get_fn(conn=conn)
     assert json.loads(resp2.body) == {"prefs": body}
+
+
+def test_api_drawings_get_null_then_put_then_get(conn):
+    app = create_app(":memory:")
+    get_fn = _endpoint(app, "api_get_drawings")
+    put_fn = _endpoint(app, "api_put_drawings")
+
+    resp = get_fn(symbol="XAUUSDc", session_id=None, conn=conn)
+    assert resp.status_code == 200
+    assert json.loads(resp.body) == {"drawings": None}
+
+    blob = {"v": 1, "items": [
+        {"id": "d1", "kind": "hline", "price": 2415.5},
+        {"id": "d2", "kind": "trend",
+         "a": {"timeMs": 1_700_000_000_000, "price": 2400.0},
+         "b": {"timeMs": 1_700_003_600_000, "price": 2420.0}},
+    ]}
+    put = put_fn(body=blob, symbol="XAUUSDc", session_id=None, conn=conn)
+    put_body = json.loads(put.body)
+    assert put_body["ok"] is True and isinstance(put_body["updated_ms"], int)
+
+    resp2 = get_fn(symbol="XAUUSDc", session_id=None, conn=conn)
+    assert json.loads(resp2.body) == {"drawings": blob}
+
+
+def test_api_drawings_normalises_the_broker_suffix(conn):
+    app = create_app(":memory:")
+    get_fn = _endpoint(app, "api_get_drawings")
+    put_fn = _endpoint(app, "api_put_drawings")
+    blob = {"v": 1, "items": [{"id": "d1", "kind": "hline", "price": 2415.5}]}
+
+    put_fn(body=blob, symbol="XAUUSDc", session_id=None, conn=conn)
+    # Same base symbol without the suffix reads the same drawings (rule 11).
+    resp = get_fn(symbol="XAUUSD", session_id=None, conn=conn)
+    assert json.loads(resp.body) == {"drawings": blob}
+
+
+def test_api_drawings_replay_session_does_not_see_live_drawings(conn):
+    app = create_app(":memory:")
+    get_fn = _endpoint(app, "api_get_drawings")
+    put_fn = _endpoint(app, "api_put_drawings")
+
+    live = {"v": 1, "items": [{"id": "live", "kind": "hline", "price": 2415.5}]}
+    put_fn(body=live, symbol="XAUUSDc", session_id=None, conn=conn)
+
+    resp = get_fn(symbol="XAUUSDc", session_id=3, conn=conn)
+    assert json.loads(resp.body) == {"drawings": None}
+
+
+def test_api_drawings_put_rejects_a_non_object_body(conn):
+    app = create_app(":memory:")
+    put_fn = _endpoint(app, "api_put_drawings")
+    resp = put_fn(body=[1, 2, 3], symbol="XAUUSDc", session_id=None, conn=conn)
+    assert resp.status_code == 400
+    assert "error" in json.loads(resp.body)
+
+
+def test_api_drawings_put_rejects_an_oversized_blob(conn):
+    app = create_app(":memory:")
+    put_fn = _endpoint(app, "api_put_drawings")
+    huge = {"v": 1, "items": [{"id": "x" * 300_000, "kind": "hline", "price": 1.0}]}
+    resp = put_fn(body=huge, symbol="XAUUSDc", session_id=None, conn=conn)
+    assert resp.status_code == 400

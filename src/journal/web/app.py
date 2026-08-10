@@ -11,6 +11,7 @@ anywhere here (CLAUDE.md rules 1 & 12).
 
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 from datetime import datetime
@@ -269,6 +270,40 @@ def create_app(db_path: str | None = None, cache_dir: str | None = None) -> Fast
         stamps updated_ms; the body is stored verbatim (the client owns the
         schema)."""
         ts = prefs_store.set_replay_prefs(conn, prefs)
+        return JSONResponse({"ok": True, "updated_ms": ts})
+
+    # --- chart drawings (hand annotations). Pure DB, like the prefs endpoints
+    # above: the blob is stored verbatim and the client owns its schema. The
+    # server only enforces that it is a JSON object of sane size — a broken
+    # client must not be able to write junk unbounded — and normalises the
+    # symbol to its base (rule 11) so the key never carries a broker suffix.
+    MAX_DRAWINGS_BYTES = 256 * 1024
+
+    @app.get("/api/drawings")
+    def api_get_drawings(
+        symbol: str,
+        session_id: int | None = None,
+        conn: sqlite3.Connection = Depends(get_conn),
+    ):
+        """Drawings blob for a symbol, or for one replay session when
+        `session_id` is given. `drawings` is null until the first save."""
+        return JSONResponse({"drawings": prefs_store.get_drawings(conn, symbol, session_id)})
+
+    @app.put("/api/drawings")
+    def api_put_drawings(
+        symbol: str,
+        body=Body(...),
+        session_id: int | None = None,
+        conn: sqlite3.Connection = Depends(get_conn),
+    ):
+        """Upsert the drawings blob. The server stamps updated_ms."""
+        if not isinstance(body, dict):
+            return JSONResponse({"error": "body must be a JSON object"}, status_code=400)
+        if len(json.dumps(body)) > MAX_DRAWINGS_BYTES:
+            return JSONResponse(
+                {"error": f"drawings blob exceeds {MAX_DRAWINGS_BYTES} bytes"}, status_code=400,
+            )
+        ts = prefs_store.set_drawings(conn, symbol, session_id, body)
         return JSONResponse({"ok": True, "updated_ms": ts})
 
     # --- risk-based sizing (writes nothing). Shared by replay and live: the
