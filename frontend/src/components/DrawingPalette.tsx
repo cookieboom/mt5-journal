@@ -35,8 +35,14 @@ export default function DrawingPalette({
     return () => clearTimeout(timer);
   }, [confirming]);
 
+  // top-12, not top-2: Chart.tsx's loading/gaveup/error banners paint at
+  // top-2 left-2 with no z-index of their own — at top-2 the palette
+  // (persistent) painted over them (transient), so the loading banner never
+  // showed on a background fetch. The palette is the one that should give
+  // way; the banners are ephemeral and shouldn't have to dodge a
+  // fixed-position tool column.
   return (
-    <div className="glass absolute left-2 top-2 z-20 flex flex-col p-1 gap-1 text-[13px]">
+    <div className="glass absolute left-2 top-12 z-20 flex flex-col p-1 gap-1 text-[13px]">
       {TOOLS.map(({ tool: t, icon, label }) => (
         <button
           key={t}

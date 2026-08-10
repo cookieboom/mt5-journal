@@ -299,7 +299,15 @@ def create_app(db_path: str | None = None, cache_dir: str | None = None) -> Fast
         """Upsert the drawings blob. The server stamps updated_ms."""
         if not isinstance(body, dict):
             return JSONResponse({"error": "body must be a JSON object"}, status_code=400)
-        if len(json.dumps(body)) > MAX_DRAWINGS_BYTES:
+        # .encode("utf-8") is a no-op today: json.dumps()'s default
+        # ensure_ascii=True already escapes every non-ASCII codepoint to a
+        # \uXXXX sequence, so the dumped string is pure ASCII and len() on it
+        # already equals its encoded byte length (verified directly — see the
+        # fix-wave report). Kept explicit anyway: it's the correct measure of
+        # "bytes on disk" by construction, and stays correct if this ever
+        # switches to ensure_ascii=False (prefs_store.set_drawings uses the
+        # same default, so today the two are also identical to what's stored).
+        if len(json.dumps(body).encode("utf-8")) > MAX_DRAWINGS_BYTES:
             return JSONResponse(
                 {"error": f"drawings blob exceeds {MAX_DRAWINGS_BYTES} bytes"}, status_code=400,
             )

@@ -851,3 +851,21 @@ def test_api_drawings_put_rejects_an_oversized_blob(conn):
     huge = {"v": 1, "items": [{"id": "x" * 300_000, "kind": "hline", "price": 1.0}]}
     resp = put_fn(body=huge, symbol="XAUUSDc", session_id=None, conn=conn)
     assert resp.status_code == 400
+
+
+def test_api_drawings_put_size_cap_accepts_a_large_unicode_blob_within_budget(conn):
+    """Regression guard for the byte-vs-char question raised in code review:
+    json.dumps()'s default ensure_ascii=True escapes every non-ASCII codepoint
+    to \\uXXXX, so the dumped string is pure ASCII and len() on it already
+    equals its encoded UTF-8 byte length — verified directly, not assumed.
+    There is no under-count to reproduce for this code path; this test just
+    pins that a unicode-heavy blob comfortably under the real cap is still
+    accepted (i.e. the byte-length check isn't accidentally stricter than the
+    old char-length one for non-ASCII content)."""
+    app = create_app(":memory:")
+    put_fn = _endpoint(app, "api_put_drawings")
+    label = "€" * 1_000  # non-ASCII, well under the 256KiB cap either way it's measured
+    body = {"v": 1, "items": [{"id": "d1", "kind": "text",
+                                "a": {"timeMs": 0, "price": 1.0}, "text": label}]}
+    resp = put_fn(body=body, symbol="XAUUSDc", session_id=None, conn=conn)
+    assert resp.status_code == 200
