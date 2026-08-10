@@ -1,6 +1,6 @@
 # Chart Drawing Tools Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Add TradingView-style drawing tools (trendline, horizontal line, rectangle zone, text note) to `/chart` in both normal and replay mode, rendered read-only on `/trades/:id/view`.
 
@@ -33,7 +33,7 @@
 - Consumes: nothing.
 - Produces: `Anchor`, `DrawingKind`, `Drawing`, `DrawingBlob`, `BLOB_VERSION`, `MAX_TEXT_LEN`, `KIND_COLORS`, `parseDrawings(raw: unknown): Drawing[]`, `colorOf(d: Drawing): string`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `frontend/src/lib/drawings.test.ts`:
 
@@ -106,12 +106,12 @@ describe("colorOf", () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd frontend && npx vitest run src/lib/drawings.test.ts`
 Expected: FAIL — `Failed to resolve import "./drawings"`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Create `frontend/src/lib/drawings.ts`:
 
@@ -189,12 +189,12 @@ export function parseDrawings(raw: unknown): Drawing[] {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd frontend && npx vitest run src/lib/drawings.test.ts`
 Expected: PASS (7 tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add frontend/src/lib/drawings.ts frontend/src/lib/drawings.test.ts
@@ -215,7 +215,7 @@ The cross-timeframe trap lives here: `timeScale().timeToCoordinate()` returns `n
 - Consumes: `Anchor`, `Drawing` from Task 1.
 - Produces: `PixelPoint`, `Handle` (`"a" | "b" | "body"`), `Hit`, `Projected`, `barIndexAt(candles, timeMs): number`, `anchorToX(timeMs, candles, logicalToX): number | null`, `projectDrawing(d, ctx): Projected`, `distToSegment(p, a, b): number`, `hitTest(projected, p, threshold?): Hit | null`, `ProjectCtx`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `frontend/src/lib/drawings.test.ts`:
 
@@ -357,12 +357,12 @@ describe("hitTest", () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd frontend && npx vitest run src/lib/drawings.test.ts`
 Expected: FAIL — `barIndexAt is not a function` (or an import resolution error for the new names).
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Append to `frontend/src/lib/drawings.ts`:
 
@@ -491,12 +491,12 @@ export function hitTest(
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd frontend && npx vitest run src/lib/drawings.test.ts`
 Expected: PASS (all Task 1 + Task 2 tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add frontend/src/lib/drawings.ts frontend/src/lib/drawings.test.ts
@@ -515,7 +515,7 @@ git commit -m "feat(drawings): bar-snapped projection and hit-test geometry"
 - Consumes: `Anchor`, `Drawing`, `Handle` from Tasks 1–2.
 - Produces: `Tool` (`"cursor" | "trend" | "hline" | "rect" | "text"`), `DrawState`, `DrawEvent`, `DRAW_IDLE`, `drawReducer(s, e): DrawState`, `newDrawing(kind, id, at): Drawing`, `moveDrawing(d, handle, from, to): Drawing`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `frontend/src/lib/drawings.test.ts`:
 
@@ -631,12 +631,12 @@ describe("moveDrawing", () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd frontend && npx vitest run src/lib/drawings.test.ts`
 Expected: FAIL — `drawReducer is not a function`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Append to `frontend/src/lib/drawings.ts`:
 
@@ -716,12 +716,12 @@ export function moveDrawing(d: Drawing, handle: Handle, from: Anchor, to: Anchor
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd frontend && npx vitest run src/lib/drawings.test.ts`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add frontend/src/lib/drawings.ts frontend/src/lib/drawings.test.ts
@@ -740,7 +740,7 @@ git commit -m "feat(drawings): draw/select/drag reducer and pure mutation"
 - Consumes: `journal.domain.symbols.to_base`.
 - Produces: `prefs_store.drawings_key(symbol: str, session_id: int | None) -> str`, `prefs_store.get_drawings(conn, symbol, session_id) -> Any | None`, `prefs_store.set_drawings(conn, symbol, session_id, blob) -> int`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `tests/test_prefs_store.py`:
 
@@ -789,12 +789,12 @@ def test_set_drawings_upserts_one_row_per_key(conn):
     assert row["n"] == 1
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/test_prefs_store.py -q`
 Expected: FAIL with `AttributeError: module 'journal.store.prefs_store' has no attribute 'drawings_key'`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 In `src/journal/store/prefs_store.py`, add the import below the existing ones:
 
@@ -845,12 +845,12 @@ Also extend the module docstring's first line so it no longer claims the table h
 (chart settings, replay config, risk sizing, chart drawings), pure DB. The web
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `uv run pytest tests/test_prefs_store.py -q`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/journal/store/prefs_store.py tests/test_prefs_store.py
@@ -869,7 +869,7 @@ git commit -m "feat(drawings): app_prefs keys for chart drawings, per symbol and
 - Consumes: `prefs_store.get_drawings` / `set_drawings` from Task 4.
 - Produces: routes named `api_get_drawings` (`GET /api/drawings`) and `api_put_drawings` (`PUT /api/drawings`). GET returns `{"drawings": <blob|null>}`; PUT returns `{"ok": True, "updated_ms": int}` or a 400 `{"error": ...}`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `tests/test_web.py`:
 
@@ -937,12 +937,12 @@ def test_api_drawings_put_rejects_an_oversized_blob(conn):
     assert resp.status_code == 400
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/test_web.py -q -k drawings`
 Expected: FAIL with `AssertionError: no route named 'api_get_drawings'`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 In `src/journal/web/app.py`, insert directly after the `api_put_replay_prefs` function:
 
@@ -984,12 +984,12 @@ In `src/journal/web/app.py`, insert directly after the `api_put_replay_prefs` fu
 
 If `json` is not already imported at the top of `src/journal/web/app.py`, add `import json` there (check first — do not add a duplicate import).
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `uv run pytest tests/test_web.py -q -k drawings`
 Expected: PASS (5 tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/journal/web/app.py tests/test_web.py
@@ -1008,7 +1008,7 @@ git commit -m "feat(drawings): GET/PUT /api/drawings with base-symbol keys and b
 - Consumes: `parseDrawings`, `BLOB_VERSION`, `Drawing` from Task 1; the endpoints from Task 5.
 - Produces: `useDrawings(symbol: string, sessionId: number | null, enabled: boolean): { items: Drawing[]; add(d: Drawing): void; update(d: Drawing): void; remove(id: string): void; clear(): void }`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `frontend/src/hooks/useDrawings.test.ts`:
 
@@ -1098,12 +1098,12 @@ describe("useDrawings", () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd frontend && npx vitest run src/hooks/useDrawings.test.ts`
 Expected: FAIL — `Failed to resolve import "./useDrawings"`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Create `frontend/src/hooks/useDrawings.ts`:
 
@@ -1185,12 +1185,12 @@ export function useDrawings(symbol: string, sessionId: number | null, enabled: b
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd frontend && npx vitest run src/hooks/useDrawings.test.ts`
 Expected: PASS (6 tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add frontend/src/hooks/useDrawings.ts frontend/src/hooks/useDrawings.test.ts
@@ -1209,7 +1209,7 @@ git commit -m "feat(drawings): useDrawings hook with debounced write-through"
 - Consumes: `Projected`, `colorOf` from Tasks 1–2.
 - Produces: default-exported `DrawingOverlay({ projected, selectedId }: { projected: Projected[]; selectedId: string | null })`. Each rendered object carries `data-testid={"drawing-" + id}`; each selection handle carries `data-testid={"handle-" + id + "-" + which}`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `frontend/src/components/DrawingOverlay.test.tsx`:
 
@@ -1293,12 +1293,12 @@ describe("DrawingOverlay", () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd frontend && npx vitest run src/components/DrawingOverlay.test.tsx`
 Expected: FAIL — `Failed to resolve import "./DrawingOverlay"`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Create `frontend/src/components/DrawingOverlay.tsx`:
 
@@ -1383,12 +1383,12 @@ export default function DrawingOverlay({
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd frontend && npx vitest run src/components/DrawingOverlay.test.tsx`
 Expected: PASS (6 tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add frontend/src/components/DrawingOverlay.tsx frontend/src/components/DrawingOverlay.test.tsx
@@ -1407,7 +1407,7 @@ git commit -m "feat(drawings): SVG overlay for trend, hline, rect and text"
 - Consumes: `Tool` from Task 3.
 - Produces: default-exported `DrawingPalette({ tool, onTool, onClearAll, count }: { tool: Tool; onTool: (t: Tool) => void; onClearAll: () => void; count: number })`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `frontend/src/components/DrawingPalette.test.tsx`:
 
@@ -1447,12 +1447,12 @@ describe("DrawingPalette", () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd frontend && npx vitest run src/components/DrawingPalette.test.tsx`
 Expected: FAIL — `Failed to resolve import "./DrawingPalette"`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Create `frontend/src/components/DrawingPalette.tsx`:
 
@@ -1515,12 +1515,12 @@ export default function DrawingPalette({
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd frontend && npx vitest run src/components/DrawingPalette.test.tsx`
 Expected: PASS (4 tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add frontend/src/components/DrawingPalette.tsx frontend/src/components/DrawingPalette.test.tsx
@@ -1574,7 +1574,7 @@ The text tool is deliberately deferred to Task 10 — this task delivers the thr
 
     Absent → no palette, no overlay, no listeners. `Lab.tsx` passes nothing and is unaffected.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `frontend/src/components/CandleChart.test.tsx`. Note the harness already stubs `priceToCoordinate`/`coordinateToPrice` (y=200↔price 100, 1px = 0.1 price) and `coordinateToLogical = (x) => x`; add `logicalToCoordinate` as the identity in the same `createChart` mock, immediately after the `ts.coordinateToLogical` line:
 
@@ -1719,12 +1719,12 @@ describe("drawing gesture", () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd frontend && npx vitest run src/components/CandleChart.test.tsx`
 Expected: FAIL — the `drawings` prop does not exist; no palette or overlay renders.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Create `frontend/src/hooks/useDrawingGesture.ts`:
 
@@ -2048,7 +2048,7 @@ and use `projectDrawing(d, drawCtx)` in all three places.
     bumpProjection();   // el.current is now set: re-render so gesture listeners attach
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd frontend && npx vitest run src/components/CandleChart.test.tsx`
 Expected: PASS — the 9 new drawing tests plus every pre-existing CandleChart test.
@@ -2058,7 +2058,7 @@ Then confirm nothing else regressed:
 Run: `cd frontend && npx vitest run && npx tsc -b --noEmit`
 Expected: all suites PASS, no type errors.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add frontend/src/hooks/useDrawingGesture.ts frontend/src/components/CandleChart.tsx frontend/src/components/CandleChart.test.tsx
@@ -2078,7 +2078,7 @@ git commit -m "feat(drawings): pointer gesture and CandleChart wiring for trend/
 - Consumes: Task 9's gesture wiring, `MAX_TEXT_LEN` from Task 1.
 - Produces: default-exported `TextDrawingInput({ x, y, initial, onCommit, onCancel }: { x: number; y: number; initial: string; onCommit: (text: string) => void; onCancel: () => void })`, carrying `data-testid="text-drawing-input"`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `frontend/src/components/CandleChart.test.tsx`, inside the existing `describe("drawing gesture", ...)` block:
 
@@ -2145,12 +2145,12 @@ Append to `frontend/src/components/CandleChart.test.tsx`, inside the existing `d
   });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd frontend && npx vitest run src/components/CandleChart.test.tsx -t "text"`
 Expected: FAIL — `Unable to find an element by: [data-testid="text-drawing-input"]`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Create `frontend/src/components/TextDrawingInput.tsx`:
 
@@ -2297,12 +2297,12 @@ and set `projectedRef.current = projectedDrawings;` immediately after `projected
       )}
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd frontend && npx vitest run src/components/CandleChart.test.tsx`
 Expected: PASS (all drawing-gesture tests including the 4 new text ones).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add frontend/src/components/TextDrawingInput.tsx frontend/src/components/CandleChart.tsx frontend/src/components/CandleChart.test.tsx
@@ -2322,7 +2322,7 @@ git commit -m "feat(drawings): inline text-label editor with blank-discard"
 - Consumes: `useDrawings` (Task 6), the `drawings` prop (Task 9).
 - Produces: no new exports. `Lab.tsx` is deliberately left untouched.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Both page tests already mock `CandleChart` out and capture its props, so these
 assert on the captured props and on the request URL — not on rendered pixels.
@@ -2376,12 +2376,12 @@ it("renders drawings read-only on the trade viewer", async () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd frontend && npx vitest run src/pages/Chart.test.tsx src/pages/TradeView.test.tsx`
 Expected: FAIL — no `/api/drawings` request is ever made.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 In `frontend/src/pages/Chart.tsx`:
 
@@ -2400,6 +2400,21 @@ import { useDrawings } from "../hooks/useDrawings";
   const drawingSession = replayOpen ? replay.session?.id ?? null : null;
   const drawings = useDrawings(symbol, drawingSession, true);
 ```
+
+> **SUPERSEDED (fix wave, 2026-08-10 — IMPORTANT 1):** the `useDrawings(symbol,
+> drawingSession, true)` line above is a plan defect, not an implementation
+> slip — it was built exactly as prescribed. `replay.start(cfg)` is an async
+> POST; `setReplayOpen(true)` lands synchronously well before the response
+> assigns `replay.session`. For that whole window `replayOpen` is `true` but
+> `replay.session` is still `null`, so `replay.session?.id ?? null` falls back
+> to the LIVE per-symbol key — rendering it editable on the replay chart, with
+> an edit in that window persisting to the live key. That is exactly the leak
+> the comment above says this key split exists to prevent. The shipped fix
+> gates the hook itself on a `drawingsReady = !replayOpen || replay.session !=
+> null` flag (see `frontend/src/pages/Chart.tsx`), used both as the third
+> argument to `useDrawings` and as `drawingsProp.editable`, so the palette
+> cannot even render during that window. See PENDING HUMAN item 6 below —
+> it must be re-run against this fix.
 
 3. Pass it to `CandleChart`, after the `hideDate` prop:
 
@@ -2452,12 +2467,12 @@ Place this next to the component's other hooks — before any early `return`, so
 
 3. Add `drawings={drawingsProp}` to the `<CandleChart ... />` call.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd frontend && npx vitest run src/pages/Chart.test.tsx src/pages/TradeView.test.tsx`
 Expected: PASS.
 
-- [ ] **Step 5: Full verification**
+- [x] **Step 5: Full verification**
 
 Run every gate and paste the real output (CLAUDE.md "Definition of done"):
 
@@ -2468,7 +2483,7 @@ cd .. && uv run pytest -q && uv run journal rebuild
 
 Expected: all vitest suites pass, 0 type errors, build succeeds, all pytest pass, `journal rebuild` succeeds. `rebuild` is the check that drawings in `app_prefs` survive a full trades rebuild untouched.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add frontend/src/pages/Chart.tsx frontend/src/pages/Chart.test.tsx frontend/src/pages/TradeView.tsx frontend/src/pages/TradeView.test.tsx
@@ -2478,6 +2493,12 @@ git commit -m "feat(drawings): wire editable drawings into /chart and read-only 
 ---
 
 ## PENDING HUMAN
+
+**Status as of the fix wave (2026-08-10): still NOT run.** All 8 items below
+were pending before the fix wave and remain pending after it — this pass
+fixed code and added regression tests, it did not open a browser. They still
+need a real pass against a running `journal serve` (plus `journal live` for
+fresh bars) before this branch can be considered human-verified.
 
 These cannot be verified from tests and need a browser pass against a running
 `journal serve` (plus `journal live` for fresh bars):
@@ -2493,5 +2514,10 @@ These cannot be verified from tests and need a browser pass against a running
    area.
 6. Enter replay, draw something, exit, and confirm the live chart does not show
    the replay drawing — and that re-entering a NEW replay session starts clean.
+   **This is the item that exercises IMPORTANT 1 (the live-key leak during
+   replay-session startup, fixed in this wave) — run it specifically against a
+   REAL (not mocked) `replay.start()` round trip, ideally on a slow/throttled
+   connection so the pending window is wide enough to actually land a draw
+   inside it.**
 7. Open `/trades/:id/view` and confirm drawings render but no palette appears.
 8. Open `/lab` and confirm nothing drawing-related appears there at all.

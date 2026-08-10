@@ -36,7 +36,79 @@ home each, and a second copy is a future lie. Point, never duplicate.
 
 ## CURRENT STATE — update this section every session
 
-**Last updated:** 2026-08-06
+**Last updated:** 2026-08-10
+
+**2026-08-10 — chart drawing tools: built, whole-branch reviewed, fix wave
+applied. NOT yet human-verified, NOT yet merged.** Four TradingView-style
+drawing tools (trendline, hline, rectangle, text note) on `/chart` in both
+normal and replay mode, read-only on `/trades/:id/view`, absent from `/lab`.
+Built over 11 tasks on `worktree-chart-drawings` per
+`docs/superpowers/plans/2026-08-10-chart-drawing-tools.md` /
+`docs/superpowers/specs/2026-08-10-chart-drawing-tools-design.md`. New:
+`frontend/src/lib/drawings.ts` (pure geometry/parsing/reducer, no React, no
+chart API), `hooks/useDrawingGesture.ts`, `hooks/useDrawings.ts` (debounced
+write-through, DB-only — no localStorage mirror), `components/
+DrawingOverlay.tsx`, `components/DrawingPalette.tsx`,
+`components/TextDrawingInput.tsx`; `GET/PUT /api/drawings` +
+`prefs_store.get_drawings/set_drawings` (per-symbol key, or per-replay-session
+when `session_id` is given — `drawings_key` normalises the symbol
+server-side, rule 11). No migration, no new table, no new dependency.
+
+A whole-branch code review found 3 IMPORTANT + 7 MINOR findings; all were
+fixed in the same session (single fix wave, no second pass):
+
+- **IMPORTANT 1** — replay-session startup briefly read AND wrote the LIVE
+  drawings key. `replay.start(cfg)` is an async POST; `setReplayOpen(true)`
+  lands before the response assigns `replay.session`, and the plan's own
+  `useDrawings(symbol, drawingSession, true)` line (verbatim, not a slip)
+  didn't account for that window — during it, `replayOpen` was `true` but
+  `replay.session` was still `null`, so the fallback `?? null` selected the
+  live per-symbol key, rendered it editable, and would have persisted an
+  in-window edit to the live key. Fixed by gating the hook itself
+  (`drawingsReady = !replayOpen || replay.session != null`), used both as
+  `useDrawings`'s `enabled` and as `drawingsProp.editable`. The plan doc is
+  annotated SUPERSEDED at that line rather than silently rewritten.
+- **IMPORTANT 2** — a pending debounced PUT was dropped on unmount (only the
+  symbol-switch case flushed; unmount, the more common exit, just cleared the
+  timer). Now flushed in the unmount cleanup, with `keepalive: true`.
+- **IMPORTANT 3** — dragging/wheeling the right price axis rescales
+  `priceToCoordinate` without touching the logical range, so drawings sat at a
+  stale y until something else forced a re-render. Fixed with `pointerup`/
+  `wheel` listeners on the pane node feeding the existing `bumpProjection`
+  dispatch.
+- Minors: a non-ok PUT response was silently swallowed (now warns); `apply()`
+  ran a side effect inside a `setItems` updater (StrictMode hazard — hoisted
+  out, matching the discipline `useDrawingGesture` already documents);
+  re-grabbing an endpoint right after finishing a draw could misfire as a
+  measure double-click-hold (CandleChart records every pointerup as a
+  potential seed regardless of source — a completed draw/drag now clears it);
+  the palette painted over Chart.tsx's loading/gaveup/error banners (moved
+  `top-2` → `top-12`); the drawings size cap used `len()` on the dumped JSON —
+  verified this is actually a no-op given `json.dumps`'s `ensure_ascii=True`
+  default (the string is already pure ASCII, so char-length already equals
+  byte-length), kept the explicit `.encode("utf-8")` anyway as
+  self-documenting/future-proof, and corrected the test that had wrongly
+  claimed an under-count bug; the spec's `PUT` response shape (`{ saved_ms }`)
+  didn't match the shipped one (`{ ok, updated_ms }`, matching the sibling
+  prefs endpoints) — doc corrected, code kept; the spec's "~25 lines" budget
+  for `CandleChart.tsx` was never realistic for what Tasks 9/10 actually wire
+  up — doc now states the real growth (726 → 904 over the feature, → 925
+  after the fix wave).
+
+Gates after the fix wave: `cd frontend && npx vitest run` **323 passed** (was
+316) · `npx tsc -b` silent, 0 errors · `npm run build` clean · `uv run pytest -q`
+**705 passed** (was 704). Full command outputs and non-vacuity verification
+(each IMPORTANT/MINOR fix reverted, its new test confirmed to fail, then
+restored) are in
+`.superpowers/sdd/2026-08-10-chart-drawing-tools/final-fix-report.md` on this
+worktree.
+
+**Still pending — nothing in this feature has been run in a browser.** All 8
+PENDING HUMAN items at the bottom of the plan file are open, including item 6
+(enter replay, draw, exit, confirm the live chart stays clean), which is the
+one that specifically exercises IMPORTANT 1 above and must be re-run against
+this fix, ideally on a throttled connection so the async pending-session
+window is wide enough to actually land a draw inside it. Not merged to `main`.
 
 **2026-08-06 — M10 (the lab) shipped.** `src/journal/lab/` (six modules:
 `features.py`, `labels.py`, `evaluate.py`, `train.py`, `store.py`, `score.py` —

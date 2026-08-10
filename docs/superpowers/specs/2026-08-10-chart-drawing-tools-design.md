@@ -155,6 +155,18 @@ the existing `HIT_THRESHOLD_PX` constant from `lib/sltpDrag.ts`.
 `CandleChart.tsx` is already 726 lines. The drawing feature must not grow it by
 more than ~25 lines; all new state lives behind a hook.
 
+> **Post-hoc correction (fix wave, 2026-08-10):** this budget was not met and
+> could not have been — Task 9 wires a full second pointer-gesture effect
+> (down/move/up/key/cancel, capture-phase, plus its own `reserved()`
+> priority logic against the existing measure/SL-TP effect) and Task 10 adds
+> the inline text-editor placement/reopen effect, on top of the palette,
+> overlay, and drag-preview projection wiring — none of that fits in 25
+> lines no matter where the state lives. `CandleChart.tsx` grew from 726 to
+> 904 lines over Tasks 9–11 (+178), and to 925 after the fix-wave additions
+> for the price-axis re-projection listener and the measure-seed guard
+> (+199 total from baseline). The budget line above is kept for history;
+> treat the actual growth figure as the real number, not the target.
+
 ```
 frontend/src/
   lib/drawings.ts               pure: types, parseDrawings, anchorToX, hitTest,
@@ -185,8 +197,13 @@ projected pixels; `useDrawings` is the only place that talks to the API.
 
 ```
 GET  /api/drawings?symbol=XAUUSDc[&session_id=<int>]  → { drawings: <blob|null> }
-PUT  /api/drawings?symbol=XAUUSDc[&session_id=<int>]  → { saved_ms: <int> }
+PUT  /api/drawings?symbol=XAUUSDc[&session_id=<int>]  → { ok: true, updated_ms: <int> }
 ```
+
+Corrected in the fix wave (2026-08-10): the implemented shape is `{ ok, updated_ms }`,
+not the `{ saved_ms }` originally specified here — matching the sibling
+`chart`/`replay`/`risk` prefs endpoints' response shape is the better
+convention, so the code was kept and this doc corrected instead.
 
 - The server normalises `symbol` → `symbol_base` via `domain/symbols.py` (rule
   11); the key is never built from the raw symbol string.
