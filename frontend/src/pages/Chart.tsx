@@ -27,6 +27,7 @@ import ReplayPositions from "../components/ReplayPositions";
 import ReplaySummary from "../components/ReplaySummary";
 import RiskSizePanel from "../components/RiskSizePanel";
 import { useChartData } from "../hooks/useChartData";
+import { useDrawings } from "../hooks/useDrawings";
 import { PLANNED_ID } from "../lib/sltpDrag";
 
 export interface ChartHandle {
@@ -66,6 +67,12 @@ export default function Chart() {
   const replay = useReplaySession();
   const replayPrefs = useReplayPrefs();
   const snapshotRef = useRef<string>("");
+
+  // Replay drawings live under their own session key: a live annotation was
+  // made knowing what happened next, so showing it during training would leak
+  // the answer. Passing null outside replay selects the per-symbol live key.
+  const drawingSession = replayOpen ? replay.session?.id ?? null : null;
+  const drawings = useDrawings(symbol, drawingSession, true);
 
   const [compRound, setCompRound] = useState(1);
   // Closed positions of the FINISHED scenarios. Each round is its own backend
@@ -275,6 +282,14 @@ export default function Chart() {
     }),
     [plannedEntry, plannedSl, plannedTp, plannedDirection],
   );
+  const drawingsProp = useMemo(() => ({
+    items: drawings.items,
+    editable: true,
+    onAdd: drawings.add,
+    onUpdate: drawings.update,
+    onDelete: drawings.remove,
+    onClearAll: drawings.clear,
+  }), [drawings.items, drawings.add, drawings.update, drawings.remove, drawings.clear]);
 
   const competitive = replayPrefs.prefs.competitiveMode;
   const { data: career } = useApi<TrainingSummary>(
@@ -356,6 +371,7 @@ export default function Chart() {
               missing={data.missing}
               shadeCoverage={!replayOpen}
               hideDate={replayOpen && replayPrefs.prefs.competitiveMode && replayPrefs.prefs.competitiveHideDate}
+              drawings={drawingsProp}
             />
           ) : (
             <div className="glass h-full flex items-center justify-center text-muted text-sm">

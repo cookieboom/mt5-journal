@@ -470,4 +470,30 @@ describe("risk sizing panel", () => {
     fireEvent.click(await screen.findByRole("button", { name: /buy/i }));
     await waitFor(() => expect(openPosition).toHaveBeenCalled());
   });
+
+  it("hands the chart editable drawings keyed to the live symbol outside replay", async () => {
+    const { fetchMock } = renderChartPage({ replayOpen: false });
+    await screen.findByTestId("candle-chart");
+
+    const calls = mockCandleChart.mock.calls;
+    expect(calls[calls.length - 1][0].drawings.editable).toBe(true);
+
+    await waitFor(() => {
+      const urls = fetchMock.mock.calls.map(([u]: [string, RequestInit?]) => u);
+      expect(urls).toContain("/api/drawings?symbol=XAUUSDc");
+    });
+    const urls = fetchMock.mock.calls.map(([u]: [string, RequestInit?]) => u);
+    expect(urls.some((u) => u.startsWith("/api/drawings?") && u.includes("session_id="))).toBe(false);
+  });
+
+  it("scopes drawings to the replay session while replaying", async () => {
+    // Live annotations were made knowing what happened next; training must not
+    // see them, and the session-scoped key is what enforces that.
+    const { fetchMock } = renderChartPage({ replayOpen: true });
+    await screen.findByTestId("candle-chart");
+    await waitFor(() => {
+      const urls = fetchMock.mock.calls.map(([u]: [string, RequestInit?]) => u);
+      expect(urls.some((u) => u.startsWith("/api/drawings?") && u.includes("session_id=1"))).toBe(true);
+    });
+  });
 });

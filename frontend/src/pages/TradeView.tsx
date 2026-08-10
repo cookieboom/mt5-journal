@@ -4,6 +4,7 @@ import { useApi } from "../lib/api";
 import type { TradeDetailData, TradesData } from "../lib/types";
 import { useChartData } from "../hooks/useChartData";
 import { useChartPrefs } from "../hooks/useChartPrefs";
+import { useDrawings } from "../hooks/useDrawings";
 import CandleChart from "../components/CandleChart";
 import AnnotationForm from "../components/AnnotationForm";
 import TagEditor from "../components/TagEditor";
@@ -90,6 +91,14 @@ export default function TradeView() {
     return { startMs: t.open_time_msc, endMs: t.close_time_msc ?? t.open_time_msc };
   }, [t]);
 
+  // Read-only: the viewer inspects past trades, it does not annotate them.
+  const drawings = useDrawings(t?.symbol ?? "", null, !!t);
+  const drawingsProp = useMemo(() => ({
+    items: drawings.items,
+    editable: false,
+    onAdd: () => {}, onUpdate: () => {}, onDelete: () => {}, onClearAll: () => {},
+  }), [drawings.items]);
+
   // --- Optional playback reveal (Task 10) -------------------------------
   // Pure visual reveal: no evaluator, no fills. cursor === null means "show
   // the full window" (the default). Play/Step move the cursor forward from a
@@ -141,7 +150,8 @@ export default function TradeView() {
               onHover={() => {}} onNowVisibleChange={() => {}} onRequestOlder={chart.loadOlder}
               live={null} nowVisible={false}
               fitToRange={fitToRange}
-              markers={markers} />
+              markers={markers}
+              drawings={drawingsProp} />
           ) : (
             <div className="glass h-full flex items-center justify-center text-muted text-sm">
               {chart.status === "gaveup"

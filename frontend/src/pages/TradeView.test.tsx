@@ -189,3 +189,14 @@ it("computes fitToRange and markers and passes them to CandleChart", async () =>
   ]);
 });
 
+it("renders drawings read-only on the trade viewer", async () => {
+  render(<MemoryRouter initialEntries={["/trades/2/view"]}>
+    <Routes><Route path="/trades/:id/view" element={<TradeView />} /></Routes>
+  </MemoryRouter>);
+  await screen.findByTestId("candle-chart");
+  const calls = candleChartMock.mock.calls;
+  const props = calls[calls.length - 1][0];
+  expect(props.drawings.editable).toBe(false);
+  expect(Array.isArray(props.drawings.items)).toBe(true);
+});
+
