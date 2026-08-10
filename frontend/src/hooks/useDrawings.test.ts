@@ -86,4 +86,64 @@ describe("useDrawings", () => {
     act(() => { result.current.add(hline); });
     expect(result.current.items).toEqual([hline]);
   });
+
+  // FINDING 1: an edit made while the initial GET is still in flight must
+  // survive that GET resolving with the older (empty) blob — otherwise the
+  // wipe is immediately compounded by the next debounced PUT overwriting the
+  // DB and permanently dropping the already-persisted drawing.
+  it("a local edit survives a slow GET that resolves after it", async () => {
+    let resolveGet!: () => void;
+    const getPromise = new Promise<Response>((resolve) => {
+      resolveGet = () => resolve(
+        { ok: true, json: () => Promise.resolve({ drawings: { v: 1, items: [] } }) } as Response,
+      );
+    });
+    const f = vi.fn((_url: string, init?: RequestInit) => {
+      if (init?.method === "PUT") {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ ok: true }) } as Response);
+      }
+      return getPromise;
+    });
+    vi.stubGlobal("fetch", f);
+
+    const { result } = renderHook(() => useDrawings("XAUUSDc", null, true));
+
+    // The user draws before the slow GET has resolved at all.
+    act(() => { result.current.add(hline); });
+    expect(result.current.items).toEqual([hline]);
+
+    // Now the GET resolves with the older, empty blob — it must not clobber
+    // the local edit.
+    act(() => { resolveGet(); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+    expect(result.current.items).toEqual([hline]);
+  });
+
+  // FINDING 2: a burst on a NEW symbol must not silently cancel a still-
+  // pending write for the OLD symbol — it must flush that write to the OLD
+  // symbol's URL first.
+  it("flushes a pending PUT to the old symbol when the symbol changes mid-debounce", async () => {
+    const f = mockFetch({ drawings: { v: 1, items: [] } });
+    vi.stubGlobal("fetch", f);
+    const { result, rerender } = renderHook(
+      ({ symbol }: { symbol: string }) => useDrawings(symbol, null, true),
+      { initialProps: { symbol: "XAUUSDc" } },
+    );
+    await waitFor(() => expect(result.current.items).toEqual([]));
+
+    act(() => { result.current.add(hline); });   // schedules a debounced PUT for XAUUSDc
+    expect(result.current.items).toEqual([hline]);
+
+    rerender({ symbol: "BTCUSDc" });              // switch before the 400ms window elapses
+    await waitFor(() => expect(result.current.items).toEqual([]));
+
+    // Edit on the NEW symbol. This must flush XAUUSDc's pending write instead
+    // of cancelling it.
+    act(() => { result.current.add({ ...hline, id: "d2" }); });
+
+    const puts = f.mock.calls.filter((c) => (c[1] as RequestInit | undefined)?.method === "PUT");
+    expect(puts).toHaveLength(1);
+    expect(puts[0][0]).toBe("/api/drawings?symbol=XAUUSDc");
+    expect(JSON.parse(puts[0][1]!.body as string)).toEqual({ v: 1, items: [hline] });
+  });
 });

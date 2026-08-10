@@ -24,35 +24,59 @@ export function useDrawings(symbol: string, sessionId: number | null, enabled: b
   const target = useRef(url(symbol, sessionId));
   target.current = url(symbol, sessionId);
 
+  // Set the moment a local mutation happens, cleared at the start of each new
+  // load. Guards against a slow initial GET clobbering an edit the user made
+  // while it was still in flight (see the GET .then below).
+  const dirty = useRef(false);
+  // The write a live debounce timer is targeting, so a target change (symbol
+  // or session switch) can flush it instead of silently cancelling it.
+  const pending = useRef<{ to: string; next: Drawing[] } | null>(null);
+
   useEffect(() => {
     if (!enabled) return;
     let alive = true;
+    dirty.current = false;
     setItems([]);                       // never show one symbol's drawings on another
     fetch(url(symbol, sessionId))
       .then((r) => (r.ok ? r.json() : null))
       .then((body: { drawings: unknown } | null) => {
-        if (!alive || !body) return;
+        if (!alive || !body || dirty.current) return;
         setItems(parseDrawings(body.drawings));
       })
       .catch(() => { /* offline — start empty, mutations still work locally */ });
     return () => { alive = false; };
   }, [symbol, sessionId, enabled]);
 
-  // One debounced PUT per burst of edits. A dropped PUT loses at most the last
-  // edit; in-memory state stays correct until reload.
-  const schedule = useCallback((next: Drawing[]) => {
-    if (timer.current) clearTimeout(timer.current);
-    const to = target.current;
-    timer.current = setTimeout(() => {
-      void fetch(to, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ v: BLOB_VERSION, items: next }),
-      }).catch(() => { /* offline — annotations only */ });
-    }, DEBOUNCE_MS);
+  const doPut = useCallback((to: string, next: Drawing[]) => {
+    void fetch(to, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ v: BLOB_VERSION, items: next }),
+    }).catch(() => { /* offline — annotations only */ });
   }, []);
 
+  // One debounced PUT per burst of edits. If the target (symbol/session)
+  // changes while a write is still pending, that write is flushed to its own
+  // (captured) target immediately rather than cancelled — a burst on the NEW
+  // target must not silently drop the OLD target's last edit.
+  const schedule = useCallback((next: Drawing[]) => {
+    const to = target.current;
+    if (pending.current && pending.current.to !== to) {
+      if (timer.current) clearTimeout(timer.current);
+      doPut(pending.current.to, pending.current.next);
+    } else if (timer.current) {
+      clearTimeout(timer.current);
+    }
+    pending.current = { to, next };
+    timer.current = setTimeout(() => {
+      doPut(to, next);
+      pending.current = null;
+      timer.current = null;
+    }, DEBOUNCE_MS);
+  }, [doPut]);
+
   const apply = useCallback((fn: (prev: Drawing[]) => Drawing[]) => {
+    dirty.current = true;
     setItems((prev) => {
       const next = fn(prev);
       schedule(next);
