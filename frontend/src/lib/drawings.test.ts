@@ -200,3 +200,113 @@ describe("hitTest", () => {
     expect(hitTest([under, over], { x: 200, y: 150 })?.id).toBe("over");
   });
 });
+
+import { drawReducer, newDrawing, moveDrawing, DRAW_IDLE, type DrawState } from "./drawings";
+
+const A = { timeMs: 1_000_000, price: 100 };
+const B = { timeMs: 1_600_000, price: 110 };
+
+describe("newDrawing", () => {
+  it("starts a trend with both anchors at the press point", () => {
+    expect(newDrawing("trend", "id1", A)).toEqual({ id: "id1", kind: "trend", a: A, b: A });
+  });
+
+  it("starts an hline from the press price only", () => {
+    expect(newDrawing("hline", "id2", A)).toEqual({ id: "id2", kind: "hline", price: 100 });
+  });
+
+  it("starts a text with an empty label", () => {
+    expect(newDrawing("text", "id3", A)).toEqual({ id: "id3", kind: "text", a: A, text: "" });
+  });
+});
+
+describe("drawReducer", () => {
+  it("begin puts a draft in the drawing phase", () => {
+    const s = drawReducer(DRAW_IDLE, { t: "begin", draft: newDrawing("trend", "id1", A) });
+    expect(s.phase).toBe("drawing");
+  });
+
+  it("move extends the draft's second anchor", () => {
+    let s: DrawState = drawReducer(DRAW_IDLE, { t: "begin", draft: newDrawing("trend", "id1", A) });
+    s = drawReducer(s, { t: "move", at: B });
+    expect(s).toEqual({ phase: "drawing", draft: { id: "id1", kind: "trend", a: A, b: B } });
+  });
+
+  it("move on an hline draft tracks the price, not a second anchor", () => {
+    let s: DrawState = drawReducer(DRAW_IDLE, { t: "begin", draft: newDrawing("hline", "id2", A) });
+    s = drawReducer(s, { t: "move", at: B });
+    expect(s).toEqual({ phase: "drawing", draft: { id: "id2", kind: "hline", price: 110 } });
+  });
+
+  it("commit leaves the finished object selected", () => {
+    let s: DrawState = drawReducer(DRAW_IDLE, { t: "begin", draft: newDrawing("trend", "id1", A) });
+    s = drawReducer(s, { t: "commit" });
+    expect(s).toEqual({ phase: "selected", id: "id1" });
+  });
+
+  it("cancel always returns to idle", () => {
+    const drawing = drawReducer(DRAW_IDLE, { t: "begin", draft: newDrawing("rect", "id4", A) });
+    expect(drawReducer(drawing, { t: "cancel" })).toEqual(DRAW_IDLE);
+    expect(drawReducer({ phase: "selected", id: "z" }, { t: "cancel" })).toEqual(DRAW_IDLE);
+  });
+
+  it("grab enters dragging and remembers where the pointer grabbed", () => {
+    const s = drawReducer({ phase: "selected", id: "t" }, { t: "grab", id: "t", handle: "body", at: A });
+    expect(s).toEqual({ phase: "dragging", id: "t", handle: "body", from: A });
+  });
+
+  it("move while dragging keeps the original grab point", () => {
+    let s: DrawState = drawReducer(DRAW_IDLE, { t: "grab", id: "t", handle: "b", at: A });
+    s = drawReducer(s, { t: "move", at: B });
+    expect(s).toEqual({ phase: "dragging", id: "t", handle: "b", from: A, at: B });
+  });
+
+  it("commit after a drag leaves the object selected", () => {
+    let s: DrawState = drawReducer(DRAW_IDLE, { t: "grab", id: "t", handle: "a", at: A });
+    s = drawReducer(s, { t: "commit" });
+    expect(s).toEqual({ phase: "selected", id: "t" });
+  });
+
+  it("move and commit outside a gesture are no-ops", () => {
+    expect(drawReducer(DRAW_IDLE, { t: "move", at: B })).toEqual(DRAW_IDLE);
+    expect(drawReducer(DRAW_IDLE, { t: "commit" })).toEqual(DRAW_IDLE);
+  });
+
+  it("select replaces any selection", () => {
+    expect(drawReducer({ phase: "selected", id: "a" }, { t: "select", id: "b" }))
+      .toEqual({ phase: "selected", id: "b" });
+  });
+});
+
+describe("moveDrawing", () => {
+  const trend = { id: "t", kind: "trend" as const, a: A, b: B };
+
+  it("moves only the grabbed endpoint", () => {
+    const moved = moveDrawing(trend, "b", A, { timeMs: 2_000_000, price: 120 });
+    expect(moved).toEqual({ id: "t", kind: "trend", a: A, b: { timeMs: 2_000_000, price: 120 } });
+  });
+
+  it("shifts both anchors by the pointer delta on a body drag", () => {
+    const moved = moveDrawing(trend, "body", A, { timeMs: 1_060_000, price: 101 });
+    expect(moved).toEqual({
+      id: "t", kind: "trend",
+      a: { timeMs: 1_060_000, price: 101 },
+      b: { timeMs: 1_660_000, price: 111 },
+    });
+  });
+
+  it("moves an hline to the pointer price and ignores time", () => {
+    const moved = moveDrawing({ id: "h", kind: "hline", price: 105 }, "body", A, { timeMs: 9, price: 107 });
+    expect(moved).toEqual({ id: "h", kind: "hline", price: 107 });
+  });
+
+  it("moves a text anchor on a body drag and leaves its label alone", () => {
+    const t = { id: "x", kind: "text" as const, a: A, text: "supply" };
+    expect(moveDrawing(t, "body", A, B)).toEqual({ id: "x", kind: "text", a: B, text: "supply" });
+  });
+
+  it("preserves an explicit colour through a move", () => {
+    const coloured = { ...trend, color: "#ff0000" };
+    expect(moveDrawing(coloured, "b", A, B).color).toBe("#ff0000");
+  });
+});

@@ -222,3 +222,77 @@ export function hitTest(
   }
   return null;
 }
+
+export type Tool = "cursor" | DrawingKind;
+
+export type DrawState =
+  | { phase: "idle" }
+  | { phase: "drawing"; draft: Drawing }
+  | { phase: "selected"; id: string }
+  | { phase: "dragging"; id: string; handle: Handle; from: Anchor; at?: Anchor };
+
+export type DrawEvent =
+  | { t: "begin"; draft: Drawing }
+  | { t: "move"; at: Anchor }
+  | { t: "commit" }
+  | { t: "select"; id: string }
+  | { t: "grab"; id: string; handle: Handle; at: Anchor }
+  | { t: "cancel" };
+
+export const DRAW_IDLE: DrawState = { phase: "idle" };
+
+// A fresh object at the press point: both anchors coincide until the pointer
+// moves, so a click without a drag produces a degenerate object the gesture
+// hook discards rather than a half-built one.
+export function newDrawing(kind: DrawingKind, id: string, at: Anchor): Drawing {
+  switch (kind) {
+    case "hline": return { id, kind, price: at.price };
+    case "text": return { id, kind, a: at, text: "" };
+    default: return { id, kind, a: at, b: at };
+  }
+}
+
+// Pure transition. `commit` from either gesture phase leaves the object
+// selected — that is what makes "draw it, then nudge its endpoint" one
+// continuous flow without a second click.
+export function drawReducer(s: DrawState, e: DrawEvent): DrawState {
+  switch (e.t) {
+    case "begin":
+      return { phase: "drawing", draft: e.draft };
+    case "move":
+      if (s.phase === "drawing") {
+        const d = s.draft;
+        const draft: Drawing = d.kind === "hline"
+          ? { ...d, price: e.at.price }
+          : d.kind === "text" ? d : { ...d, b: e.at };
+        return { phase: "drawing", draft };
+      }
+      if (s.phase === "dragging") return { ...s, at: e.at };
+      return s;
+    case "commit":
+      if (s.phase === "drawing") return { phase: "selected", id: s.draft.id };
+      if (s.phase === "dragging") return { phase: "selected", id: s.id };
+      return s;
+    case "select":
+      return { phase: "selected", id: e.id };
+    case "grab":
+      return { phase: "dragging", id: e.id, handle: e.handle, from: e.at };
+    case "cancel":
+      return DRAW_IDLE;
+  }
+}
+
+function shift(a: Anchor, from: Anchor, to: Anchor): Anchor {
+  return { timeMs: a.timeMs + (to.timeMs - from.timeMs), price: a.price + (to.price - from.price) };
+}
+
+// Applies a drag to an object. `from` is where the pointer grabbed, `to` where
+// it is now — a body drag shifts by the delta so the grab point stays under the
+// cursor, while an endpoint drag snaps that endpoint to the pointer.
+export function moveDrawing(d: Drawing, handle: Handle, from: Anchor, to: Anchor): Drawing {
+  if (d.kind === "hline") return { ...d, price: to.price };
+  if (d.kind === "text") return { ...d, a: handle === "body" ? shift(d.a, from, to) : to };
+  if (handle === "a") return { ...d, a: to };
+  if (handle === "b") return { ...d, b: to };
+  return { ...d, a: shift(d.a, from, to), b: shift(d.b, from, to) };
+}
