@@ -36,10 +36,41 @@ home each, and a second copy is a future lie. Point, never duplicate.
 
 ## CURRENT STATE — update this section every session
 
-**Last updated:** 2026-08-10
+**Last updated:** 2026-08-11
+
+**2026-08-11 — server-side stale-feed guard on `open`.** Closes the OPEN
+QUESTION at the bottom of this file (2026-08-04 review, answered 2026-08-05 with
+"block it" but implemented frontend-only). `execute._check_feed_fresh` now runs
+first inside `enqueue_open` — the single choke point every open passes through —
+and refuses when either (a) `journal live` has no heartbeat or its last beat is
+`FEED_STALE_MS` (15 s, the same window `api.live_status_payload` uses) old, or
+(b) an **actively watched** forming bar for that symbol has not been refreshed
+inside the same window. New `live_store.newest_forming_update` does the second
+check; it joins `live_candles` to an unexpired `live_watches` row on purpose,
+because `live_candles` rows are never pruned — an hour-old row from a chart
+that was closed is not a frozen feed, and gating on it would refuse every
+legitimate open from `/live`, which mounts no chart at all.
+
+Why the server and not just the panel: `volume` is frozen at enqueue, and the
+executor's fresh-tick `_check_level` re-validation catches a stop on the wrong
+*side*, never a wrong *size*. A stale `price_ref` therefore does not fail loudly
+— it silently resizes the order (0.10 lot / 4035 close / 4030 stop = 50 USC
+intended; if the market really sits at 4060, ~300 USC goes out). The browser
+gate `lib/candles.staleEntryReason` still arms the button; this is the copy that
+guards the row actually being written. No frontend change was needed —
+`useLiveCommand.confirm` already surfaces a 400's `error` in the panel.
+
+Deliberately NOT gated: `/api/live/open/preview`. Preview writes nothing, and a
+direct poster is refused at enqueue regardless; the cost is that a hand-rolled
+POST sees the refusal one step later than a risk-ceiling refusal would.
+
+Gates: `uv run pytest -q` **712 passed** (was 705; 6 new in `test_execute.py`
+covering both refusals plus the three cases that must NOT refuse — expired
+watch, another symbol's frozen feed, fresh feed — and 1 new HTTP-boundary test
+in `test_web.py`). `journal verify` PASS on both identities.
 
 **2026-08-10 — chart drawing tools: built, whole-branch reviewed, fix wave
-applied. NOT yet human-verified, NOT yet merged.** Four TradingView-style
+applied. MERGED to `main` and pushed (`d8e253c`); NOT yet human-verified.** Four TradingView-style
 drawing tools (trendline, hline, rectangle, text note) on `/chart` in both
 normal and replay mode, read-only on `/trades/:id/view`, absent from `/lab`.
 Built over 11 tasks on `worktree-chart-drawings` per
@@ -97,7 +128,11 @@ fixed in the same session (single fix wave, no second pass):
 
 Gates after the fix wave: `cd frontend && npx vitest run` **323 passed** (was
 316) · `npx tsc -b` silent, 0 errors · `npm run build` clean · `uv run pytest -q`
-**705 passed** (was 704). Full command outputs and non-vacuity verification
+**705 passed** (was 704). Two first-use defects found after that and fixed in
+`d8e253c` — drawing to the right of the newest bar (`toPoint` clamping collapsed
+whitespace anchors) and endpoint/corner handles moving the whole object instead
+of resizing it (the `hitTest` handle branches were unreachable; rect also gained
+c1/c2 handles) — take vitest to **338 passed**. Full command outputs and non-vacuity verification
 (each IMPORTANT/MINOR fix reverted, its new test confirmed to fail, then
 restored) are in
 `.superpowers/sdd/2026-08-10-chart-drawing-tools/final-fix-report.md` on this
@@ -772,8 +807,14 @@ panel. Deliberately NOT wired to `views.positions_context.stale`, which the
 original note suggested: that field is computed from `open_positions`, and with
 no rows it returns `stale=False` (`views.py`, "cannot tell 'flat' from 'live
 never ran'") — so it is always False in exactly the case that matters, the
-first open on a flat account. The gate is frontend-only; the server still
-accepts a stale `entry` if something else posts one. The original note, kept
+first open on a flat account.
+
+**CLOSED 2026-08-11 — the server half now exists too.**
+`execute._check_feed_fresh`, called first inside `enqueue_open`, refuses on a
+missing/stale heartbeat or on an actively-watched forming bar that has stopped
+being refreshed (`live_store.newest_forming_update`). See the 2026-08-11 entry
+in CURRENT STATE for why the watch join is what keeps it from refusing every
+legitimate `/live` open. The original note, kept
 for the reasoning:
 
 **OPEN QUESTION — stale feed can size against a stale price (2026-08-04 review):**

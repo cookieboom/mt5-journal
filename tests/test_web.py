@@ -18,6 +18,7 @@ import pytest
 
 from journal import execute
 from journal.analytics.report import build_report
+from journal.store import live_store
 from journal.store.db import connect, now_ms
 from journal.web import format as fmt
 from journal.web import views
@@ -751,6 +752,7 @@ def test_open_preview_refuses_over_the_ceiling_without_writing(conn):
 def test_open_enqueues_one_row_with_a_server_computed_volume(conn):
     _seed_account(conn, balance=100_000.0)
     _seed_spec(conn)
+    live_store.beat(conn, now_ms())      # an open needs a live feed (execute.py)
     status, d = _open(
         conn, symbol="XAUUSDc", entry=4035.0, sl=4030.0, tp=4045.0,
         risk_mode="usc", risk_value=50.0,
@@ -761,6 +763,22 @@ def test_open_enqueues_one_row_with_a_server_computed_volume(conn):
     assert row["direction"] == "buy"
     assert abs(row["volume"] - 0.10) < 1e-9      # derived here, never sent by the client
     assert abs(row["price_ref"] - 4035.0) < 1e-9
+
+
+def test_open_refuses_a_stale_feed_at_the_http_boundary(conn):
+    """The browser gate (`lib/candles.staleEntryReason`) is not the only one:
+    posting straight at the endpoint with no live feed must 400 and write no row,
+    because `entry` is what the server derives the lot from."""
+    _seed_account(conn, balance=100_000.0)
+    _seed_spec(conn)
+    # deliberately no live_store.beat()
+    status, d = _open(
+        conn, symbol="XAUUSDc", entry=4035.0, sl=4030.0, tp=4045.0,
+        risk_mode="usc", risk_value=50.0,
+    )
+    assert status == 400
+    assert "journal live" in d["error"]
+    assert conn.execute("SELECT COUNT(*) FROM trade_commands").fetchone()[0] == 0
 
 
 def test_a_literal_open_never_hits_the_position_id_route():

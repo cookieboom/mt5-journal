@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-from journal.adapter.base import TradeResult, TradeRetcode
+from journal.adapter.base import Candle, TradeResult, TradeRetcode
 from journal.domain.commands import CommandError
 from journal.execute import (
     claim_next,
@@ -26,7 +26,8 @@ from journal.execute import (
     recover_interrupted,
     reject,
 )
-from journal.store.db import connect
+from journal.store import live_store
+from journal.store.db import connect, now_ms
 
 _LOGIN = 257223861
 
@@ -286,7 +287,12 @@ def test_list_commands_respects_a_limit(conn):
 # ---------------------------------------------------------------------- open
 
 
-def _seed_open(conn, *, balance=100_000.0, trade_mode=4):
+def _seed_open(conn, *, balance=100_000.0, trade_mode=4, beat_age_ms=0):
+    # A beating heartbeat is part of the baseline: an open is only ever placed
+    # while `journal live` is running, so every open test seeds one. Pass
+    # `beat_age_ms=None` to seed no heartbeat at all.
+    if beat_age_ms is not None:
+        live_store.beat(conn, now_ms() - beat_age_ms)
     conn.execute(
         "INSERT OR REPLACE INTO accounts (login, currency, balance, margin_mode, "
         "first_seen_at) VALUES (?, 'USC', ?, 2, 1)", (_LOGIN, balance),
@@ -332,6 +338,82 @@ def test_an_open_on_an_unknown_symbol_is_refused(conn):
     with pytest.raises(CommandError, match="sync|spesifikasi|Spesifikasi"):
         enqueue_open(conn, _LOGIN, symbol="GBPUSDc", direction="buy",
                      sl=1.2, tp=0.0, volume=0.10, price_ref=1.25)
+
+
+# ------------------------------------------------------- open: feed freshness
+#
+# The lot is derived from `price_ref`, so a reference price the server cannot
+# vouch for silently resizes the order: 0.10 lot sized against a 4035 close with
+# a 4030 stop is 50 USC of intended risk, but if the market has moved to 4060
+# unseen, the same command puts ~300 USC at stake. The frontend already refuses
+# to arm the button (`lib/candles.staleEntryReason`); these pin the same refusal
+# on the server, which is what actually writes the row.
+
+
+def _watch(conn, symbol, timeframe, *, expires_in_ms, updated_age_ms):
+    now = now_ms()
+    live_store.upsert_watch(conn, symbol, timeframe, now, expires_in_ms)
+    live_store.upsert_forming(
+        conn, symbol, timeframe,
+        Candle(time_msc=now - 60_000, open=4035.0, high=4036.0, low=4034.0,
+               close=4035.0, tick_volume=10, spread=20, real_volume=0),
+        now - updated_age_ms,
+    )
+
+
+def test_an_open_is_refused_when_journal_live_never_beat(conn):
+    _seed_open(conn, beat_age_ms=None)
+    with pytest.raises(CommandError, match="journal live"):
+        enqueue_open(conn, _LOGIN, symbol="XAUUSDc", direction="buy",
+                     sl=4030.0, tp=0.0, volume=0.10, price_ref=4035.0)
+    assert conn.execute("SELECT COUNT(*) FROM trade_commands").fetchone()[0] == 0
+
+
+def test_an_open_is_refused_when_the_heartbeat_is_stale(conn):
+    _seed_open(conn, beat_age_ms=60_000)
+    with pytest.raises(CommandError, match="journal live"):
+        enqueue_open(conn, _LOGIN, symbol="XAUUSDc", direction="buy",
+                     sl=4030.0, tp=0.0, volume=0.10, price_ref=4035.0)
+    assert conn.execute("SELECT COUNT(*) FROM trade_commands").fetchone()[0] == 0
+
+
+def test_an_open_is_refused_when_an_actively_watched_feed_is_frozen(conn):
+    # `journal live` is alive but has not refreshed this symbol's forming bar:
+    # the process is up, the price is not moving through it.
+    _seed_open(conn)
+    _watch(conn, "XAUUSDc", "M1", expires_in_ms=300_000, updated_age_ms=120_000)
+    with pytest.raises(CommandError, match="XAUUSDc"):
+        enqueue_open(conn, _LOGIN, symbol="XAUUSDc", direction="buy",
+                     sl=4030.0, tp=0.0, volume=0.10, price_ref=4035.0)
+    assert conn.execute("SELECT COUNT(*) FROM trade_commands").fetchone()[0] == 0
+
+
+def test_an_expired_watch_does_not_block_an_open(conn):
+    # `live_candles` rows are never pruned, so a long-closed chart leaves a stale
+    # row behind forever. That is not evidence of a frozen feed -- nobody asked
+    # `serve_watches` to refresh it -- and must not refuse an open placed from
+    # /live, where no chart is mounted at all.
+    _seed_open(conn)
+    _watch(conn, "XAUUSDc", "M1", expires_in_ms=-1_000, updated_age_ms=3_600_000)
+    cmd_id = enqueue_open(conn, _LOGIN, symbol="XAUUSDc", direction="buy",
+                          sl=4030.0, tp=0.0, volume=0.10, price_ref=4035.0)
+    assert get_command(conn, cmd_id)["status"] == "pending"
+
+
+def test_another_symbols_frozen_feed_does_not_block_an_open(conn):
+    _seed_open(conn)
+    _watch(conn, "BTCUSDc", "M1", expires_in_ms=300_000, updated_age_ms=120_000)
+    cmd_id = enqueue_open(conn, _LOGIN, symbol="XAUUSDc", direction="buy",
+                          sl=4030.0, tp=0.0, volume=0.10, price_ref=4035.0)
+    assert get_command(conn, cmd_id)["status"] == "pending"
+
+
+def test_a_fresh_actively_watched_feed_allows_the_open(conn):
+    _seed_open(conn)
+    _watch(conn, "XAUUSDc", "M1", expires_in_ms=300_000, updated_age_ms=1_000)
+    cmd_id = enqueue_open(conn, _LOGIN, symbol="XAUUSDc", direction="buy",
+                          sl=4030.0, tp=0.0, volume=0.10, price_ref=4035.0)
+    assert get_command(conn, cmd_id)["status"] == "pending"
 
 
 def test_load_open_context_builds_a_synthetic_position(conn):

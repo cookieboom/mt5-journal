@@ -28,7 +28,13 @@ import sqlite3
 
 from .adapter.base import TradeResult
 from .domain.commands import CommandError, classify, validate
+from .store import live_store
 from .store.db import now_ms
+
+# How old the evidence that the price feed is moving may be before an open is
+# refused. Matches `api.live_status_payload`'s own staleness window, so the dot
+# the human sees on `/live` and this refusal flip at the same moment.
+FEED_STALE_MS = 15_000
 
 
 def _position(conn: sqlite3.Connection, login: int, position_id: int) -> sqlite3.Row | None:
@@ -140,6 +146,50 @@ def load_open_context(
     return pos, spec
 
 
+def _check_feed_fresh(
+    conn: sqlite3.Connection, symbol: str, *, now_msc: int | None = None
+) -> None:
+    """Refuse an open whose reference price the server cannot vouch for.
+
+    `price_ref` is what the lot was derived from, so a stale one does not fail
+    loudly — it silently resizes the order. 0.10 lot against a 4035 close with a
+    4030 stop is 50 USC of intended risk; if the market really sits at 4060, the
+    same command stakes ~300 USC. `_check_level`'s fresh-tick re-validation in
+    `journal live` catches a stop on the wrong SIDE, never a wrong SIZE, because
+    the volume is frozen at enqueue by design — so the guard has to be here.
+
+    Two independent ways the feed can be untrustworthy, and both refuse:
+
+      * `journal live` is not beating at all — nothing is pulling prices.
+      * It is beating, but an ACTIVELY WATCHED forming bar for this symbol has
+        not been refreshed. The process is up; the price is not moving through
+        it. No active watch means we have no evidence either way, and an open
+        from `/live` (which mounts no chart) is exactly that case — allowed, with
+        the heartbeat as the only gate.
+
+    `lib/candles.staleEntryReason` gates the button in the browser on the same
+    two facts. This is the copy that guards the row actually being written.
+    """
+    now = now_ms() if now_msc is None else now_msc
+
+    beat = live_store.read_heartbeat(conn)
+    if beat is None or now - beat >= FEED_STALE_MS:
+        raise CommandError(
+            "`journal live` tidak berjalan (heartbeat "
+            f"{'tidak ada' if beat is None else f'basi {(now - beat) / 1000:.0f}s'}) "
+            "— harga acuan tidak segar, jadi ukuran lot tidak bisa dipercaya. "
+            "Jalankan `journal live` dulu."
+        )
+
+    updated = live_store.newest_forming_update(conn, symbol, now)
+    if updated is not None and now - updated >= FEED_STALE_MS:
+        raise CommandError(
+            f"Feed {symbol} beku — bar berjalan terakhir diperbarui "
+            f"{(now - updated) / 1000:.0f}s lalu. Harga acuan tidak segar, "
+            "jadi ukuran lot tidak bisa dipercaya."
+        )
+
+
 def enqueue_open(
     conn: sqlite3.Connection,
     login: int,
@@ -157,6 +207,7 @@ def enqueue_open(
     stored as evidence of the price the human sized against — it is NOT sent to
     the broker (execution is MARKET) and it is not the fill price.
     """
+    _check_feed_fresh(conn, symbol)
     pos, spec = load_open_context(conn, login, symbol, direction, price_ref)
     validate("open", pos, spec, sl=sl, tp=tp, volume=volume,
              balance=account_balance(conn, login))
