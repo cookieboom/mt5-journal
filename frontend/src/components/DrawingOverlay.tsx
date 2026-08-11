@@ -57,6 +57,14 @@ export default function DrawingOverlay({
                 stroke={color} strokeWidth={selected ? 2 : 1}
               />
               {handles}
+              {/* The other two corners resize too (hitTest "c1"/"c2"), so they
+                  get the same dot — a grab point has to be visible. */}
+              {selected && (
+                <>
+                  <circle data-testid={`handle-${d.id}-c1`} cx={a.x} cy={b.y} r={4} fill={color} />
+                  <circle data-testid={`handle-${d.id}-c2`} cx={b.x} cy={a.y} r={4} fill={color} />
+                </>
+              )}
             </g>
           );
         }

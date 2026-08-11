@@ -74,7 +74,9 @@ import { HIT_THRESHOLD_PX } from "./sltpDrag";
 
 export interface PixelPoint { x: number; y: number }
 
-export type Handle = "a" | "b" | "body";
+// "c1"/"c2" are the rect's other two corners — (a.x, b.y) and (b.x, a.y). They
+// are not stored anchors, so dragging one moves ONE coordinate of each anchor.
+export type Handle = "a" | "b" | "c1" | "c2" | "body";
 export interface Hit { id: string; handle: Handle }
 
 // A drawing resolved to pane pixels. `a`/`b` are null when the anchor falls
@@ -89,6 +91,7 @@ export interface Projected {
 export interface ProjectCtx {
   width: number;                                   // pane width in px (hline span)
   candles: { time_msc: number }[];
+  tfMs: number;                                    // bar size, for the empty space right of the last bar
   logicalToX: (index: number) => number | null;    // timeScale().logicalToCoordinate
   priceToY: (price: number) => number | null;      // series.priceToCoordinate
 }
@@ -105,24 +108,52 @@ export function barIndexAt(candles: { time_msc: number }[], timeMs: number): num
   return best;
 }
 
+// Logical index (fractional, from coordinateToLogical) → the time it stands for.
+// Inside the window that is the bar under the pointer. To the RIGHT of the last
+// bar there is no bar to name, so the index counts whole timeframes forward
+// from the last one — the same step the time axis itself draws with. To the
+// LEFT it clamps: earlier bars exist, they are merely not loaded, so inventing
+// times there would misplace an anchor the moment history arrives.
+export function timeAtLogical(
+  candles: { time_msc: number }[],
+  logical: number,
+  tfMs: number,
+): number {
+  if (candles.length === 0) return 0;
+  const last = candles.length - 1;
+  const i = Math.round(logical);
+  if (i <= 0) return candles[0].time_msc;
+  if (i <= last) return candles[i].time_msc;
+  if (tfMs <= 0) return candles[last].time_msc;
+  return candles[last].time_msc + (i - last) * tfMs;
+}
+
 // Anchor time → pixel x. Deliberately NOT timeToCoordinate(): that returns null
 // for any timestamp which is not exactly a bar time on the CURRENT series, so a
 // drawing made on M15 would silently vanish when the same chart is viewed on
 // H1. Snapping to the containing bar is the correct reading of "this level, at
 // this moment", and is what keeps drawings shared across timeframes.
+// Past the last bar the same extrapolation as timeAtLogical runs in reverse, so
+// an anchor placed in the empty right-hand space stays where it was put.
 export function anchorToX(
   timeMs: number,
   candles: { time_msc: number }[],
   logicalToX: (index: number) => number | null,
+  tfMs: number,
 ): number | null {
   const i = barIndexAt(candles, timeMs);
   if (i < 0) return null;
+  const last = candles.length - 1;
+  if (i === last && tfMs > 0) {
+    const ahead = (timeMs - candles[last].time_msc) / tfMs;
+    if (ahead > 0) return logicalToX(last + ahead);
+  }
   return logicalToX(i);
 }
 
 export function projectDrawing(d: Drawing, ctx: ProjectCtx): Projected {
   const pt = (anchor: Anchor): PixelPoint | null => {
-    const x = anchorToX(anchor.timeMs, ctx.candles, ctx.logicalToX);
+    const x = anchorToX(anchor.timeMs, ctx.candles, ctx.logicalToX, ctx.tfMs);
     const y = ctx.priceToY(anchor.price);
     return x === null || y === null ? null : { x, y };
   };
@@ -151,11 +182,12 @@ function textBox(p: PixelPoint, text: string): { x0: number; y0: number; x1: num
 }
 
 // Topmost-first: later items are drawn on top, so they must win the hit.
-// Closest feature wins: compute distance to each endpoint and to the body/edges,
-// return whichever is nearest within threshold. Endpoints win ties (if equidistant
-// to endpoint and body, grab the endpoint). This prevents distant endpoints from
-// stealing clicks on line bodies: clicking a trend at x=5 (2px from line, 5px from
-// endpoint-a) grabs the line, not the endpoint.
+// An endpoint handle inside the grab radius wins OUTRIGHT, before any body or
+// edge test. It cannot be decided by "closest feature wins": the body line runs
+// through its own endpoints and a rect edge through its own corners, so the
+// body distance is never larger than the endpoint distance — comparing them
+// made every near-corner press a whole-object move and left the handles
+// reachable only from beyond the segment.
 // Rect hits on its EDGES only — a filled zone would otherwise swallow every
 // click inside it, including one meant for the chart underneath.
 export function hitTest(
@@ -163,8 +195,6 @@ export function hitTest(
   p: PixelPoint,
   threshold: number = HIT_THRESHOLD_PX,
 ): Hit | null {
-  const EPSILON = 1e-9;
-
   for (let i = projected.length - 1; i >= 0; i--) {
     const { d, a, b } = projected[i];
     if (a === null) continue;
@@ -179,20 +209,25 @@ export function hitTest(
     }
     if (b === null) continue;
 
-    const distA = Math.hypot(p.x - a.x, p.y - a.y);
-    const distB = Math.hypot(p.x - b.x, p.y - b.y);
+    // hline has no movable endpoints — its a/b are the pane edges, not anchors.
+    if (d.kind !== "hline") {
+      const distA = Math.hypot(p.x - a.x, p.y - a.y);
+      const distB = Math.hypot(p.x - b.x, p.y - b.y);
+      if (Math.min(distA, distB) <= threshold) {
+        return { id: d.id, handle: distA <= distB ? "a" : "b" };
+      }
+    }
 
     if (d.kind === "rect") {
       const c1 = { x: a.x, y: b.y }, c2 = { x: b.x, y: a.y };
+      const corners: [Handle, PixelPoint][] = [["c1", c1], ["c2", c2]];
+      for (const [handle, c] of corners) {
+        if (Math.hypot(p.x - c.x, p.y - c.y) <= threshold) return { id: d.id, handle };
+      }
       const edges: [PixelPoint, PixelPoint][] = [[a, c1], [c1, b], [b, c2], [c2, a]];
       const minEdgeDist = Math.min(...edges.map(([e0, e1]) => distToSegment(p, e0, e1)));
-      const minEndpointDist = Math.min(distA, distB);
-      const minDist = Math.min(minEndpointDist, minEdgeDist);
 
-      if (minDist <= threshold) {
-        // Endpoints win ties.
-        if (Math.abs(distA - minDist) < EPSILON) return { id: d.id, handle: "a" };
-        if (Math.abs(distB - minDist) < EPSILON) return { id: d.id, handle: "b" };
+      if (minEdgeDist <= threshold) {
         // Edge hit, but verify not in interior (hollow rect).
         const minX = Math.min(a.x, b.x);
         const maxX = Math.max(a.x, b.x);
@@ -205,15 +240,7 @@ export function hitTest(
     }
 
     if (d.kind !== "hline") {
-      // Trend: endpoints vs body line, closest wins, endpoints win ties.
-      const distBody = distToSegment(p, a, b);
-      const minDist = Math.min(distA, distB, distBody);
-
-      if (minDist <= threshold) {
-        if (Math.abs(distA - minDist) < EPSILON) return { id: d.id, handle: "a" };
-        if (Math.abs(distB - minDist) < EPSILON) return { id: d.id, handle: "b" };
-        return { id: d.id, handle: "body" };
-      }
+      if (distToSegment(p, a, b) <= threshold) return { id: d.id, handle: "body" };
       continue;
     }
 
@@ -294,5 +321,15 @@ export function moveDrawing(d: Drawing, handle: Handle, from: Anchor, to: Anchor
   if (d.kind === "text") return { ...d, a: handle === "body" ? shift(d.a, from, to) : to };
   if (handle === "a") return { ...d, a: to };
   if (handle === "b") return { ...d, b: to };
+  // Only a rect has the mixed corners; anything else falls through to the body
+  // shift below rather than half-moving an anchor it never showed a handle for.
+  if (d.kind === "rect") {
+    if (handle === "c1") {
+      return { ...d, a: { ...d.a, timeMs: to.timeMs }, b: { ...d.b, price: to.price } };
+    }
+    if (handle === "c2") {
+      return { ...d, a: { ...d.a, price: to.price }, b: { ...d.b, timeMs: to.timeMs } };
+    }
+  }
   return { ...d, a: shift(d.a, from, to), b: shift(d.b, from, to) };
 }

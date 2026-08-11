@@ -542,6 +542,26 @@ describe("drawing gesture", () => {
     expect(container.querySelector('[aria-label="kursor"]')!.getAttribute("aria-pressed")).toBe("true");
   });
 
+  // Right of the newest bar (index 19 = 2_140_000 here) there is no bar to snap
+  // to. Clamping there gave both anchors the same time, so a level drawn in the
+  // empty space collapsed to zero width and was thrown away as degenerate.
+  it("draws into the empty space right of the last bar", () => {
+    const props = drawingProps();
+    const { container } = render(<CandleChart {...base} drawings={props} />);
+    fireEvent.click(container.querySelector('[aria-label="trendline"]')!);
+    const pane = container.querySelector(".w-full.h-full > div")! as HTMLElement;
+
+    fireEvent.pointerDown(pane, { clientX: 40, clientY: 200 });
+    fireEvent.pointerMove(window, { clientX: 60, clientY: 200 });
+    fireEvent.pointerUp(window, { clientX: 60, clientY: 200 });
+
+    expect(props.onAdd).toHaveBeenCalledTimes(1);
+    const added = props.onAdd.mock.calls[0][0];
+    // M1 bars: 21 and 41 steps past the last bar, one per logical index.
+    expect(added.a.timeMs).toBe(2_140_000 + 21 * 60_000);
+    expect(added.b.timeMs).toBe(2_140_000 + 41 * 60_000);
+  });
+
   it("discards a degenerate object drawn with no movement", () => {
     const props = drawingProps();
     const { container } = render(<CandleChart {...base} drawings={props} />);

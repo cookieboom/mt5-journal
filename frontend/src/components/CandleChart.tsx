@@ -8,7 +8,7 @@ import {
   type SeriesMarker, type Time,
 } from "lightweight-charts";
 import {
-  toSeconds, isNowVisible, LINE_COLORS, liveLines, barCloseCountdown,
+  toSeconds, isNowVisible, LINE_COLORS, liveLines, barCloseCountdown, timeframeMs,
   type Sym, type Timeframe,
 } from "../lib/candles";
 import type { ChartSettings } from "../lib/chartPrefs";
@@ -30,7 +30,8 @@ import DrawingPalette from "./DrawingPalette";
 import TextDrawingInput from "./TextDrawingInput";
 import { useDrawingGesture } from "../hooks/useDrawingGesture";
 import {
-  hitTest, moveDrawing, projectDrawing, type Anchor, type Drawing, type Projected, type Tool,
+  anchorToX, hitTest, moveDrawing, projectDrawing, timeAtLogical,
+  type Anchor, type Drawing, type Projected, type Tool,
 } from "../lib/drawings";
 
 const DARK = {
@@ -158,16 +159,18 @@ const CandleChart = forwardRef<ChartHandle, {
   const entryTitle = props.countdown ? barCloseCountdown(tick, props.tf) : "harga";
 
   // Pointer pixel (relative to the pane) → data coordinates, using the current
-  // series/timeScale. candles give a gap-aware bar time from the logical index.
+  // series/timeScale. candles give a gap-aware bar time from the logical index;
+  // right of the last bar timeAtLogical keeps counting in whole timeframes, so
+  // the empty space there is addressable instead of collapsing onto that bar.
   const toPoint = useCallback((px: number, py: number): Point | null => {
     const c = chart.current, s = series.current;
     if (!c || !s) return null;
     const price = s.coordinateToPrice(py);
     const logical = c.timeScale().coordinateToLogical(px);
     if (price === null || logical === null) return null;
-    const cand = cbs.current.candles;
-    const idx = Math.max(0, Math.min(cand.length - 1, Math.round(logical as number)));
-    const barTimeMs = cand.length ? cand[idx].time_msc : 0;
+    const barTimeMs = timeAtLogical(
+      cbs.current.candles, logical as number, timeframeMs(cbs.current.tf),
+    );
     return { price: price as number, logical: logical as number, barTimeMs };
   }, []);
 
@@ -710,14 +713,6 @@ const CandleChart = forwardRef<ChartHandle, {
   }));
 
   const theme = props.settings.theme === "light" ? LIGHT : DARK;
-  const project = (p: Point): ProjectedPoint | null => {
-    const c = chart.current, s = series.current;
-    if (!c || !s) return null;
-    const x = c.timeScale().timeToCoordinate((p.barTimeMs / 1000) as UTCTimestamp);
-    const y = s.priceToCoordinate(p.price);
-    if (x === null || y === null) return null;
-    return { x: x as number, y: y as number };
-  };
 
   // Drawing projection context (anchorToX inside projectDrawing snaps to the
   // containing bar, so a level drawn on M15 still renders on H1).
@@ -725,6 +720,7 @@ const CandleChart = forwardRef<ChartHandle, {
   const drawCtx = {
     width: el.current?.clientWidth || FALLBACK_PANE_WIDTH_PX,
     candles: props.candles,
+    tfMs: timeframeMs(props.tf),
     logicalToX: (i: number) => {
       const x = chart.current?.timeScale().logicalToCoordinate(i as never);
       return x === null || x === undefined ? null : (x as number);
@@ -734,6 +730,16 @@ const CandleChart = forwardRef<ChartHandle, {
       return y === null || y === undefined ? null : (y as number);
     },
   };
+  // Measure anchors go through the SAME projection as drawings: timeToCoordinate
+  // resolves only exact bar times, so a measurement whose anchor sits right of
+  // the last bar (where toPoint now extrapolates) would project to null and the
+  // overlay would silently vanish.
+  const project = (p: Point): ProjectedPoint | null => {
+    const x = anchorToX(p.barTimeMs, drawCtx.candles, drawCtx.logicalToX, drawCtx.tfMs);
+    const y = drawCtx.priceToY(p.price);
+    return x === null || y === null ? null : { x, y };
+  };
+
   const projectedDrawings: Projected[] = drawings
     ? drawings.items.map((d) => projectDrawing(d, drawCtx))
     : [];

@@ -66,18 +66,20 @@ describe("colorOf", () => {
 });
 
 import {
-  barIndexAt, anchorToX, distToSegment, hitTest, projectDrawing,
+  barIndexAt, anchorToX, timeAtLogical, distToSegment, hitTest, projectDrawing,
   type ProjectCtx,
 } from "./drawings";
 
 // 10 bars, 60s apart, starting at 1_000_000.
 const candles = Array.from({ length: 10 }, (_, i) => ({ time_msc: 1_000_000 + i * 60_000 }));
+const TF = 60_000;
 
 // identity logical→x; price→y as y = 200 - (price - 100) * 10 (same convention
 // as the existing CandleChart test harness). Pane is 500px wide.
 const ctx: ProjectCtx = {
   width: 500,
   candles,
+  tfMs: TF,
   logicalToX: (i: number) => i,
   priceToY: (p: number) => 200 - (p - 100) * 10,
 };
@@ -105,16 +107,52 @@ describe("barIndexAt", () => {
 
 describe("anchorToX", () => {
   it("projects through the containing bar index", () => {
-    expect(anchorToX(1_180_000, candles, (i) => i)).toBe(3);
-    expect(anchorToX(1_179_999, candles, (i) => i)).toBe(2);
+    expect(anchorToX(1_180_000, candles, (i) => i, TF)).toBe(3);
+    expect(anchorToX(1_179_999, candles, (i) => i, TF)).toBe(2);
   });
 
   it("is null before the first loaded bar", () => {
-    expect(anchorToX(999_999, candles, (i) => i)).toBeNull();
+    expect(anchorToX(999_999, candles, (i) => i, TF)).toBeNull();
   });
 
   it("is null when the time scale itself cannot resolve the index", () => {
-    expect(anchorToX(1_180_000, candles, () => null)).toBeNull();
+    expect(anchorToX(1_180_000, candles, () => null, TF)).toBeNull();
+  });
+
+  // Past the newest bar there ARE no bars to snap to — the only honest reading
+  // of a future timestamp is "this many timeframes after the last bar", which
+  // is exactly how the time axis itself extends to the right.
+  it("extrapolates past the last bar at one logical step per timeframe", () => {
+    const last = 1_540_000;                      // index 9
+    expect(anchorToX(last + 2 * TF, candles, (i) => i, TF)).toBe(11);
+    expect(anchorToX(last + TF / 2, candles, (i) => i, TF)).toBe(9.5);
+  });
+
+  it("does not extrapolate past the last bar without a timeframe", () => {
+    expect(anchorToX(1_540_000 + 2 * TF, candles, (i) => i, 0)).toBe(9);
+  });
+});
+
+describe("timeAtLogical", () => {
+  it("returns the bar time under a logical index inside the window", () => {
+    expect(timeAtLogical(candles, 3.4, TF)).toBe(1_180_000);
+    expect(timeAtLogical(candles, 2.6, TF)).toBe(1_180_000);
+  });
+
+  it("clamps to the first bar to the left of the window", () => {
+    expect(timeAtLogical(candles, -4, TF)).toBe(1_000_000);
+  });
+
+  it("extends past the last bar by whole timeframes", () => {
+    expect(timeAtLogical(candles, 11.2, TF)).toBe(1_540_000 + 2 * TF);
+  });
+
+  it("clamps to the last bar when the timeframe is unknown", () => {
+    expect(timeAtLogical(candles, 11.2, 0)).toBe(1_540_000);
+  });
+
+  it("is 0 for an empty candle array", () => {
+    expect(timeAtLogical([], 3, TF)).toBe(0);
   });
 });
 
@@ -158,32 +196,69 @@ describe("distToSegment", () => {
 });
 
 describe("hitTest", () => {
+  // 50px per bar, so a 9-bar object is 450px wide and its endpoints are far
+  // enough apart to tell an endpoint grab from a body grab at all.
+  const wide: ProjectCtx = { ...ctx, logicalToX: (i: number) => i * 50 };
   const trendItem = {
     id: "t", kind: "trend" as const,
     a: { timeMs: 1_000_000, price: 100 }, b: { timeMs: 1_540_000, price: 100 },
   };
-  const projected = [projectDrawing(trendItem, ctx)];
+  const projected = [projectDrawing(trendItem, wide)];
 
   it("returns the endpoint handle when the pointer is on an endpoint", () => {
     expect(hitTest(projected, { x: 0, y: 200 })).toEqual({ id: "t", handle: "a" });
-    expect(hitTest(projected, { x: 9, y: 200 })).toEqual({ id: "t", handle: "b" });
+    expect(hitTest(projected, { x: 450, y: 200 })).toEqual({ id: "t", handle: "b" });
   });
 
   it("returns the body handle when the pointer is on the line between endpoints", () => {
-    expect(hitTest(projected, { x: 5, y: 202 })).toEqual({ id: "t", handle: "body" });
+    expect(hitTest(projected, { x: 225, y: 202 })).toEqual({ id: "t", handle: "body" });
+  });
+
+  // The body line always runs THROUGH the endpoints, so its perpendicular
+  // distance is never larger than the distance to an endpoint. Comparing the
+  // two therefore made the endpoint unreachable except from beyond the segment
+  // — a handle inside the grab radius has to win outright.
+  it("grabs the endpoint near it even though the body line is closer", () => {
+    expect(hitTest(projected, { x: 3, y: 203 })).toEqual({ id: "t", handle: "a" });
+    expect(hitTest(projected, { x: 447, y: 203 })).toEqual({ id: "t", handle: "b" });
   });
 
   it("returns null when the pointer is beyond the threshold", () => {
-    expect(hitTest(projected, { x: 5, y: 240 })).toBeNull();
+    expect(hitTest(projected, { x: 225, y: 240 })).toBeNull();
   });
 
   it("hits a rect on its edge but not through its middle", () => {
     const r = projectDrawing(
       { id: "r", kind: "rect", a: { timeMs: 1_000_000, price: 110 }, b: { timeMs: 1_540_000, price: 100 } },
-      ctx,
+      wide,
     );
-    expect(hitTest([r], { x: 5, y: 100 })).toEqual({ id: "r", handle: "body" });
-    expect(hitTest([r], { x: 5, y: 150 })).toBeNull();
+    expect(hitTest([r], { x: 225, y: 100 })).toEqual({ id: "r", handle: "body" });
+    expect(hitTest([r], { x: 225, y: 150 })).toBeNull();
+  });
+
+  it("grabs a rect corner near it instead of the edge running through it", () => {
+    const r = projectDrawing(
+      { id: "r", kind: "rect", a: { timeMs: 1_000_000, price: 110 }, b: { timeMs: 1_540_000, price: 100 } },
+      wide,
+    );
+    expect(hitTest([r], { x: 3, y: 103 })).toEqual({ id: "r", handle: "a" });
+    expect(hitTest([r], { x: 447, y: 197 })).toEqual({ id: "r", handle: "b" });
+  });
+
+  // All four corners look alike on screen, so all four must resize. The two
+  // that are not stored anchors move one coordinate of each anchor.
+  it("grabs the two mixed rect corners as their own handles", () => {
+    const r = projectDrawing(
+      { id: "r", kind: "rect", a: { timeMs: 1_000_000, price: 110 }, b: { timeMs: 1_540_000, price: 100 } },
+      wide,
+    );
+    expect(hitTest([r], { x: 2, y: 198 })).toEqual({ id: "r", handle: "c1" });
+    expect(hitTest([r], { x: 448, y: 102 })).toEqual({ id: "r", handle: "c2" });
+  });
+
+  it("never reports a mixed corner for a trend line", () => {
+    expect(hitTest(projected, { x: 0, y: 200 })?.handle).toBe("a");
+    expect(hitTest(projected, { x: 450, y: 200 })?.handle).toBe("b");
   });
 
   it("skips an item with an unprojectable endpoint", () => {
@@ -284,6 +359,28 @@ describe("moveDrawing", () => {
   it("moves only the grabbed endpoint", () => {
     const moved = moveDrawing(trend, "b", A, { timeMs: 2_000_000, price: 120 });
     expect(moved).toEqual({ id: "t", kind: "trend", a: A, b: { timeMs: 2_000_000, price: 120 } });
+  });
+
+  it("resizes a rect from a mixed corner, one coordinate of each anchor", () => {
+    const rect = { id: "r", kind: "rect" as const, a: A, b: B };
+    expect(moveDrawing(rect, "c1", A, { timeMs: 1_100_000, price: 105 })).toEqual({
+      id: "r", kind: "rect",
+      a: { timeMs: 1_100_000, price: 100 },
+      b: { timeMs: 1_600_000, price: 105 },
+    });
+    expect(moveDrawing(rect, "c2", A, { timeMs: 1_100_000, price: 105 })).toEqual({
+      id: "r", kind: "rect",
+      a: { timeMs: 1_000_000, price: 105 },
+      b: { timeMs: 1_100_000, price: 110 },
+    });
+  });
+
+  it("treats a mixed-corner handle on a trend line as a body drag", () => {
+    expect(moveDrawing(trend, "c1", A, { timeMs: 1_060_000, price: 101 })).toEqual({
+      id: "t", kind: "trend",
+      a: { timeMs: 1_060_000, price: 101 },
+      b: { timeMs: 1_660_000, price: 111 },
+    });
   });
 
   it("shifts both anchors by the pointer delta on a body drag", () => {

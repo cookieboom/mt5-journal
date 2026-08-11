@@ -7,6 +7,7 @@ const candles = Array.from({ length: 10 }, (_, i) => ({ time_msc: 1_000_000 + i 
 const ctx: ProjectCtx = {
   width: 500,
   candles,
+  tfMs: 60_000,
   logicalToX: (i) => i * 10,
   priceToY: (p) => 200 - (p - 100) * 10,
 };
@@ -50,6 +51,18 @@ describe("DrawingOverlay", () => {
     expect(r.getAttribute("y")).toBe("100");
     expect(r.getAttribute("width")).toBe("40");
     expect(r.getAttribute("height")).toBe("100");
+  });
+
+  // hitTest grabs all four rect corners, so all four must be visible as
+  // handles — a grab point the user cannot see is indistinguishable from a bug.
+  it("shows all four corner handles on a selected rect", () => {
+    render(<DrawingOverlay projected={[rect]} selectedId="r" />);
+    expect(screen.getByTestId("handle-r-a").getAttribute("cx")).toBe("0");
+    expect(screen.getByTestId("handle-r-b").getAttribute("cx")).toBe("40");
+    expect(screen.getByTestId("handle-r-c1").getAttribute("cx")).toBe("0");
+    expect(screen.getByTestId("handle-r-c1").getAttribute("cy")).toBe("200");
+    expect(screen.getByTestId("handle-r-c2").getAttribute("cx")).toBe("40");
+    expect(screen.getByTestId("handle-r-c2").getAttribute("cy")).toBe("100");
   });
 
   it("shows handles only for the selected object", () => {
