@@ -416,6 +416,49 @@ def test_a_fresh_actively_watched_feed_allows_the_open(conn):
     assert get_command(conn, cmd_id)["status"] == "pending"
 
 
+# --------------------------------------------- open: price_ref matches the feed
+#
+# A moving feed proves the SERVER is seeing prices; it never proves the number
+# the browser posted came from that feed. The reported failure: the tab's
+# /api/candles fetch wedges, `mergeForming` keeps painting the last bar it has,
+# and `serve_watches` keeps the same watch fresh server-side — so at M15 the
+# frontend's own `staleEntryReason` (2 x timeframe) still arms the button on a
+# 30-minute-old bar, and the lot is derived from a 30-minute-old price. Only
+# comparing `price_ref` against what the server last saw closes that.
+
+
+def _watch_at(conn, symbol, timeframe, close, *, updated_age_ms=1_000):
+    now = now_ms()
+    live_store.upsert_watch(conn, symbol, timeframe, now, 300_000)
+    live_store.upsert_forming(
+        conn, symbol, timeframe,
+        Candle(time_msc=now - 60_000, open=close, high=close + 1, low=close - 1,
+               close=close, tick_volume=10, spread=20, real_volume=0),
+        now - updated_age_ms,
+    )
+
+
+def test_an_open_sized_against_a_price_the_feed_disagrees_with_is_refused(conn):
+    # Stop distance 5.0, so the reference price may sit at most 1.25 from the
+    # price the server last saw. The market is at 4060; the frozen tab says 4035.
+    _seed_open(conn)
+    _watch_at(conn, "XAUUSDc", "M1", 4060.0)
+    with pytest.raises(CommandError, match="4060|acuan"):
+        enqueue_open(conn, _LOGIN, symbol="XAUUSDc", direction="buy",
+                     sl=4030.0, tp=0.0, volume=0.10, price_ref=4035.0)
+    assert conn.execute("SELECT COUNT(*) FROM trade_commands").fetchone()[0] == 0
+
+
+def test_a_price_ref_close_to_the_feed_is_accepted(conn):
+    # Half a dollar of drift on a 5.0 stop is a fifth of the intended risk —
+    # inside the tolerance, and normal between one tick and the next.
+    _seed_open(conn)
+    _watch_at(conn, "XAUUSDc", "M1", 4035.5)
+    cmd_id = enqueue_open(conn, _LOGIN, symbol="XAUUSDc", direction="buy",
+                          sl=4030.0, tp=0.0, volume=0.10, price_ref=4035.0)
+    assert get_command(conn, cmd_id)["status"] == "pending"
+
+
 def test_load_open_context_builds_a_synthetic_position(conn):
     _seed_open(conn)
     pos, spec = load_open_context(conn, _LOGIN, "XAUUSDc", "buy", 4035.0)

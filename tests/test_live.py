@@ -647,6 +647,67 @@ def test_serve_watches_records_coverage_when_bridge_returns_no_bars(conn):
     assert cs.read_coverage(conn, "XAUUSDc", tf) != []
 
 
+def test_serve_watches_keeps_a_quiet_bucket_marked_fresh(conn):
+    # A bucket with no ticks in it — EURUSDc outside its session, the seconds
+    # right after a rollover, a sparse response at the live edge — returns no bar
+    # AT or after `cur_bucket`, so nothing is upserted and `updated_msc` stops
+    # advancing. The feed is fine; the price simply did not move. Left alone,
+    # `execute._check_feed_fresh` reads that frozen stamp and refuses every open
+    # on the symbol 15 s later. The bridge answering for this symbol is the
+    # evidence that counts, so record it even when there is no new bar.
+    from journal.ingest.live_candles import serve_watches
+    from journal.store import live_store as ls
+    from journal.adapter.base import Candle
+
+    tf = "M1"; size = 60_000
+    now = 1_700_000_000_000
+    now = now - (now % size) + 20_000           # 20 s into the current bucket
+    cur_bucket = now - (now % size)
+    prev_bucket = cur_bucket - size
+    quiet = Candle(time_msc=prev_bucket, open=1, high=2, low=0.5, close=1.5,
+                   tick_volume=5, spread=2, real_volume=0)
+
+    class C(FakeLiveClient):
+        def copy_rates_range(self, symbol, timeframe, date_from, date_to):
+            return [quiet]                     # nothing in the current bucket
+
+    client = C([[]])
+    ls.upsert_watch(conn, "XAUUSDc", tf, now, ttl_ms=30_000)
+    ls.upsert_forming(conn, "XAUUSDc", tf, quiet, now - 120_000)   # last refresh
+
+    written = serve_watches(client, conn, now)
+
+    assert written == 0                        # no new forming bar to write...
+    assert ls.newest_forming(conn, "XAUUSDc", now)[0] == now   # ...still fresh
+
+
+def test_serve_watches_leaves_a_symbol_stale_when_the_bridge_returns_nothing(conn):
+    # The other half: an empty response is NOT the bridge answering. A symbol
+    # the bridge has gone blind on must keep reading stale, or the guard above
+    # would wave through exactly the case it exists for.
+    from journal.ingest.live_candles import serve_watches
+    from journal.store import live_store as ls
+    from journal.adapter.base import Candle
+
+    tf = "M1"; size = 60_000
+    now = 1_700_000_000_000
+    now = now - (now % size) + 20_000
+    old = Candle(time_msc=now - (now % size) - size, open=1, high=2, low=0.5,
+                 close=1.5, tick_volume=5, spread=2, real_volume=0)
+
+    class C(FakeLiveClient):
+        def copy_rates_range(self, symbol, timeframe, date_from, date_to):
+            return []
+
+    client = C([[]])
+    ls.upsert_watch(conn, "XAUUSDc", tf, now, ttl_ms=30_000)
+    ls.upsert_forming(conn, "XAUUSDc", tf, old, now - 120_000)
+
+    serve_watches(client, conn, now)
+
+    assert ls.newest_forming(conn, "XAUUSDc", now)[0] == now - 120_000
+
+
 def test_serve_watches_does_not_cover_a_hole_in_a_sparse_bridge_response(conn):
     # copy_rates_range can legitimately come back SPARSE near the live edge —
     # the broker/bridge hasn't finalized every recent minute yet — without the

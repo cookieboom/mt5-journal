@@ -42,6 +42,15 @@ def serve_watches(client: MT5Client, conn: sqlite3.Connection, now_msc: int,
         # only the newest bar can ever be the forming one.
         newest = max((c.time_msc for c in bars if c.time_msc is not None), default=None)
         forming_at = cur_bucket if newest is None else max(cur_bucket, newest)
+        if newest is not None and newest < forming_at:
+            # A bucket with no ticks in it (a symbol outside its session, the
+            # seconds right after a rollover, a sparse response at the live
+            # edge): the bridge answered, there is simply no bar to write, and
+            # without this `updated_msc` would freeze on a healthy feed —
+            # `execute._check_feed_fresh` then refuses every open on the symbol
+            # 15 s later. An EMPTY response is deliberately not stamped: that is
+            # the bridge going blind, which is what the guard exists to catch.
+            ls.touch_forming(conn, symbol, tf, now_msc)
         closed: list = []
         for c in bars:
             if c.time_msc is None:

@@ -36,7 +36,52 @@ home each, and a second copy is a future lie. Point, never duplicate.
 
 ## CURRENT STATE — update this section every session
 
-**Last updated:** 2026-08-11
+**Last updated:** 2026-08-12
+
+**2026-08-12 — review fixes on the stale-feed guard (same branch, not yet
+merged).** The 2026-08-11 guard below was reviewed and had two real defects; both
+are fixed here.
+
+1. **It refused healthy feeds.** `updated_msc` only advances when
+   `serve_watches` writes a bar in the CURRENT bucket, and a bucket with no
+   ticks in it (EURUSDc outside its session, the seconds right after a
+   rollover, a sparse response at the live edge — the repo already has a test
+   for sparse) produces no such bar. One quiet minute at M1 froze the stamp on
+   a perfectly healthy feed and every open on that symbol was refused 15 s
+   later. Fixed at the source: `serve_watches` now calls the new
+   `live_store.touch_forming` when the bridge answered but had no current-bucket
+   bar, stamping `updated_msc` without touching the prices. An **empty**
+   response is deliberately still not stamped — that is the bridge going blind,
+   which is exactly what the guard is for.
+2. **It never checked that `price_ref` came from the feed.** A moving feed
+   proves the server sees prices; it says nothing about the number the browser
+   posted — which is what `/api/live/open` sizes the lot from. The failure in
+   the guard's own docstring therefore still got through: a wedged
+   `/api/candles` fetch leaves `mergeForming` painting the last bar it has while
+   the frontend's `staleEntryReason` (2 × timeframe = 30 min at M15) still arms
+   the button. `_check_feed_fresh` now compares `price_ref` against the close of
+   the freshest actively-watched forming bar and refuses past
+   `PRICE_REF_STOP_FRACTION` (0.25) of the stop distance the lot was derived
+   from — the drift matters in proportion to that distance, not in absolute
+   price. The refusal names both prices and tells the human to reload.
+
+Also: `_check_feed_fresh` moved to run **last** in `enqueue_open`, after
+`load_open_context` + `validate`. Running it first made an unknown symbol or a
+missing spec report itself as "`journal live` tidak berjalan"; it also means the
+stop distance the tolerance is measured against is already known to be real.
+`live_store.newest_forming_update` became `newest_forming`, returning
+`(updated_msc, close)` from one row so the stamp and the price can never be
+paired across different bars.
+
+Not changed: the frontend still gates its button on `staleEntryReason`'s
+2 × timeframe while the server's window is 15 s, so a wedged tab can still show
+an armed button and get a 400. That 400 now says exactly what to do. Unifying
+the two windows is a real cleanup, deliberately left out of this fix.
+
+Gates: `uv run pytest` **716 passed** (was 712; 2 new in `test_execute.py` for
+the price-ref comparison, 2 new in `test_live.py` — the quiet bucket, and the
+empty response that must still read stale). No "no stop" case is tested because
+none exists: `validate` refuses an SL-less open before the guard ever sees it.
 
 **2026-08-11 — server-side stale-feed guard on `open`.** Closes the OPEN
 QUESTION at the bottom of this file (2026-08-04 review, answered 2026-08-05 with
@@ -45,7 +90,7 @@ first inside `enqueue_open` — the single choke point every open passes through
 and refuses when either (a) `journal live` has no heartbeat or its last beat is
 `FEED_STALE_MS` (15 s, the same window `api.live_status_payload` uses) old, or
 (b) an **actively watched** forming bar for that symbol has not been refreshed
-inside the same window. New `live_store.newest_forming_update` does the second
+inside the same window. New `live_store.newest_forming` does the second
 check; it joins `live_candles` to an unexpired `live_watches` row on purpose,
 because `live_candles` rows are never pruned — an hour-old row from a chart
 that was closed is not a frozen feed, and gating on it would refuse every

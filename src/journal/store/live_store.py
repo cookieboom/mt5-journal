@@ -75,25 +75,47 @@ def upsert_forming(conn: sqlite3.Connection, symbol: str, timeframe: str,
     conn.commit()
 
 
-def newest_forming_update(
+def touch_forming(conn: sqlite3.Connection, symbol: str, timeframe: str,
+                  now_msc: int) -> bool:
+    """Stamp the existing forming row as refreshed WITHOUT changing its prices.
+
+    A bucket with no ticks in it yields no new bar, but the bridge still
+    answered for this symbol — and that is what `updated_msc` is read as
+    downstream: evidence the feed is being served, not evidence the price moved.
+    Returns False when there is no row to stamp.
+    """
+    cur = conn.execute(
+        "UPDATE live_candles SET updated_msc = ? WHERE symbol = ? AND timeframe = ?",
+        (now_msc, symbol, timeframe),
+    )
+    conn.commit()
+    return cur.rowcount > 0
+
+
+def newest_forming(
     conn: sqlite3.Connection, symbol: str, now_msc: int
-) -> int | None:
-    """`updated_msc` of the freshest forming bar for `symbol`, counting only
-    timeframes with a LIVE watch. None when nothing is being watched.
+) -> tuple[int, float] | None:
+    """`(updated_msc, close)` of the freshest forming bar for `symbol`, counting
+    only timeframes with a LIVE watch. None when nothing is being watched.
 
     A `live_candles` row outlives its watch — nothing prunes it — so an old
     `updated_msc` on an expired watch means "no one asked `serve_watches` to
     refresh this", not "the feed froze". Joining on an unexpired watch is what
     separates the two; without it, every chart closed an hour ago would read as
     a dead feed.
+
+    The `close` rides along because the one caller that wants the stamp also
+    wants the price it belongs to, and reading them from two queries could pair
+    a timestamp with a different bar's price.
     """
     row = conn.execute(
-        "SELECT MAX(c.updated_msc) AS newest FROM live_candles c "
+        "SELECT c.updated_msc, c.close FROM live_candles c "
         "JOIN live_watches w ON w.symbol = c.symbol AND w.timeframe = c.timeframe "
-        "WHERE c.symbol = ? AND w.expires_msc > ?",
+        "WHERE c.symbol = ? AND w.expires_msc > ? "
+        "ORDER BY c.updated_msc DESC LIMIT 1",
         (symbol, now_msc),
     ).fetchone()
-    return None if row is None or row["newest"] is None else int(row["newest"])
+    return None if row is None else (int(row["updated_msc"]), float(row["close"]))
 
 
 def read_forming(conn: sqlite3.Connection, symbol: str, timeframe: str) -> Candle | None:

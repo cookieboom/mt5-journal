@@ -36,6 +36,13 @@ from .store.db import now_ms
 # the human sees on `/live` and this refusal flip at the same moment.
 FEED_STALE_MS = 15_000
 
+# How far `price_ref` may sit from the price the server last saw, as a fraction
+# of the stop distance the lot was derived from. A quarter keeps the realised
+# risk within 25% of the intended risk; loosen it and a frozen browser tab can
+# still stake a multiple of what the human read off the screen. Calibration
+# knob: raise it if normal tick-to-tick drift on a tight stop starts refusing.
+PRICE_REF_STOP_FRACTION = 0.25
+
 
 def _position(conn: sqlite3.Connection, login: int, position_id: int) -> sqlite3.Row | None:
     return conn.execute(
@@ -147,7 +154,8 @@ def load_open_context(
 
 
 def _check_feed_fresh(
-    conn: sqlite3.Connection, symbol: str, *, now_msc: int | None = None
+    conn: sqlite3.Connection, symbol: str, price_ref: float | None = None,
+    sl: float | None = None, *, now_msc: int | None = None,
 ) -> None:
     """Refuse an open whose reference price the server cannot vouch for.
 
@@ -158,17 +166,26 @@ def _check_feed_fresh(
     `journal live` catches a stop on the wrong SIDE, never a wrong SIZE, because
     the volume is frozen at enqueue by design — so the guard has to be here.
 
-    Two independent ways the feed can be untrustworthy, and both refuse:
+    Three independent ways the reference price can be untrustworthy, and all
+    three refuse:
 
       * `journal live` is not beating at all — nothing is pulling prices.
       * It is beating, but an ACTIVELY WATCHED forming bar for this symbol has
-        not been refreshed. The process is up; the price is not moving through
-        it. No active watch means we have no evidence either way, and an open
-        from `/live` (which mounts no chart) is exactly that case — allowed, with
-        the heartbeat as the only gate.
+        not been refreshed. The process is up; this symbol is not being served
+        through it. (A bucket with no ticks is NOT that case — `serve_watches`
+        stamps `updated_msc` whenever the bridge answers, precisely so a quiet
+        session does not read as a dead feed.) No active watch means we have no
+        evidence either way, and an open from `/live` (which mounts no chart) is
+        exactly that case — allowed, with the heartbeat as the only gate.
+      * The feed is moving but `price_ref` did not come from it. A moving feed
+        proves the SERVER sees prices; it says nothing about the number the
+        browser posted. A wedged `/api/candles` fetch leaves `mergeForming`
+        painting the last bar it has while `staleEntryReason` (2 x timeframe —
+        30 minutes at M15) still arms the button, and the lot is then sized off
+        a half-hour-old price. Only comparing the two numbers closes that.
 
     `lib/candles.staleEntryReason` gates the button in the browser on the same
-    two facts. This is the copy that guards the row actually being written.
+    facts. This is the copy that guards the row actually being written.
     """
     now = now_ms() if now_msc is None else now_msc
 
@@ -181,12 +198,32 @@ def _check_feed_fresh(
             "Jalankan `journal live` dulu."
         )
 
-    updated = live_store.newest_forming_update(conn, symbol, now)
-    if updated is not None and now - updated >= FEED_STALE_MS:
+    live = live_store.newest_forming(conn, symbol, now)
+    if live is None:
+        return
+    updated, close = live
+    if now - updated >= FEED_STALE_MS:
         raise CommandError(
             f"Feed {symbol} beku — bar berjalan terakhir diperbarui "
             f"{(now - updated) / 1000:.0f}s lalu. Harga acuan tidak segar, "
             "jadi ukuran lot tidak bisa dipercaya."
+        )
+
+    if price_ref is None:
+        return
+    # The lot is `risk / stop distance`, so the same drift matters exactly in
+    # proportion to that distance: 0.5 off a 5.0 stop is a tenth of the intended
+    # risk, off a 0.5 stop it is all of it. `validate` refuses an SL-less open
+    # before this runs, so a zero distance here would refuse everything — which
+    # is the safe direction anyway.
+    tolerance = abs(price_ref - (sl or 0.0)) * PRICE_REF_STOP_FRACTION
+    if abs(price_ref - close) > tolerance:
+        raise CommandError(
+            f"Harga acuan {price_ref:g} tidak cocok dengan harga {symbol} yang "
+            f"terakhir dilihat server ({close:g}, selisih "
+            f"{abs(price_ref - close):g} > toleransi {tolerance:g}). "
+            "Chart di browser kemungkinan tertinggal — muat ulang halaman "
+            "sebelum membuka posisi."
         )
 
 
@@ -207,10 +244,13 @@ def enqueue_open(
     stored as evidence of the price the human sized against — it is NOT sent to
     the broker (execution is MARKET) and it is not the fill price.
     """
-    _check_feed_fresh(conn, symbol)
     pos, spec = load_open_context(conn, login, symbol, direction, price_ref)
     validate("open", pos, spec, sl=sl, tp=tp, volume=volume,
              balance=account_balance(conn, login))
+    # LAST, so an unknown symbol or a missing spec reports itself instead of
+    # being masked by "journal live tidak berjalan" — and so the stop distance
+    # the price-ref tolerance is measured against is already known to be real.
+    _check_feed_fresh(conn, symbol, price_ref, sl)
 
     cur = conn.execute(
         "INSERT INTO trade_commands "
