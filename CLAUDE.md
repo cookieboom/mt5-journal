@@ -53,9 +53,7 @@ Single user, local-only, macOS (Apple Silicon M4).
    the DB. Never make the DB depend on a rendered file.
 7. **Tests before implementation** for anything in `domain/` and `analytics/`.
    Use fixtures in `tests/fixtures/`, not live MT5.
-8. **Do not add dependencies without asking.** Current stack: python 3.12,
-   sqlite3 (stdlib), pandas, mplfinance, typer, pytest, fastapi, uvicorn,
-   scikit-learn, lightgbm.
+8. **Do not add dependencies without asking.** Current stack is `pyproject.toml`.
 9. **Descriptive by default; `lab/` is the one predictive part.** Everything
    outside `src/journal/lab/` describes patterns in past data and must not
    generate trade signals or recommendations. `lab/` trains models on candle
@@ -89,20 +87,6 @@ uv run pytest                   # all tests, must pass before any commit
 uv run pytest -k reconstruct    # the tests that matter most
 ```
 
-## Layout
-
-```
-src/journal/
-  adapter/   base.py (Protocol) | live.py (siliconmetatrader5) | fake.py (fixtures)
-  ingest/    deals.py | candles.py | poller.py
-  domain/    reconstruct.py   <- deals -> trades. The hard part.
-  store/     schema.sql | db.py | migrations/
-  render/    chart.py         <- mplfinance
-  analytics/
-  lab/       features.py | labels.py | evaluate.py | train.py | store.py | score.py
-  cli.py
-```
-
 ## Read before you edit
 
 - Touching `domain/reconstruct.py`, `ingest/deals.py`, or any time field
@@ -115,62 +99,29 @@ src/journal/
 
 ## Pipeline
 
-Run the superpowers skills, in order. They carry the how; this lists the when.
+**Never build on `main`** — branch + worktree per spec. **No repro → no fix**:
+a bug becomes a failing test before it becomes a patch.
 
-**New feature** (anything touching more than one file):
-
-1. `brainstorming` → spec in `docs/specs/<name>.md`. No code yet. You can ask plenty of questions to ensure the implementation aligns with what is desired.
-2. `writing-plans` → numbered tasks, one task = one commit-able unit.
-3. `using-git-worktrees` → branch + worktree per spec. Never build on `main`.
-4. `executing-plans`, and inside each task `test-driven-development` (rule 7).
-5. `requesting-code-review` on the whole branch → `receiving-code-review` →
-   fix wave → re-review until clean.
-6. `verification-before-completion`, then `finishing-a-development-branch`.
-   Fast-forward merge, no force-push.
-
-**Bug fix**:
-
-1. `systematic-debugging` first — before proposing any fix.
-2. `test-driven-development`: reproduce as a failing test. No repro → no fix.
-3. Root cause, not symptom: grep every caller of the function you are about to
-   touch. The fix goes at the shared choke point, not in each caller.
-4. `verification-before-completion`: full `uv run pytest`, not just the new
-   test — the fix moved a shared path.
-5. Single-file, single-cause → straight to `main`. Otherwise branch.
-
-Skip the ceremony for typos, comments, and one-line constants.
+The full order of superpowers skills for a feature or a bug fix lives in the
+`pipeline` skill (`.claude/skills/pipeline/SKILL.md`). Invoke it when starting
+any change touching more than one file.
 
 ## Definition of done
 
 A task is done when: tests pass, you have pasted the actual pytest output, and
 `journal rebuild` still succeeds. Not when the code "looks right".
 
-## Milestones
+## Milestones and current state
 
-M0 doctor · M1 ingest deals · M2 reconstruct trades · M3 candles + renderer
-· M4 SL/TP poller · M5 analytics (R, MAE/MFE) · M6 annotations + weekly report
-· M7 web dashboard (`journal serve`) · M8 by_symbol + `/report` page · M9 live
-positions + trade interaction + auto-ingest on close + UI redesign (`journal live`, `/live`; trading ON by default, 1.00-lot cap)
-· **Frontend rework** (Jinja→React SPA, served at `/`; Jinja UI retired at
-Phase 5 cutover)
-· M10 lab: regime + entry-timing models on candle data (`/lab`, badge on `/live`)
-
-Currently on: **Everything above is merged, running, and human-verified as of
-2026-08-05 — no pending human run anywhere.** The SPA is the sole UI at `/`
-(Jinja retired). Confirmed against the live bridge on 2026-08-05: draggable
-SL/TP chart lines (`13fc345`), risk-based auto lot sizing + live open
-(migration 009), the on-close ingest freeze fixes (gap-aware `sync_candles`,
-two-phase `deals.sync`), and both live-bar-rollover fixes — the backend
-`serve_watches` clock one and the frontend mid-bucket-cursor one (`219d95e`).
-See docs/HANDOFF.md § CURRENT STATE.
+Milestone list, what is merged, and what is pending a human run all live in
+`docs/HANDOFF.md § CURRENT STATE`. Read it there; do not mirror it here.
 
 ## graphify
 
-This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
+A `PreToolUse` hook already tells you to run `graphify query` / `path` /
+`explain` before searching or reading. Three things it does not say:
 
-Rules:
-
-- For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
-- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
-- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
-- After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
+- `graphify-out/wiki/index.md` beats raw source browsing for navigation.
+- Read `graphify-out/GRAPH_REPORT.md` only for broad architecture review, or
+  when `query`/`path`/`explain` do not surface enough context.
+- Run `graphify update .` after modifying code (AST-only, no API cost).

@@ -671,6 +671,8 @@ note what was measured.
 | M7 | Web dashboard on localhost (`journal serve`) — read-mostly + annotation/tag writes | done |
 | M8 | Per-symbol breakdown (`by_symbol`) + dedicated `/report` web page | done |
 | M9 | Live positions + trade interaction + auto-ingest on close + UI redesign (`journal live`, `/live`) | **done — merged to main.** Live-verified 2026-07-23 (real account/bridge): auto-ingest-on-close, `/live` observe, and the order-send path to the broker all proven. The browser UI → live data (`open_positions`/`/api/live`) → `journal live` → bridge round trip WORKS and has for a long time. Only unmeasured: an *accepted* order landing — blocked solely by the MT5 container's AutoTrading toggle (a terminal setting, not code) — plus a browser visual/contrast pass. |
+| Frontend rework | Jinja2 → React SPA served at `/`; Jinja UI retired at the Phase 5 cutover | done (`8d1de45`, 2026-07-24 — see the note at the top of this file) |
+| M10 | Lab: regime + entry-timing models on candle data (`/lab` page, badge on `/live`) | done (`b4250a5`, 2026-08-08 — migration 010 / `SCHEMA_VERSION = 10`, `docs/lab-models.md`; see 2026-08-06 above) |
 
 M0–M3 delivers the original ask: an automatic journal with charts. **Done.**
 M4 onward — poller, analytics, annotations — is what makes the journal worth
