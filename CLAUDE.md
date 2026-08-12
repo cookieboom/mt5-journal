@@ -84,6 +84,10 @@ Single user, local-only, macOS (Apple Silicon M4).
 
 ```bash
 uv run journal doctor           # verify adapter: account info + last tick
+uv run journal status           # is the STORE healthy? integrity, balance,
+                                #   unrebuilt trades, backup age, live daemon.
+                                #   read-only, no bridge; exit 1 only on wrong,
+                                #   never on merely undone
 uv run journal sync             # pull deals/orders into raw tables
 uv run journal rebuild          # drop + rebuild trades from raw
 uv run journal chart <trade_id> # render PNG to cache/

@@ -259,6 +259,54 @@ def verify(db: str = typer.Option(_DEFAULT_DB, help="SQLite DB path.")) -> None:
     raise typer.Exit(code=1)
 
 
+# ----------------------------------------------------------------- status
+
+
+@app.command()
+def status(db: str = typer.Option(_DEFAULT_DB, help="SQLite DB path.")) -> None:
+    """Everything that can be wrong with this journal, in one read-only pass.
+
+    No bridge, no writes, no repairs — it prints the command that fixes each
+    finding and stops there. The checks live in `store/health.py`; each one
+    composes a detector that already ships in the command that owns it, so
+    `status` can never disagree with `verify`, `backup` or `live`.
+
+    Exit code 1 only when something is WRONG (a corrupt file, money that does
+    not add up). "Undone" — an overdue backup, unrebuilt trades, no daemon — is
+    a warning at exit 0, because a status command that fails the moment nobody
+    backed up today is one nobody keeps in a script.
+    """
+    from .store.health import checks
+
+    # `connect()` would happily CREATE this file, and an empty store passes
+    # almost every check — the most confident possible answer to a typo'd path.
+    if not Path(db).exists():
+        typer.echo(f"[fail] store      no database at {db}")
+        typer.echo("       -> journal sync   # creates and populates it")
+        raise typer.Exit(code=1)
+
+    try:
+        conn = connect(db)
+    except sqlite3.DatabaseError as e:
+        # The one case check 1 exists for, and it happens before check 1 can run:
+        # a file too damaged to open (or to migrate) is still a corrupt journal.
+        typer.echo(f"[fail] integrity  cannot open {db}: {e}")
+        raise typer.Exit(code=1) from e
+    try:
+        results = checks(conn, db)
+    finally:
+        conn.close()
+
+    typer.echo(f"== status: {db} ==")
+    for c in results:
+        typer.echo(f"[{c.state:<4}] {c.name:<10} {c.detail}")
+        if c.fix:
+            typer.echo(f"       -> {c.fix}")
+
+    if any(c.state == "fail" for c in results):
+        raise typer.Exit(code=1)
+
+
 # ---------------------------------------------------------------- rebuild
 
 

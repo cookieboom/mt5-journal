@@ -26,6 +26,44 @@ def test_candles_coverage_prints_ranges(tmp_path):
     assert "XAUUSDc" in res.stdout and "M1" in res.stdout
 
 
+# ---------------------------------------------------------------------- status
+
+
+def test_status_reports_warnings_but_still_exits_zero(tmp_path):
+    """The design rule: WARN never fails the exit code. A fresh store warns on
+    everything it can (no account, no backup) and must still exit 0."""
+    db = tmp_path / "t.db"
+    connect(db).close()
+
+    res = CliRunner().invoke(app, ["status", "--db", str(db)])
+
+    assert res.exit_code == 0
+    assert "[ok" in res.stdout and "[warn" in res.stdout
+    assert "journal sync" in res.stdout and "journal backup" in res.stdout
+
+
+def test_status_refuses_to_invent_a_missing_database(tmp_path):
+    """`connect()` creates on open, and an empty store passes almost every
+    check — the most confident possible answer to a typo'd path."""
+    missing = tmp_path / "nope.db"
+
+    res = CliRunner().invoke(app, ["status", "--db", str(missing)])
+
+    assert res.exit_code == 1
+    assert "no database" in res.stdout
+    assert not missing.exists()
+
+
+def test_status_fails_on_a_file_that_is_not_a_database(tmp_path):
+    db = tmp_path / "t.db"
+    db.write_bytes(b"this is not a database")
+
+    res = CliRunner().invoke(app, ["status", "--db", str(db)])
+
+    assert res.exit_code == 1
+    assert "[fail" in res.stdout
+
+
 # ---------------------------------------------------------------------- backup
 
 

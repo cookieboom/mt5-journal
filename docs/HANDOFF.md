@@ -38,6 +38,64 @@ home each, and a second copy is a future lie. Point, never duplicate.
 
 **Last updated:** 2026-08-13
 
+**2026-08-13 — `journal status`: one bridge-free answer to "is this journal
+healthy?"** Every silent failure this project has actually had already had a
+detector — in a *different* command, run at a *different* moment.
+`integrity_check` only runs when a backup is taken. The §6 identities only run
+when a human types `journal verify`. `backup.due()` only runs inside the
+`journal live` loop. And two failures had no command at all: deals synced but
+never reconstructed, and a `trade_commands` row queued with nothing running to
+send it — the second one means the human believes an SL is in flight while it
+sits in a table. Knowing *which* question to ask is the part a human gets
+wrong, so `journal status` asks all five at once:
+
+```
+== status: data/journal.db ==
+[ok  ] integrity  quick_check ok
+[ok  ] balance    identity 1 PASS, identity 2 PASS (129 trades)
+[ok  ] trades     129 trades, every raw position reconstructed
+[ok  ] backup     journal-20260812T140045Z.db, 9.2h old (1 kept)
+[ok  ] live       heartbeat 1s ago
+```
+
+`store/health.py` composes; it does not detect. Every number comes from a
+function that already ships (`ingest.deals.verify`, `backup.auto_dir`,
+`live_store.read_heartbeat`, Trap 1's own BUY/SELL whitelist), so `status` and
+the command that owns a check can never disagree about the answer.
+
+Three decisions worth keeping:
+
+- **WARN is not FAIL, and only FAIL sets the exit code.** "Wrong" (corrupt
+  file, money that does not add up) exits 1. "Undone" (overdue backup,
+  unrebuilt trades, no daemon) exits 0 with the fix printed. A status command
+  that fails the moment nobody backed up today is one that gets `|| true`'d and
+  then ignored.
+- **A missing DB is a FAIL, not an empty store.** `connect()` creates the file
+  it opens, and a fresh store passes almost every check — the most confident
+  possible answer to a typo'd path. `status` refuses to create anything.
+- **No repairs and no writes.** Same trap `cli.verify` already refused: a side
+  effect inside a command named for looking is how you learn it was not just
+  looking. `frontend/dist` staleness is deliberately NOT here either — `journal
+  serve` warns at the moment it matters, and a second copy is a second thing to
+  drift.
+
+The `trades` check is the only one with logic of its own, and it asks TWO
+questions because the first misses the second: a position with no trade row at
+all (never rebuilt), and a position whose row exists but predates a deal that
+has since landed on it (a partial close, a re-synced OUT) — caught by comparing
+`MAX(deals_raw.ingested_at)` over BUY/SELL deals against `MAX(trades.rebuilt_at)`.
+Measured on the live DB before it shipped: rebuilt_at leads the newest trade
+deal by 6.2 h, so the check reads `ok` there rather than nagging forever. Its
+known ceiling: an SL/TP snapshot arriving from the M4 poller also makes `trades`
+stale and moves neither watermark.
+
+Gates: `uv run pytest` **777 passed, 1 skipped in 19.73 s** (was 755; +23 new —
+20 on `health.checks()` directly, 3 on the CLI's exit codes). Run against the
+live 62 MB DB with `journal live` up: the output above, exit 0. `journal
+rebuild` on a fresh snapshot of it: **OK, 129 trades**; `status` on that
+rebuilt snapshot exercises the WARN path (no backups folder beside it) and
+still exits 0. Spec: `docs/plans/journal-status.md`.
+
 **2026-08-13 — `journal serve` now says when it is serving a stale bundle, and
 it was serving one.** The SPA is read off disk (`frontend/dist`, gitignored) and
 nothing in this project builds it. So a merged frontend fix lands in `main`,
