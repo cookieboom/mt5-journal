@@ -38,6 +38,44 @@ home each, and a second copy is a future lie. Point, never duplicate.
 
 **Last updated:** 2026-08-12
 
+**2026-08-12 — `uv run pytest` went from ~4–5 minutes to 29 seconds, and the
+cause was LightGBM spawning threads it could not use.** The rule "tests pass
+before any commit" is only obeyed if running them is cheap; at five minutes it
+was starting to be skipped for "obviously safe" diffs, which is exactly when
+this project has been bitten before.
+
+Nothing was mocked and no test was weakened. `--durations` said the whole
+suite was the lab: 19 tests at 13–27 s each, everything else under 0.15 s. A
+`cProfile` of one `train_all` on the fixture the tests use (1200 bars, 3 folds)
+put **9.26 s of 10.5 s inside `lightgbm/basic.py:update`** — 8 boosted fits at
+1.17 s each. The wall time was thread thrash, not work: the same three lab
+files spent **590 s of system time** against 138 s of user time.
+
+`_new_estimator` now picks the thread count from the row count
+(`train.SINGLE_THREAD_ROWS = 100_000`, table of measurements in the docstring
+there). Under it, `n_jobs=1`; at or over it, `-1` as before. Measured on this
+machine (10 cores, 15 features, 200 trees): 5k rows 0.63 s → 0.11 s, 100k rows
+0.89 s → 0.75 s, and the lines cross just past that — 800k rows is 2.75 s
+threaded against 4.64 s single. A dataset is two rows per bar, so the fast side
+is "fewer than ~50k bars": every fit the suite does, and any hand-run training
+on a normal window. A full-M1 training (715k bars stored today) still gets all
+ten cores.
+
+This is a speed choice, not a correctness one, and `test_lab_train.py::
+test_small_fits_are_single_threaded_and_big_ones_are_not` pins it on both
+sides of the line so it does not get "optimised" back. One caveat worth
+knowing: LightGBM's `deterministic=True` reproduces a fit for the *same* thread
+count, so a model retrained after this change can differ in the last digits
+from one trained before it. Stored artifacts are untouched, and lab output has
+always shipped next to its own out-of-sample expectancy — which is the number
+that would move if it mattered.
+
+Gates: `uv run pytest` **728 passed in 29.07 s** (was 727 in 226–315 s; 1 new
+test). Frontend untouched, so no vitest/tsc/build run. `journal rebuild` **OK,
+129 trades** and `journal verify` **PASS on both identities**, both against a
+`sqlite3 .backup` snapshot of the live DB — `journal live` and `journal serve`
+were running against the real one.
+
 **2026-08-12 — the four constants the browser copies from the server are now
 pinned by a test.** The entry directly below ends with "Change one, change the
 other" and leaves that to a comment. Nothing enforced it, and the drift it

@@ -13,7 +13,9 @@ from journal.lab.labels import LabelConfig
 from journal.lab.train import (
     SIDE_CODE,
     SIDE_CODE_COLUMN,
+    SINGLE_THREAD_ROWS,
     TrainConfig,
+    _new_estimator,
     build_dataset,
     train_all,
 )
@@ -122,6 +124,19 @@ def test_training_is_deterministic_for_a_fixed_seed():
 def test_too_little_data_raises_rather_than_returning_a_fake_model():
     with pytest.raises(ValueError, match="not enough"):
         train_all(_frame(60), _cfg())
+
+
+def test_small_fits_are_single_threaded_and_big_ones_are_not():
+    """LightGBM's thread pool is a net loss under ~100k rows — see the table on
+    SINGLE_THREAD_ROWS. It is a speed choice, not a correctness one, so it gets
+    pinned here rather than left to whoever next reads the fit call. A dataset
+    this small must not spawn threads; one over the line must."""
+    models = train_all(_frame(400), _cfg())
+    lgbm = [m for m in models if m.kind == "lgbm"]
+    assert lgbm, "no boosted model was fit at all"
+    assert all(m.estimator.get_params()["n_jobs"] == 1 for m in lgbm)
+    assert _new_estimator("lgbm", 7, SINGLE_THREAD_ROWS - 1).get_params()["n_jobs"] == 1
+    assert _new_estimator("lgbm", 7, SINGLE_THREAD_ROWS).get_params()["n_jobs"] == -1
 
 
 def test_side_code_contract_is_pinned_for_score_py_to_reconstruct():

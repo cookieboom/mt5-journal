@@ -24,6 +24,23 @@ from .labels import REGIMES, SIDES, LabelConfig, barrier_labels, regime_labels
 SIDE_CODE = {"long": 1, "short": 0}
 SIDE_CODE_COLUMN = "side_code"
 
+# Below this many rows, LightGBM's thread pool costs more than it saves, so the
+# fit is single-threaded. Measured on this machine (10 cores, 15 features, 200
+# trees, `deterministic=True`), seconds per fit:
+#
+#     rows       all threads   n_jobs=1
+#     5_000      0.63          0.11
+#     50_000     0.74          0.35
+#     100_000    0.89          0.75
+#     200_000    1.59          1.85
+#     800_000    2.75          4.64
+#
+# The lines cross around 100k rows, which is where this sits. A dataset is two
+# rows per bar (one per side), so the small side of the line is roughly "fewer
+# than 50k bars" — every fit the test suite does, and most hand-run trainings.
+# Full M1 history (715k bars stored today) lands on the threaded side.
+SINGLE_THREAD_ROWS = 100_000
+
 
 @dataclass(frozen=True)
 class TrainConfig:
@@ -121,7 +138,7 @@ def _fit_stage(data: pd.DataFrame, columns: list[str], cfg: TrainConfig, *,
     for kind in ("logreg", "lgbm"):
         per_fold = []
         for train_idx, test_idx in folds:
-            est = _new_estimator(kind, cfg.seed)
+            est = _new_estimator(kind, cfg.seed, len(train_idx))
             if len(np.unique(y[train_idx])) < 2:
                 continue
             est.fit(x[train_idx], y[train_idx])
@@ -131,7 +148,7 @@ def _fit_stage(data: pd.DataFrame, columns: list[str], cfg: TrainConfig, *,
         if not per_fold:
             raise ValueError(f"{stage}/{kind}: every fold held a single class")
 
-        final = _new_estimator(kind, cfg.seed)
+        final = _new_estimator(kind, cfg.seed, len(x))
         final.fit(x, y)
         models.append(TrainedModel(
             stage=stage, regime=regime, kind=kind, estimator=final,
@@ -163,7 +180,7 @@ def _confusion(y_true, y_pred) -> dict:
     return out
 
 
-def _new_estimator(kind: str, seed: int):
+def _new_estimator(kind: str, seed: int, n_rows: int):
     if kind == "logreg":
         from sklearn.linear_model import LogisticRegression
         from sklearn.pipeline import make_pipeline
@@ -178,4 +195,5 @@ def _new_estimator(kind: str, seed: int):
     return LGBMClassifier(
         n_estimators=200, learning_rate=0.05, num_leaves=31,
         random_state=seed, verbose=-1, deterministic=True,
+        n_jobs=1 if n_rows < SINGLE_THREAD_ROWS else -1,
     )
