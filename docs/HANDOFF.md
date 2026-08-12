@@ -103,12 +103,24 @@ restored) are in
 `.superpowers/sdd/2026-08-10-chart-drawing-tools/final-fix-report.md` on this
 worktree.
 
-**Still pending — nothing in this feature has been run in a browser.** All 8
-PENDING HUMAN items at the bottom of the plan file are open, including item 6
-(enter replay, draw, exit, confirm the live chart stays clean), which is the
-one that specifically exercises IMPORTANT 1 above and must be re-run against
-this fix, ideally on a throttled connection so the async pending-session
-window is wide enough to actually land a draw inside it. Not merged to `main`.
+**2026-08-12 — the browser pass ran: 7 of the 8 PENDING HUMAN items PASS.**
+Driven through Chrome against `journal serve` + `journal live` on `main`
+(`3afbb03`), with every result cross-checked against the persisted blob
+(`GET /api/drawings`, `app_prefs`) instead of eyeballed. Item 6 included the
+IMPORTANT 1 case against a real `replay.start()` slowed to 6 s by patching
+`window.fetch`: the drawing made inside the pending window was discarded, the
+live key never moved. Only **item 4** is left — it needs a real open position,
+which was not opened; its hit-test half was verified with a *planned* SL
+dragged off a drawing at the identical price, so what remains untested is the
+live modify path alone. Per-item results are in the plan file's PENDING HUMAN
+section. (This feature was merged and pushed well before this pass — the
+earlier "Not merged to `main`" line here was stale.)
+
+Two unrelated observations from that pass, neither drawings-related, neither
+chased down: `/trades/:id/view` hangs on "Memuat…" instead of erroring when
+the id is not a `position_id`, and the risk panel on `/chart` printed
+"`journal live` tidak berjalan — harga acuan tidak segar" while `journal live`
+was in fact running and the liveness badge read `live · 1s`.
 
 **2026-08-06 — M10 (the lab) shipped.** `src/journal/lab/` (six modules:
 `features.py`, `labels.py`, `evaluate.py`, `train.py`, `store.py`, `score.py` —

@@ -2494,30 +2494,42 @@ git commit -m "feat(drawings): wire editable drawings into /chart and read-only 
 
 ## PENDING HUMAN
 
-**Status as of the fix wave (2026-08-10): still NOT run.** All 8 items below
-were pending before the fix wave and remain pending after it — this pass
-fixed code and added regression tests, it did not open a browser. They still
-need a real pass against a running `journal serve` (plus `journal live` for
-fresh bars) before this branch can be considered human-verified.
+**Status 2026-08-12: 7 of 8 run in a real browser and PASSED; item 4 is the
+only one left.** The pass was driven through Chrome against the running
+`journal serve` + `journal live` on `main` (`3afbb03`), on `XAUUSDc`, and every
+result was cross-checked against the persisted blob (`GET /api/drawings`,
+`app_prefs`) rather than eyeballed. Test drawings were cleared afterwards via
+the palette's own clear button; no order was placed at any point.
 
-These cannot be verified from tests and need a browser pass against a running
-`journal serve` (plus `journal live` for fresh bars):
-
-1. Draw a trendline, an hline, a rectangle and a text note on `/chart`; reload
-   the page and confirm all four come back in the same places.
-2. Switch the timeframe from M15 to H1 and back; confirm nothing disappears and
-   each object lands on the bar that contains its anchor.
-3. Drag an endpoint, drag a body, delete with the `Delete` key.
-4. With an open live position on the chart, confirm dragging the SL line still
-   moves SL (and does not select a drawing sitting at the same price).
-5. Confirm the measure gesture (double-click-hold) still works on empty chart
-   area.
-6. Enter replay, draw something, exit, and confirm the live chart does not show
-   the replay drawing — and that re-entering a NEW replay session starts clean.
-   **This is the item that exercises IMPORTANT 1 (the live-key leak during
-   replay-session startup, fixed in this wave) — run it specifically against a
-   REAL (not mocked) `replay.start()` round trip, ideally on a slow/throttled
-   connection so the pending window is wide enough to actually land a draw
-   inside it.**
-7. Open `/trades/:id/view` and confirm drawings render but no palette appears.
-8. Open `/lab` and confirm nothing drawing-related appears there at all.
+1. **PASS** — trendline, hline, rectangle and a text note drawn on `/chart`; all
+   four returned in the same places after a full page reload.
+2. **PASS** — M15 → H1 → M15: nothing disappeared, each object landed on the bar
+   containing its anchor (compressed on H1, identical pixels back on M15).
+3. **PASS** — endpoint drag (trend `b` 4395 → 4403.32), body drag (rect both
+   prices +13.95, times unchanged), `Delete` removed the selected rect (blob
+   4 → 3 items). Note for whoever runs this next: a rect is **hollow**, so
+   "drag the body" means grabbing an *edge* away from the corners — a press
+   inside the fill pans the chart, which is correct but reads as a dead drag.
+4. **NOT RUN — needs a real open position.** There was none open, and opening
+   one is a live trade, so it was left alone. What *was* verified is the part
+   the item is actually protecting: with a **planned** SL typed to exactly the
+   hline's price (4404.95), dragging that line moved SL to 4411.89 and left the
+   drawing untouched and unselected — the hit-test precedence holds. The
+   untested remainder is the live modify/commit path only.
+5. **PASS** — measure gesture still works over an area with drawings on it
+   (Δ +0.37%, 20 bars, frozen until Esc). Driven by dispatching the real
+   pointer sequence in-page: two `pointerdown`s must land inside
+   `DBLCLICK_MS` (350 ms), which no remote-automation round trip can hit.
+6. **PASS, including the IMPORTANT 1 case.** Replay opened clean (no live
+   drawings), a trendline drawn there went to `drawings:replay:108` with
+   `drawings:XAUUSD` untouched, and exiting brought the live chart back with
+   exactly its own 3 objects. For the pending window: `window.fetch` was
+   patched to delay `/api/replay/start` by 6 s (a real round trip, just slow),
+   and a trendline drawn *inside* that window was discarded entirely — no
+   `drawings:replay:109` key, live key still 3 items.
+7. **PASS** — `/trades/:id/view` renders drawings (an hline placed in the
+   trade's own price range showed up) with no palette. Watch the id: the route
+   takes a **`position_id`**, not `trades.id`; a wrong id leaves the page
+   sitting on "Memuat…" forever instead of erroring.
+8. **PASS** — `/lab` shows no palette and renders no drawings, including an
+   hline whose price was inside the lab chart's visible range.
