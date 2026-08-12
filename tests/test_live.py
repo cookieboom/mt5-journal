@@ -16,6 +16,8 @@ properties that matter and are all about real state or real money:
 
 from __future__ import annotations
 
+import sqlite3
+
 import pytest
 
 from journal.adapter.base import Position, TradeResult, TradeRetcode
@@ -431,6 +433,87 @@ def test_loop_once_takes_priority_over_duration(conn):
     r = live_loop(client, conn, _LOGIN, once=True, duration=100.0, sleep=exploding_sleep)
     assert r.cycles == 1
     assert r.stopped_by == "once"
+
+
+# ------------------------------------------------------- auto-backup (Trap 16)
+#
+# `journal live` is the only long-lived process in this project, so it is the
+# only thing that can take the snapshot a human keeps forgetting to take. The DB
+# is the ONLY copy of most of its own contents — the broker deleted the rest.
+
+
+def _snaps(tmp_path):
+    d = tmp_path / "backups"
+    return sorted(d.glob("journal-*.db")) if d.is_dir() else []
+
+
+def test_loop_snapshots_the_database_when_none_has_been_taken(conn, tmp_path):
+    client = FakeLiveClient([[_pos(identifier=111)]])
+
+    live_loop(client, conn, _LOGIN, once=True)
+
+    snaps = _snaps(tmp_path)
+    assert len(snaps) == 1
+    # A file appearing is not a backup; being readable and carrying the rows is.
+    snap = sqlite3.connect(str(snaps[0]))
+    try:
+        assert snap.execute("SELECT login FROM accounts").fetchall() == [(_LOGIN,)]
+    finally:
+        snap.close()
+
+
+def test_loop_does_not_snapshot_again_until_the_interval_has_passed(conn, tmp_path):
+    client = FakeLiveClient([[_pos(identifier=111)], [_pos(identifier=111)]])
+    clock = {"t": 0.0}
+
+    live_loop(
+        client, conn, _LOGIN, duration=6.0, interval_idle=5.0,
+        sleep=lambda s: clock.__setitem__("t", clock["t"] + s),
+        monotonic=lambda: clock["t"],
+    )
+
+    # Two cycles, one snapshot: a 5 s loop must not write a 60 MB file per cycle.
+    assert len(_snaps(tmp_path)) == 1
+
+
+def test_loop_can_be_told_not_to_back_up(conn, tmp_path):
+    client = FakeLiveClient([[_pos(identifier=111)]])
+
+    live_loop(client, conn, _LOGIN, once=True, backup_every_s=None)
+
+    assert _snaps(tmp_path) == []
+
+
+def test_loop_skips_the_snapshot_while_a_trade_command_is_pending(conn, tmp_path):
+    # The copy runs in the loop thread. An SL/TP or close must never queue behind
+    # it — trading OFF keeps the row pending, which is the state being tested.
+    client = FakeLiveClient([[_pos(identifier=111)]])
+    live_cycle(client, conn, _LOGIN)
+    enqueue(conn, _LOGIN, "close", 111)
+
+    live_loop(client, conn, _LOGIN, once=True, trading=False)
+
+    assert _snaps(tmp_path) == []
+
+
+def test_loop_survives_a_failing_backup(conn, tmp_path, monkeypatch):
+    # A full disk must not take down the process that is executing trades.
+    client = FakeLiveClient([[_pos(identifier=111)], [_pos(identifier=111)]])
+
+    def boom(*a, **k):
+        raise OSError("No space left on device")
+
+    monkeypatch.setattr("journal.ingest.live.backup.snapshot", boom)
+    clock = {"t": 0.0}
+
+    r = live_loop(
+        client, conn, _LOGIN, duration=6.0, interval_idle=5.0,
+        sleep=lambda s: clock.__setitem__("t", clock["t"] + s),
+        monotonic=lambda: clock["t"],
+    )
+
+    # Kept cycling through the raised OSError instead of dying on it.
+    assert r.cycles > 1 and r.stopped_by == "duration"
 
 
 # ---------------------------------------------------------------- candle requests

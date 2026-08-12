@@ -87,7 +87,8 @@ uv run journal doctor           # verify adapter: account info + last tick
 uv run journal sync             # pull deals/orders into raw tables
 uv run journal rebuild          # drop + rebuild trades from raw
 uv run journal chart <trade_id> # render PNG to cache/
-uv run journal backup           # snapshot the DB (safe while `live`/`serve` run)
+uv run journal backup           # snapshot the DB (safe while `live`/`serve` run;
+                                #   `journal live` also does this daily on its own)
 uv run pytest                   # all tests, must pass before any commit
 uv run pytest -k reconstruct    # the tests that matter most
 ```

@@ -36,7 +36,53 @@ home each, and a second copy is a future lie. Point, never duplicate.
 
 ## CURRENT STATE — update this section every session
 
-**Last updated:** 2026-08-12
+**Last updated:** 2026-08-13
+
+**2026-08-13 — `journal live` now takes the backup nobody remembers to take.**
+`journal backup` (below) made a correct snapshot *possible* a day earlier. It
+did not make one *happen*: it is a foreground command a human types. This file
+records three ad-hoc snapshots in a year, and `data/backups/` held exactly one
+file — dated the day the command was written. That is the measured rate at
+which humans remember, against the one file in this project that cannot be
+re-synced (Trap 16).
+
+So the snapshot logic moved out of `cli.backup` into `store/backup.py`
+(`snapshot()`, `due()`, `BackupError`) with no behaviour change, and
+`live_loop` became its second caller — one choke point, two callers, not two
+implementations that drift. `journal live` is the only long-lived process here,
+so it is the only thing that can carry a timer.
+
+Four rules, each of which is a way an automatic backup goes wrong:
+
+- **The due-check is stateless.** "Due" = the newest `backups/journal-*.db` is
+  older than 24 h by mtime, or there is none. No table, no column, no daemon
+  state to drift — and a `journal live` restarted six times a day still backs
+  up once a day. Hand-named files (`--dest`) do not count as the module's
+  record of itself, so a manual copy elsewhere cannot silently suppress the
+  automatic one.
+- **Never in front of a trade.** Skipped entirely while a command is pending.
+  The copy runs in the loop thread; an SL/TP or a close must not queue behind
+  60 MB of pager copy.
+- **Never fatal.** Any failure is logged and the loop continues. A failed
+  backup is bad; a `journal live` that exits because a disk filled is worse.
+- **Pruning refuses to run behind a bad snapshot.** `--keep` deletes the oldest
+  auto-named files only when the new one passed its own `integrity_check` —
+  otherwise the files it would delete may be the last good ones. (The old
+  in-command version pruned first and *then* printed "do not delete anything".)
+
+`--no-auto-backup` turns it off. `--keep` is not exposed on `live`; the daemon
+keeps 7 (≈434 MB at today's 62 MB), and `journal backup --keep N` re-prunes the
+same folder if that is ever wrong.
+
+Gates: `uv run pytest` **748 passed, 1 skipped in 36.83 s** (was 737; +12 new,
+and `test_live_account_identifiers_absent` skips in a worktree — no `data/`).
+Frontend untouched. `journal backup` run against the live 62 MB DB with
+`journal live` and `journal serve` both up: `integrity: ok`, 264 raw deals,
+129 trades; `journal rebuild` on that snapshot **OK, 129 trades**.
+
+**Not verified by a run:** the daily timer firing inside a real `journal live`
+— it fires 24 h after the last snapshot, so the first real one lands a day
+after the next restart. Spec: `docs/plans/auto-backup-in-live.md`.
 
 **2026-08-12 — `origin` is a public GitHub repository, and four tracked files
 carried this account's real identifiers.** Rule 10 has said "never commit

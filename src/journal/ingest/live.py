@@ -89,7 +89,7 @@ from ..execute import (
     recover_interrupted,
     reject,
 )
-from ..store import live_store
+from ..store import backup, live_store
 from ..store.candle_queue import claim_next_request, requeue_orphaned
 from ..store.db import now_ms
 from .candle_fill import fulfill_request
@@ -430,6 +430,41 @@ def live_cycle(
     )
 
 
+def _maybe_backup(conn: sqlite3.Connection, login: int, every_s: float, keep: int) -> None:
+    """Snapshot the DB if one has not been taken in `every_s` — the reason this
+    lives in the loop at all is that `journal backup` only runs when a human
+    remembers, and the measured rate at which humans remember is three times a
+    year. This is the only long-lived process in the project.
+
+    Two refusals. It never runs while a trade command is pending: the copy runs
+    in this thread and a 60 MB pager copy must not sit in front of an SL/TP or a
+    close. And it never propagates — a full disk is a bad backup, but a `journal
+    live` that exits because of one is worse.
+
+    ponytail: a row that stays `pending` forever (a `--no-trading` run with
+    something queued) defers the snapshot for as long as it sits there. That
+    state already means no command is being executed at all, so a human is
+    looking at it; give the check a staleness escape hatch if that stops
+    being true.
+    """
+    path = conn.execute("PRAGMA database_list").fetchone()[2]
+    if not path:                                   # :memory: — nothing to copy
+        return
+    if pending_count(conn, login) > 0 or not backup.due(path, every_s):
+        return
+    try:
+        s = backup.snapshot(path, keep=keep)
+    except Exception:
+        log.exception("live: auto-backup failed — the loop continues, the DB is unbacked")
+        return
+    if s.integrity != "ok":
+        log.error("live: auto-backup %s failed integrity_check (%s) — CHECK THE SOURCE DB",
+                  s.out.name, s.integrity)
+    else:
+        log.info("live: auto-backup %s (%d trades)%s", s.out.name, s.n_trades,
+                 f", pruned {len(s.pruned)}" if s.pruned else "")
+
+
 def live_loop(
     client: MT5Client,
     conn: sqlite3.Connection,
@@ -440,6 +475,8 @@ def live_loop(
     trading: bool = True,
     once: bool = False,
     duration: float | None = None,
+    backup_every_s: float | None = 86_400.0,
+    backup_keep: int = 7,
     sleep=time.sleep,
     monotonic=time.monotonic,
     on_cycle=None,
@@ -455,6 +492,11 @@ def live_loop(
     at least one cycle; `once` beats `duration`; the deadline is checked after a
     cycle and before the next sleep, so a `duration` run never sleeps after its
     final cycle. Ctrl+C stops cleanly with `stopped_by='interrupt'`.
+
+    Every cycle also asks `_maybe_backup` whether the DB is due a snapshot
+    (`backup_every_s=None` turns that off). It is the only thing here that is
+    not about the bridge, and it is here because this is the only process that
+    runs all day — see that function.
     """
     recovered = recover_interrupted(conn, login)
     if recovered:
@@ -472,6 +514,8 @@ def live_loop(
             cycles += 1
             if on_cycle is not None:
                 on_cycle(r)
+            if backup_every_s is not None:
+                _maybe_backup(conn, login, backup_every_s, backup_keep)
             if once:
                 return LiveLoopReport(cycles=cycles, recovered=recovered, stopped_by="once")
             if deadline is not None and monotonic() >= deadline:

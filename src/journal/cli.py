@@ -348,9 +348,6 @@ def migrate(db: str = typer.Option(_DEFAULT_DB, help="SQLite DB path.")) -> None
 # ------------------------------------------------------------------- backup
 
 
-_AUTO_PREFIX = "journal-"  # auto-named snapshots; only these are ever pruned
-
-
 @app.command()
 def backup(
     dest: str = typer.Option(
@@ -377,61 +374,27 @@ def backup(
 
     The copy is opened and `PRAGMA integrity_check`ed before this reports
     success, because a backup nobody has read back is a guess.
+
+    `journal live` runs this same code on a daily timer, into the same folder
+    under the same `--keep` — so the file you get by typing this and the file
+    the daemon leaves behind are the same kind of thing.
     """
-    src_path = Path(db)
-    if not src_path.exists():
-        # sqlite3.connect() would happily CREATE it and snapshot the empty
-        # result — a typo'd --db must not look like a successful backup.
-        typer.echo(f"== backup ==\nsource:    {db}\nERROR:     no such database.")
-        raise typer.Exit(code=1)
+    from .store.backup import BackupError, snapshot
 
-    auto_dir = src_path.parent / "backups"
-    if dest:
-        out = Path(dest)
-    else:
-        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        out = auto_dir / f"{_AUTO_PREFIX}{stamp}.db"
-    if out.exists():
-        typer.echo(f"== backup ==\nsource:    {db}\nERROR:     {out} exists; refusing to overwrite.")
-        raise typer.Exit(code=1)
-    out.parent.mkdir(parents=True, exist_ok=True)
-
-    # Plain sqlite3, not store.db.connect(): a backup must not migrate the
-    # schema of the thing it is preserving.
-    src = sqlite3.connect(str(src_path))
     try:
-        dst = sqlite3.connect(str(out))
-        try:
-            src.backup(dst)
-        finally:
-            dst.close()
-    finally:
-        src.close()
-
-    chk = sqlite3.connect(str(out))
-    try:
-        integrity = chk.execute("PRAGMA integrity_check").fetchone()[0]
-        n_deals = chk.execute("SELECT COUNT(*) FROM deals_raw").fetchone()[0]
-        n_trades = chk.execute("SELECT COUNT(*) FROM trades").fetchone()[0]
-    finally:
-        chk.close()
-
-    pruned: list[Path] = []
-    if keep > 0 and not dest and auto_dir.is_dir():
-        # Timestamps are fixed-width UTC, so name order IS chronological order.
-        olds = sorted(auto_dir.glob(f"{_AUTO_PREFIX}*.db"))
-        for p in olds[: max(0, len(olds) - keep)]:
-            p.unlink()
-            pruned.append(p)
+        s = snapshot(db, dest=dest, keep=keep)
+    except BackupError as e:
+        typer.echo(f"== backup ==\nsource:    {db}\nERROR:     {e}")
+        raise typer.Exit(code=1)
 
     typer.echo("== backup ==")
-    typer.echo(f"source:    {db} ({src_path.stat().st_size / 1e6:.1f} MB)")
-    typer.echo(f"snapshot:  {out} ({out.stat().st_size / 1e6:.1f} MB)")
-    typer.echo(f"integrity: {integrity}")
-    typer.echo(f"contents:  {n_deals} raw deals, {n_trades} trades")
-    for p in pruned:
+    typer.echo(f"source:    {db} ({Path(db).stat().st_size / 1e6:.1f} MB)")
+    typer.echo(f"snapshot:  {s.out} ({s.out.stat().st_size / 1e6:.1f} MB)")
+    typer.echo(f"integrity: {s.integrity}")
+    typer.echo(f"contents:  {s.n_deals} raw deals, {s.n_trades} trades")
+    for p in s.pruned:
         typer.echo(f"pruned:    {p.name}")
-    if integrity != "ok":
+    if s.integrity != "ok":
         typer.echo("\nThe SNAPSHOT is corrupt — do not delete anything, and check the source.")
         raise typer.Exit(code=1)
 
@@ -650,6 +613,9 @@ def live(
     duration: float = typer.Option(
         None, help="Stop after this many seconds (default: run until Ctrl+C)."
     ),
+    no_auto_backup: bool = typer.Option(
+        False, "--no-auto-backup", help="Do NOT snapshot the DB once a day while running."
+    ),
     db: str = typer.Option(_DEFAULT_DB, help="SQLite DB path."),
 ) -> None:
     """The one process that owns the bridge (M9): mirror open positions, auto-
@@ -661,6 +627,10 @@ def live(
     command that may have reached the broker is NEVER auto-retried; the next
     startup marks it failed and tells you to check MT5 by hand. Ctrl+C stops
     cleanly.
+
+    Because this is the only thing here that runs all day, it also takes the
+    `journal backup` snapshot once every 24 h (7 kept, skipped while a trade
+    command is pending, never fatal) — `--no-auto-backup` turns that off.
     """
     import logging
 
@@ -715,12 +685,14 @@ def live(
         mode = "TRADING ON — will send real orders" if trading else "ingest only (--no-trading)"
         typer.echo(
             f"live: {mode}; idle interval {interval}s"
+            + ("; auto-backup off" if no_auto_backup else "; daily auto-backup")
             + ("" if once else " — Ctrl+C to stop" + (f", max {duration}s" if duration else ""))
         )
         r = live_loop(
             client, conn, login,
             interval_idle=interval, trading=trading,
             once=once, duration=duration,
+            backup_every_s=None if no_auto_backup else 86_400.0,
             on_cycle=_echo_cycle, on_closing=_echo_closing,
         )
     except sqlite3.OperationalError as e:
