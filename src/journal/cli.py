@@ -9,6 +9,7 @@ import os
 import sqlite3
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 
 import typer
 
@@ -341,6 +342,97 @@ def migrate(db: str = typer.Option(_DEFAULT_DB, help="SQLite DB path.")) -> None
             f"status:  STILL BEHIND after migrating — expected {SCHEMA_VERSION}. "
             f"Do not run other commands against this DB; investigate first."
         )
+        raise typer.Exit(code=1)
+
+
+# ------------------------------------------------------------------- backup
+
+
+_AUTO_PREFIX = "journal-"  # auto-named snapshots; only these are ever pruned
+
+
+@app.command()
+def backup(
+    dest: str = typer.Option(
+        None, help="Write here instead of the auto-named snapshot. Never pruned."
+    ),
+    keep: int = typer.Option(
+        7, help="Auto-named snapshots to keep, oldest deleted first. 0 keeps all."
+    ),
+    db: str = typer.Option(_DEFAULT_DB, help="SQLite DB path."),
+) -> None:
+    """Snapshot the database to `<db dir>/backups/journal-<UTC>.db`. No bridge.
+
+    Trap 16 — the broker deletes its own history — is why this journal exists,
+    and it is also why this file is the ONLY copy of most of what is in it. A
+    lost `journal.db` cannot be re-synced; the deals are gone from the server.
+
+    Safe to run while `journal live` and `journal serve` are up. It uses
+    SQLite's online backup API, which copies through the pager (so committed
+    data still sitting in the `-wal` comes along) and restarts itself if a
+    writer commits mid-copy. `cp data/journal.db somewhere` is NOT the same
+    thing: it can hand you a file whose newest commits live only in the WAL it
+    did not copy. The snapshot it writes is a single self-contained file — no
+    `-wal`/`-shm` sidecars to keep with it.
+
+    The copy is opened and `PRAGMA integrity_check`ed before this reports
+    success, because a backup nobody has read back is a guess.
+    """
+    src_path = Path(db)
+    if not src_path.exists():
+        # sqlite3.connect() would happily CREATE it and snapshot the empty
+        # result — a typo'd --db must not look like a successful backup.
+        typer.echo(f"== backup ==\nsource:    {db}\nERROR:     no such database.")
+        raise typer.Exit(code=1)
+
+    auto_dir = src_path.parent / "backups"
+    if dest:
+        out = Path(dest)
+    else:
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        out = auto_dir / f"{_AUTO_PREFIX}{stamp}.db"
+    if out.exists():
+        typer.echo(f"== backup ==\nsource:    {db}\nERROR:     {out} exists; refusing to overwrite.")
+        raise typer.Exit(code=1)
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    # Plain sqlite3, not store.db.connect(): a backup must not migrate the
+    # schema of the thing it is preserving.
+    src = sqlite3.connect(str(src_path))
+    try:
+        dst = sqlite3.connect(str(out))
+        try:
+            src.backup(dst)
+        finally:
+            dst.close()
+    finally:
+        src.close()
+
+    chk = sqlite3.connect(str(out))
+    try:
+        integrity = chk.execute("PRAGMA integrity_check").fetchone()[0]
+        n_deals = chk.execute("SELECT COUNT(*) FROM deals_raw").fetchone()[0]
+        n_trades = chk.execute("SELECT COUNT(*) FROM trades").fetchone()[0]
+    finally:
+        chk.close()
+
+    pruned: list[Path] = []
+    if keep > 0 and not dest and auto_dir.is_dir():
+        # Timestamps are fixed-width UTC, so name order IS chronological order.
+        olds = sorted(auto_dir.glob(f"{_AUTO_PREFIX}*.db"))
+        for p in olds[: max(0, len(olds) - keep)]:
+            p.unlink()
+            pruned.append(p)
+
+    typer.echo("== backup ==")
+    typer.echo(f"source:    {db} ({src_path.stat().st_size / 1e6:.1f} MB)")
+    typer.echo(f"snapshot:  {out} ({out.stat().st_size / 1e6:.1f} MB)")
+    typer.echo(f"integrity: {integrity}")
+    typer.echo(f"contents:  {n_deals} raw deals, {n_trades} trades")
+    for p in pruned:
+        typer.echo(f"pruned:    {p.name}")
+    if integrity != "ok":
+        typer.echo("\nThe SNAPSHOT is corrupt — do not delete anything, and check the source.")
         raise typer.Exit(code=1)
 
 

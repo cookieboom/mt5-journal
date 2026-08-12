@@ -38,6 +38,48 @@ home each, and a second copy is a future lie. Point, never duplicate.
 
 **Last updated:** 2026-08-12
 
+**2026-08-12 — `journal backup` exists, because the one file this project
+cannot lose had no command that copied it.** Trap 16 is the reason this journal
+exists: the broker deletes its own deal history. That makes `data/journal.db`
+the only surviving copy of most of what is in it — a lost file cannot be
+re-synced, because the deals are no longer on the server. Until now the only
+backups were the ad-hoc `sqlite3 .backup` snapshots taken by hand when someone
+happened to remember (this file records three of them), and the obvious
+alternative is wrong: `cp data/journal.db` can hand you a file whose newest
+commits still live in the `-wal` it did not copy.
+
+`journal backup` is SQLite's own online backup API (`sqlite3.Connection.backup`,
+stdlib) and nothing else. It copies through the pager, so WAL content comes
+along, and it restarts itself if a writer commits mid-copy — which is why it is
+safe to run with `journal live` and `journal serve` up, and why it needs no
+bridge. Output is one self-contained file, no `-wal`/`-shm` sidecars to keep
+with it: `<db dir>/backups/journal-<UTC>.db`, or `--dest` for somewhere else.
+
+Three guards, each of which is a way a backup silently is not one:
+
+- **Missing source refuses.** `sqlite3.connect()` CREATES the file it cannot
+  find, so a typo'd `--db` would have snapshotted a brand-new empty database
+  and printed success.
+- **Existing destination refuses.** Backing up ONTO a file is data loss in the
+  one command whose whole purpose is not losing data.
+- **The copy is read back.** `PRAGMA integrity_check` plus the `deals_raw` and
+  `trades` counts, printed. A backup nobody has opened is a guess.
+
+`--keep 7` prunes older snapshots, oldest first, and only ever touches files it
+named itself (`journal-*.db` in the auto directory); `--dest` snapshots and
+anything else in that directory are never pruned. Timestamps are fixed-width
+UTC, so name order is chronological order — no stat calls. `--keep 0` keeps
+everything. It uses plain `sqlite3`, not `store.db.connect()`, deliberately: a
+backup must not migrate the schema of the thing it is preserving.
+
+Verified end to end against the real 62 MB database with `journal live` and
+`journal serve` running: the snapshot took `integrity: ok`, 264 raw deals /
+129 trades, and then `journal rebuild` on the SNAPSHOT gave 129 trades and
+`journal verify` **PASS on both identities** — i.e. the backup is a working
+database, not just a file of the right size. Gates: `uv run pytest` **734
+passed in 47.98 s** (was 728; 6 new CLI tests covering the snapshot round trip,
+both refusals, and both prune branches). Frontend untouched.
+
 **2026-08-12 — `uv run pytest` went from ~4–5 minutes to 29 seconds, and the
 cause was LightGBM spawning threads it could not use.** The rule "tests pass
 before any commit" is only obeyed if running them is cheap; at five minutes it

@@ -1,8 +1,10 @@
-"""CLI tests. `candles-coverage` is the only new command testable without the
-live bridge — `candles-warm` and `candles`/`doctor` all construct `LiveMT5Client`
-and are exercised manually, not in this suite."""
+"""CLI tests. `candles-coverage` and `backup` are the commands testable without
+the live bridge — `candles-warm` and `candles`/`doctor` all construct
+`LiveMT5Client` and are exercised manually, not in this suite."""
 
 from __future__ import annotations
+
+import sqlite3
 
 from typer.testing import CliRunner
 
@@ -22,3 +24,97 @@ def test_candles_coverage_prints_ranges(tmp_path):
 
     assert res.exit_code == 0
     assert "XAUUSDc" in res.stdout and "M1" in res.stdout
+
+
+# ---------------------------------------------------------------------- backup
+
+
+def _seeded_db(tmp_path):
+    """A DB with one recognisable row, so a snapshot can be proven non-empty."""
+    db = tmp_path / "t.db"
+    conn = connect(db)
+    cs.record_coverage(conn, "XAUUSDc", "M1", 0, 180000)
+    conn.commit()
+    conn.close()
+    return db
+
+
+def test_backup_writes_a_snapshot_that_carries_the_data(tmp_path):
+    db = _seeded_db(tmp_path)
+
+    res = CliRunner().invoke(app, ["backup", "--db", str(db)])
+
+    assert res.exit_code == 0
+    snaps = list((tmp_path / "backups").glob("journal-*.db"))
+    assert len(snaps) == 1
+    # The point of a backup is that it can be READ back, not that a file appeared.
+    snap = sqlite3.connect(str(snaps[0]))
+    try:
+        rows = snap.execute("SELECT from_msc, to_msc FROM candle_coverage").fetchall()
+    finally:
+        snap.close()
+    assert rows == [(0, 180000)]
+    assert "integrity: ok" in res.stdout
+
+
+def test_backup_honours_an_explicit_destination(tmp_path):
+    db = _seeded_db(tmp_path)
+    dest = tmp_path / "elsewhere" / "snap.db"
+
+    res = CliRunner().invoke(app, ["backup", "--db", str(db), "--dest", str(dest)])
+
+    assert res.exit_code == 0
+    assert dest.exists()
+    assert not (tmp_path / "backups").exists()
+
+
+def test_backup_refuses_to_overwrite_an_existing_file(tmp_path):
+    db = _seeded_db(tmp_path)
+    dest = tmp_path / "snap.db"
+    dest.write_bytes(b"not a database, but not mine to destroy either")
+
+    res = CliRunner().invoke(app, ["backup", "--db", str(db), "--dest", str(dest)])
+
+    assert res.exit_code == 1
+    assert dest.read_bytes().startswith(b"not a database")
+
+
+def test_backup_of_a_missing_database_fails_instead_of_snapshotting_an_empty_one(tmp_path):
+    missing = tmp_path / "nope.db"
+
+    res = CliRunner().invoke(app, ["backup", "--db", str(missing)])
+
+    assert res.exit_code == 1
+    # sqlite3.connect() would have CREATED it — the whole point of the guard.
+    assert not missing.exists()
+    assert not (tmp_path / "backups").exists()
+
+
+def test_backup_prunes_the_oldest_auto_named_snapshots(tmp_path):
+    db = _seeded_db(tmp_path)
+    old = tmp_path / "backups"
+    old.mkdir()
+    for stamp in ("20200101T000000Z", "20210101T000000Z", "20220101T000000Z"):
+        (old / f"journal-{stamp}.db").write_bytes(b"")
+    (old / "keep-me.db").write_bytes(b"")  # not auto-named: never touched
+
+    res = CliRunner().invoke(app, ["backup", "--db", str(db), "--keep", "2"])
+
+    assert res.exit_code == 0
+    left = sorted(p.name for p in old.glob("*.db"))
+    # 3 old + 1 new, keep 2 newest by name (timestamps sort chronologically).
+    assert len(left) == 3 and "keep-me.db" in left
+    assert "journal-20200101T000000Z.db" not in left
+    assert "journal-20220101T000000Z.db" in left
+
+
+def test_backup_keeps_everything_when_keep_is_zero(tmp_path):
+    db = _seeded_db(tmp_path)
+    old = tmp_path / "backups"
+    old.mkdir()
+    (old / "journal-20200101T000000Z.db").write_bytes(b"")
+
+    res = CliRunner().invoke(app, ["backup", "--db", str(db), "--keep", "0"])
+
+    assert res.exit_code == 0
+    assert (old / "journal-20200101T000000Z.db").exists()
