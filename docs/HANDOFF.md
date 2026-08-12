@@ -78,6 +78,17 @@ Not changed: the frontend still gates its button on `staleEntryReason`'s
 an armed button and get a 400. That 400 now says exactly what to do. Unifying
 the two windows is a real cleanup, deliberately left out of this fix.
 
+**2026-08-12 — that frontend defect is now FIXED** (see the paragraph directly
+below for what it was). `useLiveForming` returns `live: boolean | null`, `null`
+meaning "not polling / first poll still in flight", and `staleEntryReason` takes
+the tri-state: `null` still blocks the button but says `Status feed belum
+diketahui — chart belum polling harga live.` instead of naming the daemon. The
+false accusation is reachable exactly when `liveEnabled` is false while
+`replayOpen` is still false — the replay CONFIG drawer being open — and in the
+first seconds after load, before the first poll answers. Both now say the true
+thing. Gates: vitest **339 passed** (1 new, written failing first), tsc 0, vite
+build 0, pytest 716. Untested in the browser.
+
 **Separate frontend defect, found while tracing this and NOT fixed** (it is not
 the same bug — the wording overlaps, the source does not). The drawings browser
 pass below recorded "the risk panel on `/chart` printed ``journal live` tidak

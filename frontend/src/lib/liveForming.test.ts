@@ -50,6 +50,15 @@ describe("staleEntryReason", () => {
   it("blocks when the journal live heartbeat is cold", () => {
     expect(staleEntryReason(false, 1_000_000, TF, 1_030_000)).toMatch(/journal live/);
   });
+  // null = the chart is not polling (replay/config drawer open, or the first
+  // poll has not answered yet). It still blocks, but it must NOT claim the
+  // daemon is dead — that is the bug the browser pass caught, with the badge
+  // reading `live · 1s` next to it.
+  it("blocks without accusing journal live when liveness is unknown", () => {
+    const msg = staleEntryReason(null, 1_000_000, TF, 1_030_000);
+    expect(msg).not.toBeNull();
+    expect(msg).not.toMatch(/journal live/);
+  });
   it("blocks when there is no bar to read a price off at all", () => {
     expect(staleEntryReason(true, null, TF, 1_030_000)).not.toBeNull();
   });

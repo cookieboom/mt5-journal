@@ -25,5 +25,8 @@ export function useLiveForming(symbol: string, tf: Timeframe, enabled: boolean) 
     : "";
   const { data } = useApi<LiveCandle>(path, enabled ? POLL_MS : undefined);
   const forming: Candle | null = enabled && data ? data.forming : null;
-  return { forming, live: enabled && !!data?.live };
+  // `null` = nothing to say about the feed: not polling, or the first poll is
+  // still in flight. Only a real response makes this a verdict about the daemon.
+  const live = enabled && data ? data.live : null;
+  return { forming, live };
 }

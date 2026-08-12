@@ -150,9 +150,16 @@ export function mergeForming(candles: Candle[], forming: Candle | null, interval
 // matters: `mergeForming` refuses to append a forming bar more than one
 // interval ahead of the history, so a stalled candle fetch leaves an old bar on
 // screen while the poll keeps reporting a current one.
+//
+// `feedLive` is tri-state: true/false are the server's heartbeat verdict, `null`
+// means the chart is not polling it at all (replay/config drawer open, or the
+// first poll has not answered yet). Unknown still blocks — but it must not
+// accuse the daemon, which is what it used to do while the liveness badge, read
+// off the same heartbeat, said `live · 1s`.
 export function staleEntryReason(
-  feedLive: boolean, entryBarMs: number | null, intervalMs: number, nowMs: number,
+  feedLive: boolean | null, entryBarMs: number | null, intervalMs: number, nowMs: number,
 ): string | null {
+  if (feedLive === null) return "Status feed belum diketahui — chart belum polling harga live.";
   if (!feedLive) return "`journal live` tidak berjalan — harga acuan tidak segar.";
   if (entryBarMs === null) return "Belum ada bar sebagai harga acuan.";
   if (nowMs - entryBarMs > 2 * intervalMs) {
