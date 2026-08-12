@@ -26,7 +26,7 @@ from journal.ingest.deals import SyncReport
 from journal.ingest.live import live_cycle, live_loop
 from journal.store.db import connect
 
-_LOGIN = 257223861
+_LOGIN = 1_000_001  # placeholder, never the real login (rule 10)
 _MSC_FLOOR = 10**12
 
 

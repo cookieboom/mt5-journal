@@ -354,7 +354,7 @@ Everything above the adapter then obeys rule 3 with no exceptions to remember.
 
 ### Trap 16 — The broker deletes your history
 
-**Observed on this account, 2026-07-11.** Exness archived old deals: removed them
+**Observed on this account, 2026-07-11.** The broker archived old deals: removed them
 from retrievable history and left a `DEAL_TYPE_CORRECTION` marker with amount
 `0.00` and comment `"Archived deals"`. The deals it took netted −14.50 USC.
 `history_deals_get(2000-01-01, now)` cannot return them. Neither can MT5's own
@@ -558,7 +558,7 @@ delta              =  +14.50      (the account holds LESS than deals claim)
 
 **Cause: the broker archived deals and deleted them from history.**
 
-Confirmed against MT5's own `Account History → Report` (Exness-MT5Real36):
+Confirmed against MT5's own `Account History → Report` (this account's live server):
 
 - The report's own cumulative Balance column ends at **6061.72** while its
   `Balance:` line reads **6047.22**. **MT5's own export contains the identical

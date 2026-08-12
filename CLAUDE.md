@@ -65,6 +65,10 @@ Single user, local-only, macOS (Apple Silicon M4).
    anywhere, including inside `lab/`.
 10. **Never commit `data/`, `cache/`, or anything containing a real account
     login.** Fixtures must be sanitised (login → 0, broker name stripped).
+    `origin` is a **public** repository and this rule has been broken twice, so
+    it is now enforced: `tests/test_repo_hygiene.py` scans every tracked file
+    for funding references, and — when `data/journal.db` is present — for the
+    login, broker, server and funding comments read out of the live DB itself.
 11. **Symbols are stored twice.** `symbol` = exactly what MT5 said (`XAUUSDc`);
     `symbol_base` = normalised (`XAUUSD`). Query MT5 with `symbol`. Group stats
     by `symbol_base`. Normalisation lives in one function, `domain/symbols.py`,

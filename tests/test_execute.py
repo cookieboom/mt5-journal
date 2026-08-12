@@ -29,7 +29,7 @@ from journal.execute import (
 from journal.store import live_store
 from journal.store.db import connect, now_ms
 
-_LOGIN = 257223861
+_LOGIN = 1_000_001  # placeholder, never the real login (rule 10)
 
 
 @pytest.fixture

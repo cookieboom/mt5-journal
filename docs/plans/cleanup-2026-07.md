@@ -148,10 +148,15 @@ A payment/deposit reference leaked into a committed fixture.
 
 **Finding:** `tests/fixtures/deals.json:3` — the balance/deposit deal
 (`type: 2`, `symbol: ""`) carries
-`"comment": "D-IDQRISGT-USC-939362934790"`. That `D-…-USC-<digits>` string is a
-real funding-transaction reference, not trade-structural data. Rule 10 says
-fixtures must be sanitized. (This matches the prior "funding payment references
-committed to test fixtures" flag.)
+a `comment` holding a real funding-transaction reference — a direction letter,
+a scheme name, the account currency and the transaction digits — not
+trade-structural data. Rule 10 says fixtures must be sanitized. (This matches
+the prior "funding payment references committed to test fixtures" flag.)
+
+> **2026-08-12 — the reference itself was redacted out of this paragraph.**
+> It was quoted here in full, and this repository is public. The shape is
+> described instead; `tests/test_repo_hygiene.py` now fails if any tracked file
+> carries one again.
 
 **Do:**
 1. Audit ALL fixtures for the same class of leak before editing:

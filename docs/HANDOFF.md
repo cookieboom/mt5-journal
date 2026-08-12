@@ -38,6 +38,61 @@ home each, and a second copy is a future lie. Point, never duplicate.
 
 **Last updated:** 2026-08-12
 
+**2026-08-12 — `origin` is a public GitHub repository, and four tracked files
+carried this account's real identifiers.** Rule 10 has said "never commit
+anything containing a real account login" since M0. It was enforced by people
+remembering it, which is why it had already failed once (`7464753`, a funding
+reference in `tests/fixtures/deals.json`) and then failed again in the document
+*describing* that leak.
+
+Found and scrubbed:
+
+| File | Carried |
+|---|---|
+| `docs/plans/cleanup-2026-07.md` | a funding reference, quoted in full |
+| `docs/HANDOFF.md` (open questions) | two funding-reference prefixes |
+| `tests/test_execute.py`, `tests/test_live.py` | `_LOGIN = <the real login>` |
+| `docs/mt5-deal-model.md` | the broker name and the live server name |
+
+The last two rows were **not** found by reading — they were found by the guard
+this entry is really about. `tests/test_repo_hygiene.py`, three tests, no new
+dependency:
+
+- **`test_no_funding_reference_pattern`** knows the *shape* of a funding
+  reference (direction letter, scheme, currency, digits) and scans every
+  tracked text file. Needs no database, so it also protects a fresh clone.
+- **`test_fixture_account_is_sanitised`** pins `login == 0` and
+  `company`/`server`/`name == "REDACTED"` in `tests/fixtures/account.json` —
+  the sanitiser contract `scripts/record_fixtures.py` is supposed to honour.
+- **`test_live_account_identifiers_absent`** is the one with teeth. It reads
+  the login, broker and server out of `accounts`, and every funding
+  `comment`/`external_id` out of `deals_raw`, from the **untracked**
+  `data/journal.db`, and asserts none of them appears in a tracked file. It
+  cannot be fooled by a leak in a shape nobody predicted, and it is why no real
+  value is written down in the test. It `skip`s when there is no database (a
+  clone, a worktree, CI) and opens read-only *without* `immutable=1` — `journal
+  live` may be writing, and immutable would tell SQLite to ignore its WAL.
+
+Two details that are deliberate. Comparisons use token boundaries
+(`(?<![0-9A-Za-z])…`), or a 9-digit login would match inside a hex hash in
+`uv.lock` and fail for nothing. And the failure message prints
+`<9-char identifier>: <paths>`, never the value — pytest echoes the compared
+expression, so what is compared must already be redacted; the paths are enough
+to fix it.
+
+Non-vacuity checked one at a time: a fake reference appended to a doc, the
+fixture login set to `12345`, and the real login (read from the DB, never typed)
+appended to a doc — each failed exactly its own test with the other two green,
+and each perturbation was reverted.
+
+**Still open, and only a human can close it:** all of this is the *working
+tree*. The identifiers remain in published git history; removing them is a
+force-push over public commits. See OPEN QUESTIONS.
+
+Gates: `uv run pytest` **737 passed in 20.55 s** (was 734; 3 new). Frontend
+untouched — no vitest/tsc/build. `journal rebuild` **OK, 129 trades** against a
+`journal backup` snapshot of the live DB (`journal live`/`serve` were up).
+
 **2026-08-12 — `journal backup` exists, because the one file this project
 cannot lose had no command that copied it.** Trap 16 is the reason this journal
 exists: the broker deletes its own deal history. That makes `data/journal.db`
@@ -1007,11 +1062,12 @@ The three worth a pointer, because they change how you work:
       matches its two neighbours. The code question is closed; the empirical
       one — does this bridge actually need it — is not, and may never be worth
       resolving now that the insurance is cheap and in place.
-- [ ] Funding-deal comments (`D-IDQRISGT-…`, `W-ALLINT-…`) are payment
-      references, now committed to git. Zero analytical value. If this repo is
-      ever pushed anywhere public, redact `comment` on funding deals only
-      (`DEAL_TYPE_BALANCE/CREDIT/CHARGE/BONUS`) — never on trades, never on the
-      correction. Already in history, so the cost of deciding rises with time.
+- [ ] The real identifiers are still in the git **history**. `7464753` scrubbed
+      the fixture; 2026-08-12 scrubbed the four places that had pasted one back
+      in (see CURRENT STATE) and added the guard that keeps the working tree
+      clean. Neither rewrote history, and `origin` is a **public** GitHub
+      repository. Removing them from history means a force-push over published
+      commits — a decision with its own cost, and the only part still open.
 
 **Closed:** `httpx` missing from the dependencies (it is not — it is in
 `[dependency-groups].dev`; a clean `uv sync` into a fresh worktree venv ran the
