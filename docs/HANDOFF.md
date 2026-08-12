@@ -38,8 +38,8 @@ home each, and a second copy is a future lie. Point, never duplicate.
 
 **Last updated:** 2026-08-12
 
-**2026-08-12 — review fixes on the stale-feed guard (same branch, not yet
-merged).** The 2026-08-11 guard below was reviewed and had two real defects; both
+**2026-08-12 — review fixes on the stale-feed guard. MERGED to `main` and
+pushed.** The 2026-08-11 guard below was reviewed and had two real defects; both
 are fixed here.
 
 1. **It refused healthy feeds.** `updated_msc` only advances when
@@ -77,6 +77,19 @@ Not changed: the frontend still gates its button on `staleEntryReason`'s
 2 × timeframe while the server's window is 15 s, so a wedged tab can still show
 an armed button and get a 400. That 400 now says exactly what to do. Unifying
 the two windows is a real cleanup, deliberately left out of this fix.
+
+**Separate frontend defect, found while tracing this and NOT fixed** (it is not
+the same bug — the wording overlaps, the source does not). The drawings browser
+pass below recorded "the risk panel on `/chart` printed ``journal live` tidak
+berjalan — harga acuan tidak segar` while `journal live` was in fact running and
+the liveness badge read `live · 1s`". That string is the FRONTEND's
+(`lib/candles.staleEntryReason`, first branch), reached whenever its `feedLive`
+argument is false — and `useLiveForming` returns `live: enabled && !!data.live`,
+so a chart that simply is not polling (`liveEnabled` false) reports itself as
+"`journal live` tidak berjalan". The server's own message of nearly the same
+wording comes from the heartbeat branch, which cannot be false while the badge —
+computed from the same heartbeat, same 15 s window — says `live · 1s`. The fix
+belongs in `staleEntryReason`: distinguish "not watching" from "no heartbeat".
 
 Gates: `uv run pytest` **716 passed** (was 712; 2 new in `test_execute.py` for
 the price-ref comparison, 2 new in `test_live.py` — the quiet bucket, and the
