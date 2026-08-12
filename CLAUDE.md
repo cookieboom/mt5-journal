@@ -93,6 +93,9 @@ uv run journal rebuild          # drop + rebuild trades from raw
 uv run journal chart <trade_id> # render PNG to cache/
 uv run journal backup           # snapshot the DB (safe while `live`/`serve` run;
                                 #   `journal live` also does this daily on its own)
+uv run journal restore          # put a snapshot back (newest, or --from FILE).
+                                #   verifies the source first, refuses while
+                                #   `live` runs, moves the old store aside
 uv run pytest                   # all tests, must pass before any commit
 uv run pytest -k reconstruct    # the tests that matter most
 ```

@@ -38,6 +38,63 @@ home each, and a second copy is a future lie. Point, never duplicate.
 
 **Last updated:** 2026-08-13
 
+**2026-08-13 — `journal restore`: the half of `backup` that runs on the worst
+day.** Seven snapshots are kept, `journal live` takes one daily — and nothing in
+this project read one back. So the procedure on the day it matters (corrupt
+store, bad `rebuild`, deleted file) was a human improvising `cp` under stress,
+against the one file here that cannot be re-synced (Trap 16). Three ways that
+improvisation loses data, all silent, and each is now a refusal or a rename in
+`backup.restore()`:
+
+- **The old `-wal`/`-shm` left beside the new file.** SQLite can recover the
+  *previous* database's WAL frames into the *restored* one. They move with it.
+- **`journal live` still holding the old file open.** It keeps committing into
+  the file that was replaced and the store forks in two, newest trades landing
+  in the copy nobody reads. A heartbeat inside `health.HEARTBEAT_MAX_AGE_S`
+  refuses the whole command. The check is best effort and reads through a
+  **read-only URI** — never `db.connect()`, which would create and migrate the
+  file it is about to replace — and a target too damaged to answer proceeds,
+  because that is exactly the file this command exists to repair.
+- **A snapshot nobody read back.** The source is `integrity_check`ed and counted
+  *before* anything on disk is touched; a bad source leaves the target untouched.
+
+The database being replaced is **moved aside, never deleted**
+(`journal-replaced-<UTC>.db`, beside the store): it may hold deals the snapshot
+predates, and Trap 16 means `sync` cannot always get them back. If the copy
+itself throws, the moved files are renamed back — the human is never left with
+neither file where they left it. Whole-file replacement only, no merge:
+`ponytail:` noted on `restore()`.
+
+`journal restore [--from PATH] [--yes]` defaults to the newest auto-named
+snapshot **by mtime** — deliberately the same file `backup.due()` measures and
+`status` prints, so "the backup you have" and "the backup restore picks" can
+never be two different files. It confirms before replacing unless `--yes`.
+`status`'s integrity FAIL now points at it (`journal backup --dest rescue.db &&
+journal restore`), which is the first time that check has had an actual recovery
+path to name.
+
+**Found while testing it, on real data: `journal status` CRASHED on a corrupt
+store.** A 62 MB copy of the live DB with 20 kB scribbled over it printed a
+`sqlite3.DatabaseError` traceback out of `_balance` and not one line of the
+report — the command whose entire purpose is answering "is this journal
+healthy?" was mute in the one state where the answer is no. `_integrity` had
+already detected it; the next check simply died before anything reached the
+terminal. The guard is one `except sqlite3.DatabaseError` around each check
+inside `health.checks()` — at the choke point, not in five checks, because the
+next check to touch a bad page has not been written yet — turning the reader
+into a `fail` line pointing at `journal restore`. Pinned by a test that corrupts
+`deals_raw`'s own b-tree root, located through `sqlite_master.rootpage` so a
+schema change cannot quietly un-corrupt the fixture.
+
+Verified end to end against a 62 MB copy of the live store (never the store
+itself): corrupt it → `status` prints 3 FAILs and exits 1 → `restore` puts the
+snapshot back, keeps `journal-replaced-*.db` → `status` all-`ok` → `journal
+rebuild` OK, 129 trades. The live-heartbeat refusal was exercised against the
+running daemon: a fresh copy of the live DB refuses the restore by name.
+
+Gates: `uv run pytest` **794 passed, 1 skipped** (+17: 12 on `restore()`, 4 on
+the command, 1 on the crash above). Spec: `docs/plans/journal-restore.md`.
+
 **2026-08-13 — `journal status`: one bridge-free answer to "is this journal
 healthy?"** Every silent failure this project has actually had already had a
 detector — in a *different* command, run at a *different* moment.

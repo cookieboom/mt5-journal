@@ -447,6 +447,70 @@ def backup(
         raise typer.Exit(code=1)
 
 
+# ------------------------------------------------------------------- restore
+
+
+@app.command()
+def restore(
+    from_: str = typer.Option(
+        None, "--from", help="Snapshot to restore. Default: the newest auto-named one."
+    ),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Do not ask; just do it."),
+    db: str = typer.Option(_DEFAULT_DB, help="SQLite DB path."),
+) -> None:
+    """Put a snapshot back at `--db`, replacing whatever is there. No bridge.
+
+    The other half of `journal backup`, and the one that runs on a bad day: a
+    corrupt store, a bad `rebuild`, a deleted file. It exists as a command
+    because the `cp` a human improvises under stress loses data in three silent
+    ways — it leaves the old `-wal`/`-shm` beside the new file (SQLite may
+    recover the PREVIOUS database's frames into it), it runs while `journal
+    live` still holds the old file open (the store forks in two), and it copies
+    in a snapshot nobody read back.
+
+    So: the source is `integrity_check`ed BEFORE anything is touched, a live
+    heartbeat refuses the whole command, the database being replaced is MOVED
+    aside (`journal-replaced-<UTC>.db`) rather than deleted — it may hold deals
+    the snapshot predates, and Trap 16 means `sync` cannot always get them back
+    — and the restored file is read back and its contents printed.
+
+    Whole-file replacement, no merge. Run `journal status` afterwards.
+    """
+    from .store.backup import BackupError, newest_snapshot, restore as do_restore
+
+    source = Path(from_) if from_ else newest_snapshot(db)
+    if source is None:
+        typer.echo(f"== restore ==\nERROR:     no snapshot to restore from; "
+                   f"nothing in {Path(db).parent / 'backups'}")
+        raise typer.Exit(code=1)
+
+    typer.echo("== restore ==")
+    typer.echo(f"snapshot:  {source}")
+    typer.echo(f"target:    {db}"
+               + (f" ({Path(db).stat().st_size / 1e6:.1f} MB, will be moved aside)"
+                  if Path(db).exists() else " (does not exist yet)"))
+    if not yes:
+        typer.confirm("Replace the database with this snapshot?", abort=True)
+
+    try:
+        r = do_restore(db, source)
+    except BackupError as e:
+        typer.echo(f"ERROR:     {e}")
+        raise typer.Exit(code=1)
+
+    if r.replaced is not None:
+        typer.echo(f"kept:      {r.replaced.name}   # the store that was there; delete "
+                   f"it yourself once you are sure")
+    typer.echo(f"integrity: {r.integrity}")
+    typer.echo(f"contents:  {r.n_deals} raw deals, {r.n_trades} trades")
+    typer.echo("\nNext: journal status   # then `journal sync` for anything newer "
+               "than the snapshot")
+    if r.integrity != "ok":
+        typer.echo("\nThe RESTORED file is corrupt — the previous store is still "
+                   "beside it; try an older snapshot.")
+        raise typer.Exit(code=1)
+
+
 # ------------------------------------------------------------------ candles
 
 

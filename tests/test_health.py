@@ -297,3 +297,41 @@ def test_every_non_ok_check_carries_a_command(db):
     for c in health.checks(conn, path):
         if c.state != "ok":
             assert c.fix, f"{c.name} is {c.state} with no way to fix it"
+
+
+def test_a_corrupt_page_fails_the_check_that_hits_it_instead_of_the_command(tmp_path):
+    # Measured 2026-08-13 against a deliberately corrupted 62 MB copy of the
+    # live store: `journal status` died on a traceback out of `_balance` before
+    # it printed a single line — on the one day this command exists for. A
+    # malformed page can surface under ANY check, so the guard is at the choke
+    # point, and every other check still gets to run and print.
+    path = tmp_path / "t.db"
+    conn = connect(path)
+    _account(conn)
+    for t in range(1, 300):
+        _deal(conn, ticket=t, position_id=t)
+    conn.commit()
+    page = conn.execute("PRAGMA page_size").fetchone()[0]
+    root = conn.execute(
+        "SELECT rootpage FROM sqlite_master WHERE name = 'deals_raw'").fetchone()[0]
+    conn.close()
+
+    # Scribble over the b-tree root of `deals_raw` itself: the file still opens,
+    # and it is the checks that read deals which blow up. Located by rootpage,
+    # not by a magic offset, so a schema change cannot quietly un-corrupt it.
+    b = bytearray(path.read_bytes())
+    for i in range((root - 1) * page + 16, root * page):
+        b[i] ^= 0xFF
+    path.write_bytes(bytes(b))
+
+    conn = connect(path)
+    try:
+        results = health.checks(conn, path)
+    finally:
+        conn.close()
+
+    assert [c.name for c in results] == ["integrity", "balance", "trades", "backup", "live"]
+    assert any(c.state == "fail" for c in results)
+    for c in results:
+        if c.state != "ok":
+            assert c.fix

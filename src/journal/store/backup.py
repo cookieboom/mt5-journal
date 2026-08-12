@@ -58,6 +58,22 @@ def due(db_path: Path | str, every_s: float, now: float | None = None) -> bool:
     return (time.time() if now is None else now) - newest >= every_s
 
 
+def _read_back(path: Path) -> tuple[str, int, int]:
+    """Open a copy and read what it actually contains. A backup — or a restore —
+    nobody has read back is a guess. Plain sqlite3: this must not migrate the
+    file it is checking."""
+    chk = sqlite3.connect(str(path))
+    try:
+        integrity = chk.execute("PRAGMA integrity_check").fetchone()[0]
+        n_deals = chk.execute("SELECT COUNT(*) FROM deals_raw").fetchone()[0]
+        n_trades = chk.execute("SELECT COUNT(*) FROM trades").fetchone()[0]
+    except sqlite3.DatabaseError as e:
+        raise BackupError(f"{path} is not a readable journal: {e}") from e
+    finally:
+        chk.close()
+    return integrity, n_deals, n_trades
+
+
 def snapshot(db_path: Path | str, dest: Path | str | None = None,
              keep: int = 7) -> Snapshot:
     """Copy the database to `<db dir>/backups/journal-<UTC>.db` (or `dest`).
@@ -99,13 +115,7 @@ def snapshot(db_path: Path | str, dest: Path | str | None = None,
     finally:
         src.close()
 
-    chk = sqlite3.connect(str(out))
-    try:
-        integrity = chk.execute("PRAGMA integrity_check").fetchone()[0]
-        n_deals = chk.execute("SELECT COUNT(*) FROM deals_raw").fetchone()[0]
-        n_trades = chk.execute("SELECT COUNT(*) FROM trades").fetchone()[0]
-    finally:
-        chk.close()
+    integrity, n_deals, n_trades = _read_back(out)
 
     pruned: list[Path] = []
     # Never prune behind a snapshot that failed its own read-back: the old files
@@ -120,3 +130,129 @@ def snapshot(db_path: Path | str, dest: Path | str | None = None,
 
     return Snapshot(out=out, integrity=integrity, n_deals=n_deals,
                     n_trades=n_trades, pruned=pruned)
+
+
+# ------------------------------------------------------------------- restore
+
+
+@dataclass(frozen=True)
+class Restored:
+    db: Path
+    source: Path
+    replaced: Path | None   # where the previous store went; None if there was none
+    integrity: str
+    n_deals: int
+    n_trades: int
+
+
+def newest_snapshot(db_path: Path | str) -> Path | None:
+    """The most recent auto-named snapshot, by mtime — the same file `due()`
+    measures its interval from, so "the backup `status` says you have" and "the
+    backup `restore` picks" are always the same file."""
+    d = auto_dir(db_path)
+    snaps = list(d.glob(f"{AUTO_PREFIX}*.db")) if d.is_dir() else []
+    return max(snaps, key=lambda p: p.stat().st_mtime) if snaps else None
+
+
+def _live_is_writing(db_path: Path) -> bool:
+    """Best effort: a fresh heartbeat means `journal live` holds this file open.
+
+    Read-only URI, never `store.db.connect()` — this must not create, migrate or
+    write the database it is about to replace. A file too damaged to answer is
+    one nothing can be sanely writing to, and it is exactly the file this
+    command exists to repair, so it answers False.
+    """
+    from .health import HEARTBEAT_MAX_AGE_S  # imported here: health imports us
+
+    if not db_path.exists():
+        return False
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    except sqlite3.Error:
+        return False
+    try:
+        row = conn.execute("SELECT beat_msc FROM live_heartbeat WHERE id = 1").fetchone()
+    except sqlite3.DatabaseError:
+        return False
+    finally:
+        conn.close()
+    if row is None:
+        return False
+    return time.time() - row[0] / 1000.0 < HEARTBEAT_MAX_AGE_S
+
+
+def restore(db_path: Path | str, src: Path | str | None = None) -> Restored:
+    """Put a snapshot back at `db_path`. The half of `backup` that runs on the
+    worst day, and the reason it is code and not a `cp` a human improvises.
+
+    `src` defaults to the newest auto-named snapshot. The source is verified
+    BEFORE anything on disk is touched — restoring an unverified file over a
+    damaged one turns one bad database into two — and the database being
+    replaced is moved aside, never deleted: even a corrupt file is evidence, and
+    it may hold deals the snapshot predates (Trap 16 means `sync` cannot always
+    get them back).
+
+    The `-wal`/`-shm` sidecars move with it. Leaving them beside a replaced file
+    is the failure `cp` cannot see: SQLite may recover the PREVIOUS database's
+    WAL frames into the restored one.
+
+    ponytail: whole-file replacement only — no merge of the two stores. If the
+    replaced file turns out to hold deals worth keeping, `journal sync` re-pulls
+    what the broker still has; merging two SQLite journals by hand is how you
+    get a third, wronger one.
+    """
+    db_path = Path(db_path)
+    source = Path(src) if src is not None else newest_snapshot(db_path)
+    if source is None:
+        raise BackupError(f"no snapshot in {auto_dir(db_path)} to restore from.")
+    if not source.exists():
+        raise BackupError(f"no such snapshot: {source}")
+    if source.resolve() == db_path.resolve():
+        raise BackupError(f"{source} IS the database; nothing to restore.")
+
+    integrity, _, _ = _read_back(source)
+    if integrity != "ok":
+        raise BackupError(f"{source} fails integrity_check ({integrity}); "
+                          f"{db_path} left untouched.")
+
+    if _live_is_writing(db_path):
+        raise BackupError(
+            "`journal live` is running against this store — stop it first. It "
+            "holds the old file open and would keep committing into the copy "
+            "this replaces.")
+
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    replaced: Path | None = None
+    moved: list[tuple[Path, Path]] = []
+    if db_path.exists():
+        replaced = db_path.with_name(f"{db_path.stem}-replaced-{stamp}{db_path.suffix}")
+        if replaced.exists():
+            raise BackupError(f"{replaced} exists; refusing to overwrite it.")
+        for suffix in ("", "-wal", "-shm"):
+            old = db_path.with_name(db_path.name + suffix)
+            if old.exists():
+                new = replaced.with_name(replaced.name + suffix)
+                old.rename(new)
+                moved.append((old, new))
+
+    try:
+        s = sqlite3.connect(str(source))
+        try:
+            d = sqlite3.connect(str(db_path))
+            try:
+                s.backup(d)
+            finally:
+                d.close()
+        finally:
+            s.close()
+        integrity, n_deals, n_trades = _read_back(db_path)
+    except Exception:
+        # Put the old store back rather than leave the human with neither file
+        # where they left it.
+        db_path.unlink(missing_ok=True)
+        for old, new in moved:
+            new.rename(old)
+        raise
+
+    return Restored(db=db_path, source=source, replaced=replaced,
+                    integrity=integrity, n_deals=n_deals, n_trades=n_trades)

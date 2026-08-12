@@ -1,4 +1,4 @@
-"""CLI tests. `candles-coverage` and `backup` are the commands testable without
+"""CLI tests. `candles-coverage`, `backup` and `restore` are testable without
 the live bridge — `candles-warm` and `candles`/`doctor` all construct
 `LiveMT5Client` and are exercised manually, not in this suite."""
 
@@ -156,3 +156,70 @@ def test_backup_keeps_everything_when_keep_is_zero(tmp_path):
 
     assert res.exit_code == 0
     assert (old / "journal-20200101T000000Z.db").exists()
+
+
+# --------------------------------------------------------------------- restore
+
+
+def test_restore_asks_before_replacing_and_does_nothing_when_refused(tmp_path):
+    db = _seeded_db(tmp_path)
+    CliRunner().invoke(app, ["backup", "--db", str(db)])
+    conn = connect(db)
+    conn.execute("DELETE FROM candle_coverage")
+    conn.commit()
+    conn.close()
+
+    res = CliRunner().invoke(app, ["restore", "--db", str(db)], input="n\n")
+
+    assert res.exit_code == 1
+    conn = sqlite3.connect(str(db))
+    assert conn.execute("SELECT COUNT(*) FROM candle_coverage").fetchone()[0] == 0
+    conn.close()
+    assert not list(tmp_path.glob("t-replaced-*.db"))
+
+
+def test_restore_puts_the_newest_snapshot_back(tmp_path):
+    db = _seeded_db(tmp_path)
+    CliRunner().invoke(app, ["backup", "--db", str(db)])
+    conn = connect(db)
+    conn.execute("DELETE FROM candle_coverage")
+    conn.commit()
+    conn.close()
+
+    res = CliRunner().invoke(app, ["restore", "--db", str(db), "--yes"])
+
+    assert res.exit_code == 0, res.stdout
+    conn = sqlite3.connect(str(db))
+    try:
+        assert conn.execute("SELECT from_msc FROM candle_coverage").fetchall() == [(0,)]
+    finally:
+        conn.close()
+    # The replaced store is kept, not deleted — it may hold what the snapshot lacks.
+    assert len(list(tmp_path.glob("t-replaced-*.db"))) == 1
+    assert "integrity: ok" in res.stdout
+
+
+def test_restore_with_no_snapshot_to_restore_from_fails(tmp_path):
+    db = _seeded_db(tmp_path)
+
+    res = CliRunner().invoke(app, ["restore", "--db", str(db), "--yes"])
+
+    assert res.exit_code == 1
+    assert "no snapshot" in res.stdout
+
+
+def test_restore_refuses_a_source_that_is_not_a_database(tmp_path):
+    db = _seeded_db(tmp_path)
+    junk = tmp_path / "notes.txt"
+    junk.write_text("this is not a journal")
+
+    res = CliRunner().invoke(
+        app, ["restore", "--db", str(db), "--from", str(junk), "--yes"])
+
+    assert res.exit_code == 1
+    assert "ERROR" in res.stdout
+    # Refused BEFORE anything moved: the store is still where it was.
+    conn = sqlite3.connect(str(db))
+    assert conn.execute("SELECT COUNT(*) FROM candle_coverage").fetchone()[0] == 1
+    conn.close()
+    assert not list(tmp_path.glob("t-replaced-*.db"))

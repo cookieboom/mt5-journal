@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import sqlite3
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -69,7 +70,8 @@ def _integrity(conn: sqlite3.Connection) -> Check:
     if first == "ok":
         return Check("integrity", "ok", "quick_check ok")
     return Check("integrity", "fail", f"quick_check: {first}",
-                 "journal backup --dest rescue.db   # copy it out BEFORE anything else")
+                 "journal backup --dest rescue.db && journal restore   "
+                 "# rescue what is left FIRST, then put the newest snapshot back")
 
 
 def _balance(conn: sqlite3.Connection) -> Check:
@@ -199,10 +201,24 @@ def checks(conn: sqlite3.Connection, db_path: Path | str, *,
     """Every check, in the order a broken journal breaks. Pure given
     `(conn, db_path, now)` — `now` is epoch SECONDS, injected by the tests."""
     t = time.time() if now is None else now
-    return [
-        _integrity(conn),
-        _balance(conn),
-        _trades(conn),
-        _backup(db_path, t),
-        _live(conn, t),
+    todo: list[tuple[str, Callable[[], Check]]] = [
+        ("integrity", lambda: _integrity(conn)),
+        ("balance", lambda: _balance(conn)),
+        ("trades", lambda: _trades(conn)),
+        ("backup", lambda: _backup(db_path, t)),
+        ("live", lambda: _live(conn, t)),
     ]
+    out: list[Check] = []
+    for name, run in todo:
+        try:
+            out.append(run())
+        except sqlite3.DatabaseError as e:
+            # A malformed page kills whichever check reads it first, and it
+            # killed the whole COMMAND until 2026-08-13: `status` on a corrupted
+            # copy of the live store printed a traceback out of `_balance` and
+            # not one line of the report — on the single day it exists for. The
+            # guard is here rather than in five checks because the next check to
+            # touch a bad page has not been written yet.
+            out.append(Check(name, "fail", f"{type(e).__name__}: {e}",
+                             "journal restore   # this store cannot be read"))
+    return out
