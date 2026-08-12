@@ -38,6 +38,62 @@ home each, and a second copy is a future lie. Point, never duplicate.
 
 **Last updated:** 2026-08-12
 
+**2026-08-12 — the four constants the browser copies from the server are now
+pinned by a test.** The entry directly below ends with "Change one, change the
+other" and leaves that to a comment. Nothing enforced it, and the drift it
+guards against is silent in exactly the way this project keeps getting bitten
+by: the browser arms a button the server refuses, and it is only visible
+against a live broker.
+
+`tests/test_frontend_constants.py` reads `frontend/src/lib/candles.ts` **as
+text** — no node, no `npm install`, no build — and compares four mirrors:
+
+| TypeScript (`lib/candles.ts`) | Python |
+|---|---|
+| `FEED_STALE_MS` | `execute.FEED_STALE_MS` |
+| `PRICE_REF_STOP_FRACTION` | `execute.PRICE_REF_STOP_FRACTION` |
+| `TF_MS` (via `MIN`) | `domain.resample.timeframe_ms` |
+| `TIMEFRAMES` | `adapter.base.TIMEFRAMES` |
+
+The first two are the stale-feed pair the entry below created. The last two
+are older and were never written down as a pair at all: `candles.ts`'s
+`bucketStart` comment already says it "must agree" with
+`domain.resample.bucket_start`, and a `TF_MS` that disagreed would compute
+windows that do not line up with the stored bar times. `domain/resample`
+already `assert`s its own table against `adapter.base.TIMEFRAMES` at import;
+this is that same guard extended across the language boundary, which is why it
+lives in pytest and not in vitest — the Python values are the ones being
+mirrored, so the check belongs on the side that owns them.
+
+The TS is parsed with a deliberately narrow regex + `_num`, which accepts only
+the literal forms actually in the file (`15_000`, `0.25`, `240 * MIN`) and
+**asserts** on anything else rather than guessing. A mirror check that
+silently mis-parses is worse than none; if someone reformats a constant, the
+test says "teach `_num` the new form" instead of quietly passing.
+
+Non-vacuity verified: each of the four was perturbed in `candles.ts` in turn
+(`15_000`→`16_000`, `0.25`→`0.3`, `M15: 15 * MIN`→`14 * MIN`, `H4` dropped
+from `TIMEFRAMES`) and each time exactly its own test failed and the other
+nine passed; `candles.ts` was restored from git after each.
+
+No behaviour change: the test, this note, and four comment lines pointing at
+the test from the constants themselves (both sides) — a drift guard nobody can
+find is a drift guard nobody keeps.
+
+Gates: `uv run pytest` **727 passed** (was 717; 10 new — 5 tests, one of them
+parametrised over the 6 timeframes) · vitest **346 passed** (unchanged) · tsc 0
+· vite build 0. `journal verify` **PASS on both identities** against the live
+DB (read-only). `journal rebuild` **OK, 129 trades** — run against a `sqlite3
+.backup` snapshot of the live DB, not the live DB itself, because `journal
+live` and `journal serve` were both running against it and a test-plus-comments
+diff cannot affect rebuild anyway.
+
+Also closed while here: the OPEN QUESTION claiming `httpx` was missing from
+`pyproject.toml` — it is present in `[dependency-groups].dev` and the fresh
+worktree venv for this work was created by exactly the clean `uv sync` the
+question predicted would break, then ran all 727 tests including
+`test_storage_api.py`. Removed from the list below.
+
 **2026-08-12 — the browser and the server now refuse the same opens.** Closes
 the cleanup the entry directly below deliberately left out ("the frontend still
 gates its button on `staleEntryReason`'s 2 × timeframe while the server's window
@@ -871,18 +927,16 @@ The three worth a pointer, because they change how you work:
       matches its two neighbours. The code question is closed; the empirical
       one — does this bridge actually need it — is not, and may never be worth
       resolving now that the insurance is cheap and in place.
-- [ ] `tests/test_storage_api.py` imports httpx via `TestClient`, but httpx is
-      absent from `pyproject.toml`/`uv.lock` — a clean `uv sync` breaks the
-      whole web test suite. Pre-existing, found during the 2026-08-04
-      risk-auto-size review; fix on its own commit to `main`, not bundled
-      into a feature branch.
 - [ ] Funding-deal comments (`D-IDQRISGT-…`, `W-ALLINT-…`) are payment
       references, now committed to git. Zero analytical value. If this repo is
       ever pushed anywhere public, redact `comment` on funding deals only
       (`DEAL_TYPE_BALANCE/CREDIT/CHARGE/BONUS`) — never on trades, never on the
       correction. Already in history, so the cost of deciding rises with time.
 
-**Closed:** the 14.50 gap (archived deals — see CURRENT STATE) · standalone
+**Closed:** `httpx` missing from the dependencies (it is not — it is in
+`[dependency-groups].dev`; a clean `uv sync` into a fresh worktree venv ran the
+whole suite, `test_storage_api.py` included, 2026-08-12) · the 14.50 gap
+(archived deals — see CURRENT STATE) · standalone
 commission deals (none; MT5's report confirms `commission = 0.00`) ·
 `BTCUSDc`/`EURUSDc` specs (M1 `symbol_specs`: tick_value 0.1 / 0.01 / 1.0 —
 genuinely distinct, gold's transfer nowhere) · `MaxBars` (1,000,000 — doc §7) ·

@@ -9,6 +9,9 @@ export const TIMEFRAMES: Timeframe[] = ["M1", "M5", "M15", "H1", "H4", "D1"];
 export type Sym = "XAUUSDc" | "BTCUSDc" | "EURUSDc";
 export const SYMBOLS: Sym[] = ["XAUUSDc", "BTCUSDc", "EURUSDc"];
 
+// Mirrors `domain.resample._TF_MS` / `adapter.base.TIMEFRAMES`; a disagreement
+// puts every window computed here off the stored bar times. Pinned by
+// `tests/test_frontend_constants.py`.
 const MIN = 60_000;
 const TF_MS: Record<Timeframe, number> = {
   M1: 1 * MIN, M5: 5 * MIN, M15: 15 * MIN, H1: 60 * MIN, H4: 240 * MIN, D1: 1440 * MIN,
@@ -137,7 +140,8 @@ export function mergeForming(candles: Candle[], forming: Candle | null, interval
 // server owns these — it is what actually refuses the write. They are repeated
 // here because the button has to disarm BEFORE the click, and the numbers must
 // match or the two verdicts disagree: that disagreement is the whole bug this
-// pair of constants exists to close. Change one, change the other.
+// pair of constants exists to close. Change one, change the other —
+// `tests/test_frontend_constants.py` reads this file and fails if you don't.
 export const FEED_STALE_MS = 15_000;
 export const PRICE_REF_STOP_FRACTION = 0.25;
 

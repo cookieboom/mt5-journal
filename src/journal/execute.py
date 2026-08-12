@@ -34,6 +34,9 @@ from .store.db import now_ms
 # How old the evidence that the price feed is moving may be before an open is
 # refused. Matches `api.live_status_payload`'s own staleness window, so the dot
 # the human sees on `/live` and this refusal flip at the same moment.
+#
+# Mirrored in `frontend/src/lib/candles.ts` (the button has to disarm before the
+# click); `tests/test_frontend_constants.py` fails if the two drift.
 FEED_STALE_MS = 15_000
 
 # How far `price_ref` may sit from the price the server last saw, as a fraction
@@ -41,6 +44,7 @@ FEED_STALE_MS = 15_000
 # risk within 25% of the intended risk; loosen it and a frozen browser tab can
 # still stake a multiple of what the human read off the screen. Calibration
 # knob: raise it if normal tick-to-tick drift on a tight stop starts refusing.
+# Mirrored in `frontend/src/lib/candles.ts`, pinned by the same test as above.
 PRICE_REF_STOP_FRACTION = 0.25
 
 
