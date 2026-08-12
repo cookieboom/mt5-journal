@@ -35,10 +35,15 @@ One cycle does five jobs, in this order and for a reason:
      failure) — see step 2's note on why one beat is not enough across a long
      ingest.
 
-  4. **Execute one command.** If trading is on, claim the OLDEST pending command
-     and run it through the same gate the web used at enqueue time — the world
-     moves between enqueue and claim, so we re-validate. One command per cycle
-     keeps the sequence serial and auditable.
+  4. **Expire, then execute one command.** `expire_stale` first: a command that
+     has been queued longer than `STALE_PENDING_S` with nothing executing it is
+     refused unsent, because everything it was validated against (`price_ref`,
+     the stop distance, the feed-freshness verdict) was measured at enqueue time
+     and has a shelf life. That runs whether or not trading is on — with trading
+     off it is the only thing that ever clears the row. Then, if trading is on,
+     claim the OLDEST pending command and run it through the same gate the web
+     used at enqueue time — the world moves between enqueue and claim, so we
+     re-validate. One command per cycle keeps the sequence serial and auditable.
 
   5. **Fulfil one candle request.** Claim the OLDEST pending row in
      `candle_requests` (queued by the web, never sent there directly — see
@@ -79,8 +84,10 @@ from ..adapter.base import MT5Client, Position
 from ..domain.commands import CommandError, build_request
 from ..domain.symbols import to_base
 from ..execute import (
+    STALE_PENDING_S,
     account_balance,
     claim_next,
+    expire_stale,
     load_context,
     load_open_context,
     mark_sent,
@@ -390,7 +397,18 @@ def live_cycle(
         if on_close is not None:
             on_close(closed_ids)
 
-    # (6) one command per cycle.
+    # (6) refuse anything that has been queued too long, THEN execute one
+    # command. Ahead of the claim on purpose: a stale row must not be the one
+    # this cycle sends. Runs with `trading` off too — that is precisely the mode
+    # in which nothing else ever clears the row.
+    expired = expire_stale(conn, login)
+    if expired:
+        log.warning(
+            "live: %d queued command(s) expired unsent — older than %.0fs with "
+            "nothing executing them; re-queue from /live if still wanted",
+            expired, STALE_PENDING_S,
+        )
+
     command_id: int | None = None
     command_status: str | None = None
     if trading:
@@ -441,11 +459,11 @@ def _maybe_backup(conn: sqlite3.Connection, login: int, every_s: float, keep: in
     close. And it never propagates — a full disk is a bad backup, but a `journal
     live` that exits because of one is worse.
 
-    ponytail: a row that stays `pending` forever (a `--no-trading` run with
-    something queued) defers the snapshot for as long as it sits there. That
-    state already means no command is being executed at all, so a human is
-    looking at it; give the check a staleness escape hatch if that stops
-    being true.
+    A row that stays `pending` still defers the snapshot — but only until
+    `expire_stale` refuses it (`STALE_PENDING_S`, one cycle earlier than this
+    runs), so the deferral is now bounded by minutes instead of by however long
+    a human takes to notice. That bound is why this check needs no escape hatch
+    of its own.
     """
     path = conn.execute("PRAGMA database_list").fetchone()[2]
     if not path:                                   # :memory: — nothing to copy

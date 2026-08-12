@@ -47,6 +47,15 @@ FEED_STALE_MS = 15_000
 # Mirrored in `frontend/src/lib/candles.ts`, pinned by the same test as above.
 PRICE_REF_STOP_FRACTION = 0.25
 
+# How long a queued command may wait for an executor before `journal live`
+# refuses it instead of sending it. `journal live` claims within a cycle or two
+# (1–5 s), so anything approaching this means nothing was executing at all —
+# and by then every number the command was validated against is stale. Five
+# minutes is deliberately longer than a `journal live` restart, which is the one
+# routine reason a fresh row waits: a restart must not cost the human the
+# command they just queued. Calibration knob — see `expire_stale`.
+STALE_PENDING_S = 300.0
+
 
 def _position(conn: sqlite3.Connection, login: int, position_id: int) -> sqlite3.Row | None:
     return conn.execute(
@@ -360,6 +369,62 @@ def reject(conn: sqlite3.Connection, cmd_id: int, reason: str) -> None:
     conn.commit()
 
 
+def expire_stale(
+    conn: sqlite3.Connection, login: int, max_age_s: float = STALE_PENDING_S
+) -> int:
+    """Refuse `pending` commands nobody claimed in time. Returns how many.
+
+    A pending row is a promise the UI keeps making: `/live` shows it queued and
+    the human reads that as "the SL is on its way". Nothing here ever retracted
+    it. With `journal live` down — or up with `--no-trading` — the row simply sat
+    there, and the two ways that ends are both bad: the human walks away
+    believing a stop is attached to a real position, or `journal live` starts
+    hours later and sends an order whose `price_ref`, whose stop distance and
+    whose `_check_feed_fresh` verdict were all measured against a market that no
+    longer exists. `enqueue` validates ONCE, at queue time; that verdict has a
+    shelf life and this is it.
+
+    Only `pending`. `claimed`/`sent` belong to `recover_interrupted` and the
+    distinction is the whole point — a `sent` row may already exist at the
+    broker, so closing it out on a timer would invent an outcome for a real
+    order. A pending one provably never left.
+
+    Refusing is also what un-sticks the daily snapshot: `_maybe_backup` steps
+    aside for anything pending, so before this, one forgotten row deferred every
+    backup for as long as it sat there.
+    """
+    now = now_ms()
+    cutoff = now - int(max_age_s * 1000)
+    # Count first, write only if there is something to write. This runs every
+    # `journal live` cycle and the answer is almost always zero; an UPDATE that
+    # matches no rows still takes the WAL writer slot, and this project has
+    # twice paid for holding that slot for no reason (`deals.sync`,
+    # `candle_fill.fill_range`).
+    (stale,) = conn.execute(
+        "SELECT COUNT(*) FROM trade_commands "
+        "WHERE account_login = ? AND status = 'pending' AND requested_msc < ?",
+        (login, cutoff),
+    ).fetchone()
+    if not stale:
+        return 0
+
+    cur = conn.execute(
+        "UPDATE trade_commands SET status = 'rejected', completed_msc = ?, error = ? "
+        "WHERE account_login = ? AND status = 'pending' AND requested_msc < ?",
+        (
+            now,
+            f"kedaluwarsa — antre >{max_age_s / 60:.0f} menit tanpa ada yang "
+            f"mengirim (`journal live` mati, atau jalan dengan --no-trading). "
+            f"TIDAK dikirim: harga acuan dan jarak stop-nya sudah basi. "
+            f"Kirim ulang dari /live kalau masih mau.",
+            login,
+            cutoff,
+        ),
+    )
+    conn.commit()
+    return cur.rowcount
+
+
 def recover_interrupted(conn: sqlite3.Connection, login: int) -> int:
     """Deal with commands orphaned by a crash. Returns how many were closed out.
 
@@ -421,6 +486,7 @@ __all__ = [
     "claim_next",
     "enqueue",
     "enqueue_open",
+    "expire_stale",
     "get_command",
     "list_commands",
     "load_context",

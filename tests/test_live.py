@@ -26,7 +26,7 @@ from journal.execute import claim_next, enqueue, get_command
 from journal.ingest.candles import CandlesReport
 from journal.ingest.deals import SyncReport
 from journal.ingest.live import live_cycle, live_loop
-from journal.store.db import connect
+from journal.store.db import connect, now_ms
 
 _LOGIN = 1_000_001  # placeholder, never the real login (rule 10)
 _MSC_FLOOR = 10**12
@@ -310,6 +310,47 @@ def test_no_trading_leaves_pending_untouched(conn):
     assert client.checked == []
     assert get_command(conn, cmd_id)["status"] == "pending"
     assert r.command_id is None
+
+
+def _age_pending(conn, cmd_id, seconds):
+    conn.execute(
+        "UPDATE trade_commands SET requested_msc = ? WHERE id = ?",
+        (now_ms() - int(seconds * 1000), cmd_id),
+    )
+    conn.commit()
+
+
+def test_a_stale_pending_command_is_refused_not_sent(conn):
+    """`journal live` was down for an hour with a command queued. Sending it now
+    would put an order on the market against a price the human read an hour ago;
+    the row is refused instead, in the same cycle that would have claimed it."""
+    client = FakeLiveClient([[_pos(identifier=111)]])
+    live_cycle(client, conn, _LOGIN)
+    cmd_id = enqueue(conn, _LOGIN, "close", 111)
+    _age_pending(conn, cmd_id, 3600)
+
+    r = live_cycle(client, conn, _LOGIN)
+
+    assert client.sent == []               # never reached the broker
+    assert client.checked == []
+    row = get_command(conn, cmd_id)
+    assert row["status"] == "rejected"
+    assert row["retcode"] is None
+    assert r.command_id is None            # nothing left to claim this cycle
+
+
+def test_stale_commands_expire_even_with_trading_off(conn):
+    """The state that produced the ponytail note on `_maybe_backup`: with
+    trading off nothing claims, so without this the row sat pending forever —
+    and pending defers every daily snapshot for exactly as long."""
+    client = FakeLiveClient([[_pos(identifier=111)]])
+    live_cycle(client, conn, _LOGIN)
+    cmd_id = enqueue(conn, _LOGIN, "close", 111)
+    _age_pending(conn, cmd_id, 3600)
+
+    live_cycle(client, conn, _LOGIN, trading=False)
+
+    assert get_command(conn, cmd_id)["status"] == "rejected"
 
 
 def test_command_whose_position_vanished_is_rejected(conn, monkeypatch):

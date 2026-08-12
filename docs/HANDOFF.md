@@ -38,6 +38,50 @@ home each, and a second copy is a future lie. Point, never duplicate.
 
 **Last updated:** 2026-08-13
 
+**2026-08-13 — a queued command now has a shelf life
+(`execute.expire_stale`).** `journal status` learned this morning to *report* a
+`trade_commands` row queued with nothing running to send it. Nothing ever
+*retracted* one. A `pending` row is a promise the UI keeps making — `/live`
+shows it queued and the human reads that as "the SL is on its way" — and with
+`journal live` down, or up with `--no-trading`, it sat there indefinitely. Both
+ways that ends are bad:
+
+- the human walks away believing a stop is attached to a real position;
+- `journal live` starts hours later and **sends it**. `enqueue` validates once,
+  at queue time: `price_ref`, the stop distance the lot was derived from, and
+  `_check_feed_fresh`'s verdict were all measured against a market that no
+  longer exists. That verdict has a shelf life and now has an expiry to match.
+
+`expire_stale(conn, login, max_age_s=STALE_PENDING_S)` marks `pending` rows
+older than **300 s** `rejected`, with an error saying why and that nothing was
+sent. It runs in `live_cycle` step 6, **before** the claim — so a stale row can
+never be the one that cycle sends — and it runs with `trading` off too, that
+being the one mode in which nothing else ever clears the row. `retcode` stays
+NULL: the broker never saw it.
+
+Three boundaries worth keeping:
+
+- **`pending` only.** `claimed`/`sent` stay `recover_interrupted`'s, and the
+  distinction is the whole design: a `sent` row MAY already exist at the broker,
+  so closing it out on a timer — with no human reading the message — would
+  invent an outcome for a real order. A `pending` one provably never left.
+- **300 s is deliberately longer than a `journal live` restart**, which is the
+  one routine reason a fresh row waits. A restart must not cost the human the
+  command they just queued. Calibration knob on `STALE_PENDING_S`.
+- **Count before UPDATE.** This runs every cycle and the answer is almost always
+  zero; an UPDATE matching no rows still takes the WAL writer slot, and this
+  project has twice paid for holding that slot for nothing (`deals.sync`,
+  `candle_fill.fill_range`).
+
+Side effect, and the reason the `ponytail:` note on `_maybe_backup` is gone: a
+forgotten `pending` row used to defer **every daily snapshot** for as long as it
+sat there (the backup steps aside for anything pending). That deferral is now
+bounded by minutes instead of by how long a human takes to notice.
+
+No frontend change — `CommandsTable` already renders `rejected` and prints the
+`error` column, so the audit log explains itself. Gates: `uv run pytest`
+**800 passed, 1 skipped** (+6: 4 on `expire_stale`, 2 on the cycle wiring).
+
 **2026-08-13 — `journal restore`: the half of `backup` that runs on the worst
 day.** Seven snapshots are kept, `journal live` takes one daily — and nothing in
 this project read one back. So the procedure on the day it matters (corrupt

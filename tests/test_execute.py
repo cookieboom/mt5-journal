@@ -19,6 +19,7 @@ from journal.execute import (
     claim_next,
     enqueue,
     enqueue_open,
+    expire_stale,
     get_command,
     list_commands,
     load_open_context,
@@ -467,3 +468,60 @@ def test_load_open_context_builds_a_synthetic_position(conn):
     assert pos["direction"] == "buy"
     assert abs(pos["price_current"] - 4035.0) < 1e-9
     assert spec["symbol"] == "XAUUSDc"
+
+
+# ------------------------------------------------------------------- expiry
+
+
+def _age_pending(conn, cmd_id, seconds):
+    """Backdate a queued row's `requested_msc` — the only way to write the state
+    'this has been waiting for hours' without waiting for hours."""
+    conn.execute(
+        "UPDATE trade_commands SET requested_msc = ? WHERE id = ?",
+        (now_ms() - int(seconds * 1000), cmd_id),
+    )
+    conn.commit()
+
+
+def test_expire_stale_refuses_a_command_nobody_claimed(conn):
+    """The row the human believes is an SL in flight. Nothing was executing it
+    (`journal live` down, or `--no-trading`), so its `price_ref` and the market
+    it was validated against are both hours old: refusing is the only reading
+    that cannot send a stale order."""
+    cmd_id = enqueue(conn, _LOGIN, "modify_sltp", 111, sl=3300.0)
+    _age_pending(conn, cmd_id, 3600)
+
+    assert expire_stale(conn, _LOGIN) == 1
+    row = get_command(conn, cmd_id)
+    assert row["status"] == "rejected"
+    assert row["retcode"] is None          # never reached the broker
+    assert "kedaluwarsa" in row["error"]
+    assert claim_next(conn, _LOGIN) is None   # and not still work
+
+
+def test_expire_stale_leaves_a_fresh_command_alone(conn):
+    """`journal live` claims within a cycle or two; a restart takes longer than
+    that and must not cost the human the command they just queued."""
+    cmd_id = enqueue(conn, _LOGIN, "close", 111)
+    assert expire_stale(conn, _LOGIN) == 0
+    assert get_command(conn, cmd_id)["status"] == "pending"
+
+
+def test_expire_stale_never_touches_a_claimed_or_sent_row(conn):
+    """Those are `recover_interrupted`'s, and the distinction is the whole
+    point: a `sent` row MAY exist at the broker, so closing it out here — on a
+    timer, with no human reading the message — would invent an outcome for a
+    real order."""
+    enqueue(conn, _LOGIN, "close", 111)
+    claimed = claim_next(conn, _LOGIN)
+    _age_pending(conn, claimed["id"], 86_400)
+
+    assert expire_stale(conn, _LOGIN) == 0
+    assert get_command(conn, claimed["id"])["status"] == "claimed"
+
+
+def test_expire_stale_is_scoped_to_the_account(conn):
+    cmd_id = enqueue(conn, _LOGIN, "close", 111)
+    _age_pending(conn, cmd_id, 3600)
+    assert expire_stale(conn, _LOGIN + 1) == 0
+    assert get_command(conn, cmd_id)["status"] == "pending"
