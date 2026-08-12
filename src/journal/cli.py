@@ -940,6 +940,8 @@ def serve(
 
     import uvicorn
 
+    from .web.app import stale_dist_reason
+
     # watchfiles is what makes uvicorn's --reload-include actually fire; without
     # it the flag is a no-op that only prints a warning. Detect it so the .html
     # promise is honest and we never emit that warning (no new hard dependency —
@@ -951,6 +953,13 @@ def serve(
     if reload:
         watched = ".py/.html" if has_watchfiles else ".py only (install `uvicorn[standard]` for .html)"
         typer.echo(f"reload: ON — watching {watched} (dev only).")
+    # The SPA is served from disk and never built here: say so BEFORE uvicorn
+    # takes the terminal, or the human debugs Python for a bundle that predates
+    # it. Warning only — an old bundle is still a working dashboard.
+    stale = stale_dist_reason()
+    if stale:
+        typer.echo(f"WARNING: {stale} — run `npm --prefix frontend run build` "
+                   f"and reload the page.", err=True)
     typer.echo("Ctrl+C to stop.")
     # Only pass reload_includes when watchfiles can honour it — otherwise uvicorn
     # warns "no effect unless watchfiles is installed".

@@ -38,6 +38,41 @@ home each, and a second copy is a future lie. Point, never duplicate.
 
 **Last updated:** 2026-08-13
 
+**2026-08-13 — `journal serve` now says when it is serving a stale bundle, and
+it was serving one.** The SPA is read off disk (`frontend/dist`, gitignored) and
+nothing in this project builds it. So a merged frontend fix lands in `main`,
+`pytest`/`vitest` are green, the page renders — and the browser keeps running
+the old JavaScript until someone remembers `npm --prefix frontend run build`.
+There is no symptom other than "the fix did not work", which is why the debugging
+starts on the Python side. It has cost this project twice already (the `POST 405`
+against a route the bundle predated; the replay-anchor session).
+
+It was true again while writing this: `stale_dist_reason` was pointed at the real
+checkout and answered `frontend/dist is 1 file(s) behind the source (newest:
+src/lib/candles.ts)` — i.e. the running dashboard did **not** have the
+2026-08-12 browser/server parity fix (`29afa88`) it was merged and pushed with.
+`frontend/dist` has been rebuilt as part of this change; a running `journal
+serve` picks that up on reload, no restart needed.
+
+`web.app.stale_dist_reason(frontend=None) -> str | None` compares
+`dist/index.html`'s mtime against `frontend/src/**` plus the four root build
+inputs (`index.html`, `package.json`, `vite.config.ts`, `tailwind.config.js`),
+and `cli.serve` prints it to stderr **before** uvicorn takes the terminal.
+Three choices worth keeping:
+
+- **Warning, never a refusal.** An old bundle is still a working dashboard, and
+  a `serve` that refuses to start because npm was not run is worse than the bug.
+- **mtimes, not hashes or a build-info file.** The check has to be cheaper than
+  the mistake. The known miss is a clock-skewed or freshly-checked-out tree
+  reading as fresh; the cost of that miss is the warning, never correctness.
+- **`*.test.*` is excluded.** vitest files never reach the bundle, and a guard
+  that nags after every frontend test edit is a guard that gets ignored.
+
+Gates: `uv run pytest` **754 passed, 1 skipped in 37.17 s** (was 748; +6 new, all
+mtime cases built in `tmp_path` — fresh, missing, one behind, newest-of-many,
+a root build input, and the test-file exclusion). Frontend sources untouched;
+`dist` rebuilt from them.
+
 **2026-08-13 — `journal live` now takes the backup nobody remembers to take.**
 `journal backup` (below) made a correct snapshot *possible* a day earlier. It
 did not make one *happen*: it is a foreground command a human types. This file

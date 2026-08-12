@@ -51,6 +51,43 @@ _CACHE_DIR = "cache"
 # cutover); absent until `npm --prefix frontend run build` has run.
 _FRONTEND_DIST = _HERE.parent.parent.parent / "frontend" / "dist"
 
+# Files whose edits change the bundle. `src/**` plus the four build inputs that
+# live at the frontend root. Test files are excluded: they never reach the
+# bundle, so a vitest-only edit must not nag about rebuilding.
+_BUILD_INPUTS = ("index.html", "package.json", "vite.config.ts", "tailwind.config.js")
+
+
+def stale_dist_reason(frontend: Path | None = None) -> str | None:
+    """Why the served bundle is not the source tree — or `None` when it is.
+
+    `journal serve` mounts `frontend/dist` from DISK and never builds it, so a
+    forgotten `npm run build` serves yesterday's JavaScript against today's
+    Python. Nothing shows this in the browser: the page renders, the API answers,
+    and the only symptom is a fix that "did not work". It has bitten this project
+    twice — a POST that 405'd against a route the bundle predated, and the
+    2026-08-12 browser/server parity fix sitting unbuilt on disk.
+
+    mtime comparison, no hashes and no build-info file: the check has to be
+    cheaper than the mistake, and `dist/index.html` is rewritten by every Vite
+    build. Clock-skewed checkouts can therefore give a false "fresh" — a git
+    checkout that restores an OLD source file with a NEW mtime is the same class
+    of miss, and both cost only the warning, never correctness.
+    """
+    root = frontend or _FRONTEND_DIST.parent
+    built = root / "dist" / "index.html"
+    if not built.is_file():
+        return "frontend/dist is missing"
+    cutoff = built.stat().st_mtime
+    sources = [p for p in root.glob("src/**/*")
+               if p.is_file() and ".test." not in p.name]
+    sources += [root / name for name in _BUILD_INPUTS]
+    newer = sorted((p for p in sources if p.is_file() and p.stat().st_mtime > cutoff),
+                   key=lambda p: p.stat().st_mtime, reverse=True)
+    if not newer:
+        return None
+    return (f"frontend/dist is {len(newer)} file(s) behind the source "
+            f"(newest: {newer[0].relative_to(root)})")
+
 
 def create_app(db_path: str | None = None, cache_dir: str | None = None) -> FastAPI:
     """Build the app. `db_path` falls back to the `JOURNAL_DB` env var, then the
