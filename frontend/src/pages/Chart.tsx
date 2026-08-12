@@ -103,7 +103,7 @@ export default function Chart() {
   // Realtime forming bar — normal mode only (never in replay/training, which is
   // historical). enabled flips the watch + poll off the instant replay opens.
   const liveEnabled = !replayOpen && !configOpen;
-  const { forming, live: feedLive } = useLiveForming(symbol, tf, liveEnabled);
+  const { forming, live: feedLive, formingUpdatedMs } = useLiveForming(symbol, tf, liveEnabled);
 
   const setSelection = (next: { symbol?: Sym; tf?: Timeframe }) => {
     const p = new URLSearchParams(params);
@@ -269,13 +269,23 @@ export default function Chart() {
   // Live only. Recomputed on every 5s poll, which is what makes the clock read
   // here honest: a dead web server freezes this value, but it also makes the
   // open request itself unsendable, so nothing gets through on a frozen gate.
+  // `priceRef` is `plannedEntry` on purpose — the exact number POST /api/live/open
+  // will be sized from — compared against the poll's own close. Equal in the
+  // normal case (the shown bar IS the forming bar); they only part when
+  // `mergeForming` refused to append, which is the stalled-fetch case the
+  // server's guard names and the browser used to sail straight through.
   const entryBlocked = replayOpen
     ? null
-    : staleEntryReason(
+    : staleEntryReason({
         feedLive,
-        shownCandles.length ? shownCandles[shownCandles.length - 1].time_msc : null,
-        timeframeMs(tf), Date.now(),
-      );
+        entryBarMs: shownCandles.length ? shownCandles[shownCandles.length - 1].time_msc : null,
+        intervalMs: timeframeMs(tf),
+        nowMs: Date.now(),
+        formingUpdatedMs,
+        formingClose: forming?.c ?? null,
+        priceRef: plannedEntry,
+        sl: plannedSl,
+      });
   const sizing = useRiskSizing({
     symbol, entry: plannedEntry, sl: plannedSl, tp: plannedTp,
   });

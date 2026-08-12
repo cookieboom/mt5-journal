@@ -133,35 +133,84 @@ export function mergeForming(candles: Candle[], forming: Candle | null, interval
   return candles;
 }
 
+// Mirrors of `execute.FEED_STALE_MS` / `execute.PRICE_REF_STOP_FRACTION`. The
+// server owns these — it is what actually refuses the write. They are repeated
+// here because the button has to disarm BEFORE the click, and the numbers must
+// match or the two verdicts disagree: that disagreement is the whole bug this
+// pair of constants exists to close. Change one, change the other.
+export const FEED_STALE_MS = 15_000;
+export const PRICE_REF_STOP_FRACTION = 0.25;
+
 // Is the price an order would be SIZED against fresh enough to commit to?
 //
 // The order's volume is frozen at enqueue (execute.enqueue_open), and the
 // executor's re-validation only catches a stop that has ended up on the wrong
 // SIDE — not a size that no longer matches the budget. So a reference price the
 // market has left produces a real, silently wrong lot, bounded only by the 5%
-// ceiling. Two independent ways it goes bad, both checked here:
-//   - `journal live` is not running (cold heartbeat), so nothing is updating;
-//   - it IS running but the feed has stopped advancing — a lapsed watch, or a
-//     closed market. The heartbeat alone says nothing about that.
-// Returns the reason to show the human, or null when it is safe to size.
+// ceiling. Returns the reason to show the human, or null when it is safe.
 //
-// `entryBarMs` is the bar the ENTRY PRICE is read off — the last bar actually
-// shown — not the forming bar from the poll. The two diverge exactly when it
-// matters: `mergeForming` refuses to append a forming bar more than one
-// interval ahead of the history, so a stalled candle fetch leaves an old bar on
-// screen while the poll keeps reporting a current one.
+// This is the browser half of `execute._check_feed_fresh`, and it checks the
+// same four things in the same order, because anything it lets through the
+// server refuses with a 400 the human cannot act on from a chart that still
+// looks alive:
+//   1. `journal live` is not beating at all (`feedLive`);
+//   2. it beats, but nobody is refreshing THIS symbol's forming row
+//      (`formingUpdatedMs`) — a lapsed watch, or the bridge gone blind;
+//   3. the feed is fine but the price the lot is sized from is not the one the
+//      server sees (`priceRef` vs `formingClose`);
+//   4. the shown bar has simply stopped advancing (the original 2× timeframe
+//      backstop, which needs nothing from the poll and so still applies when
+//      the poll has not answered).
+//
+// `entryBarMs`/`priceRef` are the bar the ENTRY PRICE is read off — the last
+// bar actually shown — not the forming bar from the poll. The two diverge
+// exactly when it matters: `mergeForming` refuses to append a forming bar more
+// than one interval ahead of the history, so a stalled candle fetch leaves an
+// old bar on screen, and being sized off, while the poll keeps reporting a
+// current one. Check 3 is the only thing that sees that.
 //
 // `feedLive` is tri-state: true/false are the server's heartbeat verdict, `null`
 // means the chart is not polling it at all (replay/config drawer open, or the
 // first poll has not answered yet). Unknown still blocks — but it must not
 // accuse the daemon, which is what it used to do while the liveness badge, read
 // off the same heartbeat, said `live · 1s`.
-export function staleEntryReason(
-  feedLive: boolean | null, entryBarMs: number | null, intervalMs: number, nowMs: number,
-): string | null {
+//
+// The poll-derived fields are optional: before the first response there is
+// nothing to compare, and `feedLive === null` has already blocked by then.
+export function staleEntryReason(a: {
+  feedLive: boolean | null;
+  entryBarMs: number | null;
+  intervalMs: number;
+  nowMs: number;
+  // `updated_msc` of the forming row — when the SERVER last refreshed it, which
+  // is not when the price last moved. A quiet bucket is restamped by
+  // `live_store.touch_forming` precisely so it does not read as a dead feed.
+  formingUpdatedMs?: number | null;
+  formingClose?: number | null;
+  priceRef?: number | null;
+  sl?: number | null;
+}): string | null {
+  const { feedLive, entryBarMs, intervalMs, nowMs } = a;
   if (feedLive === null) return "Status feed belum diketahui — chart belum polling harga live.";
   if (!feedLive) return "`journal live` tidak berjalan — harga acuan tidak segar.";
   if (entryBarMs === null) return "Belum ada bar sebagai harga acuan.";
+
+  if (a.formingUpdatedMs != null && nowMs - a.formingUpdatedMs >= FEED_STALE_MS) {
+    const age = Math.round((nowMs - a.formingUpdatedMs) / 1000);
+    return `Feed beku — bar berjalan terakhir diperbarui ${age}s lalu.`;
+  }
+
+  // The lot is `risk / stop distance`, so the same drift matters in proportion
+  // to that distance: 0.5 off a 5.0 stop is a tenth of the intended risk, off a
+  // 0.5 stop it is all of it. No stop means no lot at all, so nothing to guard.
+  if (a.priceRef != null && a.formingClose != null && a.sl != null) {
+    const tolerance = Math.abs(a.priceRef - a.sl) * PRICE_REF_STOP_FRACTION;
+    if (Math.abs(a.priceRef - a.formingClose) > tolerance) {
+      return `Harga acuan ${a.priceRef} tidak cocok dengan harga terakhir yang `
+        + `dilihat server (${a.formingClose}) — chart tertinggal, muat ulang halaman.`;
+    }
+  }
+
   if (nowMs - entryBarMs > 2 * intervalMs) {
     return "Harga acuan basi — bar terakhir lebih tua dari 2× timeframe.";
   }

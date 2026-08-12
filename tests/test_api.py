@@ -432,6 +432,35 @@ def test_live_candle_payload_null_when_no_forming(conn):
     from journal.web import api
     p = api.live_candle_payload(conn, "XAUUSDc", "M5", now_msc=1_700_000_000_000)
     assert p["forming"] is None and p["live"] is False
+    assert p["forming_updated_msc"] is None
+
+
+def test_live_candle_payload_carries_the_forming_refresh_stamp(conn):
+    """The browser gates its open button on the same feed freshness the server
+    enforces in `execute._check_feed_fresh`, and it cannot without this stamp.
+
+    A frozen feed leaves `forming` byte-identical poll after poll — same
+    `time_msc`, same prices — so nothing in the bar itself ever reads as stale.
+    `updated_msc` is the only field that separates "this bucket is quiet" from
+    "nobody is refreshing this symbol", which is exactly the distinction
+    `touch_forming` exists to record.
+    """
+    from journal.web import api
+    from journal.store import live_store as ls
+    from journal.adapter.base import Candle
+    ls.beat(conn, 1_700_000_000_000)
+    ls.upsert_forming(conn, "XAUUSDc", "M5",
+                      Candle(time_msc=1_700_000_040_000, open=1, high=2, low=0.5,
+                             close=1.5, tick_volume=9, spread=2, real_volume=0),
+                      1_700_000_041_000)
+    p = api.live_candle_payload(conn, "XAUUSDc", "M5", now_msc=1_700_000_043_000)
+    assert p["forming_updated_msc"] == 1_700_000_041_000
+    # A quiet bucket restamps without moving a price — the payload must follow,
+    # or the browser would refuse every open on a healthy but quiet session.
+    ls.touch_forming(conn, "XAUUSDc", "M5", 1_700_000_050_000)
+    p = api.live_candle_payload(conn, "XAUUSDc", "M5", now_msc=1_700_000_051_000)
+    assert p["forming_updated_msc"] == 1_700_000_050_000
+    assert p["forming"]["c"] == 1.5
 
 
 def test_live_candle_payload_returns_forming_and_liveness(conn):

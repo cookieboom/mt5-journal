@@ -105,7 +105,14 @@ def live_status_payload(
 
 def live_candle_payload(conn: sqlite3.Connection, symbol: str, timeframe: str, *,
                         now_msc: int | None = None) -> dict:
-    """The forming bar (or None) plus liveness — the FE poll for a live chart."""
+    """The forming bar (or None) plus liveness — the FE poll for a live chart.
+
+    `forming_updated_msc` is when the row was last refreshed, not when the price
+    last moved. The browser needs it to gate its open button on the same feed
+    freshness `execute._check_feed_fresh` enforces before writing the order: a
+    frozen feed returns a byte-identical `forming` forever, so nothing else in
+    this payload can tell "quiet bucket" from "nobody is serving this symbol".
+    """
     from ..store import live_store
 
     status = live_status_payload(conn, now_msc=now_msc)
@@ -114,7 +121,12 @@ def live_candle_payload(conn: sqlite3.Connection, symbol: str, timeframe: str, *
         "time_msc": c.time_msc, "o": c.open, "h": c.high, "l": c.low,
         "c": c.close, "v": c.tick_volume,
     }
-    return {"forming": forming, "beat_msc": status["beat_msc"], "live": status["live"]}
+    return {
+        "forming": forming,
+        "forming_updated_msc": live_store.forming_updated_msc(conn, symbol, timeframe),
+        "beat_msc": status["beat_msc"],
+        "live": status["live"],
+    }
 
 
 def commands_payload(conn: sqlite3.Connection) -> dict:

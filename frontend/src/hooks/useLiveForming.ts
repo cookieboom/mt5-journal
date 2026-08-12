@@ -28,5 +28,9 @@ export function useLiveForming(symbol: string, tf: Timeframe, enabled: boolean) 
   // `null` = nothing to say about the feed: not polling, or the first poll is
   // still in flight. Only a real response makes this a verdict about the daemon.
   const live = enabled && data ? data.live : null;
-  return { forming, live };
+  // Same `null` rule, and for the same reason: absent is not "stale". Read by
+  // `staleEntryReason` to disarm the open button on a feed the server would
+  // refuse — a frozen row keeps `forming` identical, so only this moves.
+  const formingUpdatedMs = enabled && data ? data.forming_updated_msc : null;
+  return { forming, live, formingUpdatedMs };
 }

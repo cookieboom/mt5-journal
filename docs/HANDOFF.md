@@ -38,6 +38,52 @@ home each, and a second copy is a future lie. Point, never duplicate.
 
 **Last updated:** 2026-08-12
 
+**2026-08-12 — the browser and the server now refuse the same opens.** Closes
+the cleanup the entry directly below deliberately left out ("the frontend still
+gates its button on `staleEntryReason`'s 2 × timeframe while the server's window
+is 15 s"). The two rules were never the same rule: `_check_feed_fresh` makes
+three checks, `staleEntryReason` mirrored one. So the button armed, the human
+clicked, and the open came back 400 from a chart that still looked alive.
+
+Both missing checks are now made in the browser, on the same windows and the
+same numbers:
+
+- **The forming row has stopped being refreshed.** The bar itself cannot show
+  this — a frozen feed reports the current bucket, unchanged, forever — so
+  `live_candle_payload` now carries `forming_updated_msc` (new
+  `live_store.forming_updated_msc`; `read_forming`'s signature is untouched, it
+  has six callers). `staleEntryReason` reads it against `FEED_STALE_MS`. It is
+  the stamp, never the prices: `touch_forming` restamps a quiet bucket without
+  moving one, and reading prices here would resurrect exactly the bug the
+  2026-08-12 entry below fixed.
+- **The sized price did not come from the feed.** The browser already held both
+  numbers and never compared them: `plannedEntry` (what POST `/api/live/open`
+  sizes from) is `shownCandles.last.c`, while the poll's `forming.c` is what the
+  server sees. They are equal in the normal case and part exactly when
+  `mergeForming` refuses to append a bar more than one interval ahead — the
+  stalled-`/api/candles` case the server's docstring names. Same
+  `PRICE_REF_STOP_FRACTION` (0.25 of the stop distance, not an absolute price
+  gap).
+
+Why the browser and not a server round trip: `/api/size` is posted on every
+drag and its `error` already disarms the button, so routing the checks through
+it looked lazier — but a frozen feed stops `entry` changing, so no new sizing
+call fires and the last `error: null` stands. The client check re-evaluates on
+every 5 s poll (`useApi` sets a fresh object each time), which is the only place
+that reads a clock that keeps moving. `/api/size` is also the replay sizing
+path; feed checks must never reach it.
+
+`FEED_STALE_MS` and `PRICE_REF_STOP_FRACTION` are therefore duplicated into
+`lib/candles.ts`. That is the design the server docstring already assumed
+("`lib/candles.staleEntryReason` gates the button in the browser on the same
+facts"), now actually true. Change one, change the other.
+
+Gates: `uv run pytest` **717 passed** (1 new in `test_api.py`, plus a new
+assertion on the existing null case), vitest **346 passed** (7 new, all written
+failing first), tsc 0, vite build 0, `journal rebuild` OK. **Untested in the browser** — the two new branches need a real
+frozen feed or a wedged candle fetch to reach. `frontend/dist` is gitignored, so
+`npx vite build` must be re-run in the main checkout for this to reach the page.
+
 **2026-08-12 — review fixes on the stale-feed guard. MERGED to `main` and
 pushed.** The 2026-08-11 guard below was reviewed and had two real defects; both
 are fixed here.
@@ -73,10 +119,11 @@ stop distance the tolerance is measured against is already known to be real.
 `(updated_msc, close)` from one row so the stamp and the price can never be
 paired across different bars.
 
-Not changed: the frontend still gates its button on `staleEntryReason`'s
-2 × timeframe while the server's window is 15 s, so a wedged tab can still show
-an armed button and get a 400. That 400 now says exactly what to do. Unifying
-the two windows is a real cleanup, deliberately left out of this fix.
+Not changed *in this fix*: the frontend still gates its button on
+`staleEntryReason`'s 2 × timeframe while the server's window is 15 s, so a
+wedged tab can still show an armed button and get a 400. That 400 now says
+exactly what to do. Unifying the two windows is a real cleanup, deliberately
+left out here — **and done in the entry above, later the same day.**
 
 **2026-08-12 — that frontend defect is now FIXED** (see the paragraph directly
 below for what it was). `useLiveForming` returns `live: boolean | null`, `null`

@@ -44,32 +44,102 @@ describe("mergeForming", () => {
 // market has already invalidated. See docs/HANDOFF.md, OPEN QUESTION.
 describe("staleEntryReason", () => {
   const TF = 60_000;   // M1
+  // The minimum a live chart always knows. The feed-agreement fields below are
+  // optional on purpose: before the first poll answers there is nothing to
+  // compare, and the heartbeat branch has already blocked by then.
+  const base = { entryBarMs: 1_000_000, intervalMs: TF, nowMs: 1_030_000 };
   it("passes a live feed whose forming bar is current", () => {
-    expect(staleEntryReason(true, 1_000_000, TF, 1_030_000)).toBeNull();
+    expect(staleEntryReason({ ...base, feedLive: true })).toBeNull();
   });
   it("blocks when the journal live heartbeat is cold", () => {
-    expect(staleEntryReason(false, 1_000_000, TF, 1_030_000)).toMatch(/journal live/);
+    expect(staleEntryReason({ ...base, feedLive: false })).toMatch(/journal live/);
   });
   // null = the chart is not polling (replay/config drawer open, or the first
   // poll has not answered yet). It still blocks, but it must NOT claim the
   // daemon is dead — that is the bug the browser pass caught, with the badge
   // reading `live · 1s` next to it.
   it("blocks without accusing journal live when liveness is unknown", () => {
-    const msg = staleEntryReason(null, 1_000_000, TF, 1_030_000);
+    const msg = staleEntryReason({ ...base, feedLive: null });
     expect(msg).not.toBeNull();
     expect(msg).not.toMatch(/journal live/);
   });
   it("blocks when there is no bar to read a price off at all", () => {
-    expect(staleEntryReason(true, null, TF, 1_030_000)).not.toBeNull();
+    expect(staleEntryReason({ ...base, feedLive: true, entryBarMs: null })).not.toBeNull();
   });
   // The daemon can beat while the bar on screen stops advancing: a lapsed
   // watch, a closed market, or a candle fetch that stalled while the poll kept
   // running. The heartbeat alone would not catch any of them.
   it("blocks when the shown bar has not advanced for two intervals", () => {
-    expect(staleEntryReason(true, 1_000_000, TF, 1_000_000 + 2 * TF + 1))
+    expect(staleEntryReason({ ...base, feedLive: true, nowMs: 1_000_000 + 2 * TF + 1 }))
       .toMatch(/basi/i);
   });
   it("allows exactly two intervals — only older than that is stale", () => {
-    expect(staleEntryReason(true, 1_000_000, TF, 1_000_000 + 2 * TF)).toBeNull();
+    expect(staleEntryReason({ ...base, feedLive: true, nowMs: 1_000_000 + 2 * TF }))
+      .toBeNull();
+  });
+
+  // --- parity with the server guard (`execute._check_feed_fresh`) ------------
+  // Everything above is what the browser could check on its own. These two are
+  // the checks the server ALSO makes, and used to make alone: the button armed,
+  // the human clicked, and the open came back 400. Same windows, same numbers.
+
+  // Server check 2: an actively watched forming bar that has not been
+  // refreshed inside FEED_STALE_MS. The bar's own `time_msc` cannot show this
+  // — a frozen feed keeps reporting the current bucket, unchanged, forever.
+  it("blocks when the forming row has not been refreshed inside the server window", () => {
+    const msg = staleEntryReason({
+      ...base, feedLive: true, formingUpdatedMs: 1_030_000 - 15_000,
+    });
+    expect(msg).toMatch(/beku/i);
+  });
+  it("allows a forming row refreshed just inside the window", () => {
+    expect(staleEntryReason({
+      ...base, feedLive: true, formingUpdatedMs: 1_030_000 - 14_999,
+    })).toBeNull();
+  });
+  // A quiet bucket is restamped by `touch_forming` without any price moving,
+  // so freshness must be read off the stamp only — never off the prices.
+  it("does not treat a quiet but restamped feed as frozen", () => {
+    expect(staleEntryReason({
+      ...base, feedLive: true, formingUpdatedMs: 1_030_000,
+      formingClose: 4035, priceRef: 4035, sl: 4030,
+    })).toBeNull();
+  });
+
+  // Server check 3: the poll is fresh, but the price the lot is SIZED from is
+  // not the one the server sees. This is the wedged-`/api/candles` case —
+  // `mergeForming` refuses to append a forming bar more than one interval
+  // ahead, so the panel keeps sizing off the last bar it managed to fetch
+  // while the poll happily reports a current one.
+  it("blocks when the sized price has drifted past a quarter of the stop distance", () => {
+    // stop distance 5.0 -> tolerance 1.25; the shown bar is 2.0 behind.
+    const msg = staleEntryReason({
+      ...base, feedLive: true, formingUpdatedMs: 1_030_000,
+      formingClose: 4037, priceRef: 4035, sl: 4030,
+    });
+    expect(msg).toMatch(/muat ulang/i);
+  });
+  it("allows drift inside the tolerance", () => {
+    expect(staleEntryReason({
+      ...base, feedLive: true, formingUpdatedMs: 1_030_000,
+      formingClose: 4036, priceRef: 4035, sl: 4030,
+    })).toBeNull();
+  });
+  // The same absolute drift is harmless against a wide stop and total against a
+  // tight one, which is why the tolerance is a fraction of the distance and not
+  // a fixed number of price units.
+  it("scales the tolerance with the stop distance, not with the price", () => {
+    const drift = { formingClose: 4035.6, priceRef: 4035, formingUpdatedMs: 1_030_000 };
+    expect(staleEntryReason({ ...base, feedLive: true, ...drift, sl: 4030 })).toBeNull();
+    expect(staleEntryReason({ ...base, feedLive: true, ...drift, sl: 4034 }))
+      .toMatch(/muat ulang/i);
+  });
+  // No stop, no lot: `useRiskSizing` returns nothing and the button is already
+  // dead, so there is no tolerance to compute and nothing to refuse.
+  it("skips the price comparison when there is no stop yet", () => {
+    expect(staleEntryReason({
+      ...base, feedLive: true, formingUpdatedMs: 1_030_000,
+      formingClose: 9999, priceRef: 4035, sl: null,
+    })).toBeNull();
   });
 });

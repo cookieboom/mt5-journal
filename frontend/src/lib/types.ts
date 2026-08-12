@@ -234,7 +234,16 @@ export interface PriceLineSpec {
 export type LiveStatus = { live: boolean; beat_msc: number | null; age_ms: number | null };
 
 // /api/candles/live response — the single realtime forming bar for a symbol+tf.
-export type LiveCandle = { forming: Candle | null; beat_msc: number | null; live: boolean };
+// `forming_updated_msc` is when the SERVER last refreshed the forming row, not
+// when the price last moved — a quiet bucket is restamped without any OHLC
+// changing. It is what `staleEntryReason` reads to tell a quiet feed from a
+// dead one, on the same 15 s window the server's own open guard uses.
+export type LiveCandle = {
+  forming: Candle | null;
+  forming_updated_msc: number | null;
+  beat_msc: number | null;
+  live: boolean;
+};
 
 // Server-derived sizing. `error` non-null always means `volume` is null: the
 // server never returns a number the confirm step would then refuse.

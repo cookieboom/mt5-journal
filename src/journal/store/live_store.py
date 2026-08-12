@@ -118,6 +118,25 @@ def newest_forming(
     return None if row is None else (int(row["updated_msc"]), float(row["close"]))
 
 
+def forming_updated_msc(conn: sqlite3.Connection, symbol: str,
+                        timeframe: str) -> int | None:
+    """When `serve_watches` last refreshed this exact forming row, or None.
+
+    `newest_forming` above answers the same question for the OPEN guard, where
+    "actively watched" has to be proven and the timeframe is whatever the chart
+    happened to pick. Here the caller already names the timeframe and is itself
+    the watcher — `useLiveForming` re-upserts the watch every 12 s — so the join
+    would only be able to hide a lapsed watch, and a lapsed watch means the
+    prices on screen have genuinely stopped moving. Reading the row plainly is
+    both simpler and the safer direction.
+    """
+    r = conn.execute(
+        "SELECT updated_msc FROM live_candles WHERE symbol = ? AND timeframe = ?",
+        (symbol, timeframe),
+    ).fetchone()
+    return None if r is None else int(r["updated_msc"])
+
+
 def read_forming(conn: sqlite3.Connection, symbol: str, timeframe: str) -> Candle | None:
     r = conn.execute(
         "SELECT time_msc, open, high, low, close, tick_volume, spread, real_volume "
