@@ -2494,8 +2494,10 @@ git commit -m "feat(drawings): wire editable drawings into /chart and read-only 
 
 ## PENDING HUMAN
 
-**Status 2026-08-12: 7 of 8 run in a real browser and PASSED; item 4 is the
-only one left.** The pass was driven through Chrome against the running
+**Status 2026-08-12: all 8 PASS — this checklist is closed.** Items 1–3 and
+5–8 were run through Chrome (details below); item 4 needed a real open
+position and was confirmed by the human on the live account the same day.
+The automated part was driven through Chrome against the running
 `journal serve` + `journal live` on `main` (`3afbb03`), on `XAUUSDc`, and every
 result was cross-checked against the persisted blob (`GET /api/drawings`,
 `app_prefs`) rather than eyeballed. Test drawings were cleared afterwards via
@@ -2510,12 +2512,12 @@ the palette's own clear button; no order was placed at any point.
    4 → 3 items). Note for whoever runs this next: a rect is **hollow**, so
    "drag the body" means grabbing an *edge* away from the corners — a press
    inside the fill pans the chart, which is correct but reads as a dead drag.
-4. **NOT RUN — needs a real open position.** There was none open, and opening
-   one is a live trade, so it was left alone. What *was* verified is the part
-   the item is actually protecting: with a **planned** SL typed to exactly the
-   hline's price (4404.95), dragging that line moved SL to 4411.89 and left the
-   drawing untouched and unselected — the hit-test precedence holds. The
-   untested remainder is the live modify/commit path only.
+4. **PASS — confirmed by the human on a real open position, 2026-08-12.** The
+   automated pass could not run this one (no position was open, and opening one
+   is a live trade), so it verified only the hit-test half: with a **planned**
+   SL typed to exactly the hline's price (4404.95), dragging that line moved SL
+   to 4411.89 and left the drawing untouched and unselected. The human then ran
+   the live half themselves and confirmed it.
 5. **PASS** — measure gesture still works over an area with drawings on it
    (Δ +0.37%, 20 bars, frozen until Esc). Driven by dispatching the real
    pointer sequence in-page: two `pointerdown`s must land inside

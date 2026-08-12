@@ -103,17 +103,18 @@ restored) are in
 `.superpowers/sdd/2026-08-10-chart-drawing-tools/final-fix-report.md` on this
 worktree.
 
-**2026-08-12 — the browser pass ran: 7 of the 8 PENDING HUMAN items PASS.**
-Driven through Chrome against `journal serve` + `journal live` on `main`
-(`3afbb03`), with every result cross-checked against the persisted blob
-(`GET /api/drawings`, `app_prefs`) instead of eyeballed. Item 6 included the
-IMPORTANT 1 case against a real `replay.start()` slowed to 6 s by patching
-`window.fetch`: the drawing made inside the pending window was discarded, the
-live key never moved. Only **item 4** is left — it needs a real open position,
-which was not opened; its hit-test half was verified with a *planned* SL
-dragged off a drawing at the identical price, so what remains untested is the
-live modify path alone. Per-item results are in the plan file's PENDING HUMAN
-section. (This feature was merged and pushed well before this pass — the
+**2026-08-12 — the browser pass ran and all 8 PENDING HUMAN items PASS; this
+feature is closed.** Items 1–3 and 5–8 were driven through Chrome against
+`journal serve` + `journal live` on `main` (`3afbb03`), with every result
+cross-checked against the persisted blob (`GET /api/drawings`, `app_prefs`)
+instead of eyeballed. Item 6 included the IMPORTANT 1 case against a real
+`replay.start()` slowed to 6 s by patching `window.fetch`: the drawing made
+inside the pending window was discarded, the live key never moved. Item 4
+needed a real open position — not something to open on the account for a test —
+so the automated pass covered only its hit-test half (a *planned* SL dragged
+off a drawing at the identical price); **the human ran the live half and
+confirmed it, 2026-08-12**. Per-item results are in the plan file's PENDING
+HUMAN section. (This feature was merged and pushed well before this pass — the
 earlier "Not merged to `main`" line here was stale.)
 
 Two unrelated observations from that pass, neither drawings-related, neither
