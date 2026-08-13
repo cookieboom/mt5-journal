@@ -204,17 +204,24 @@ def equity_curve(conn: sqlite3.Connection) -> dict:
     cases are handled by `_svg_geometry` without a ZeroDivisionError."""
     login = one_account_login(conn)
     rows = conn.execute(
-        "SELECT close_time_msc, net_profit, r_multiple FROM trades "
+        "SELECT position_id, symbol_base, close_time_msc, net_profit, r_multiple FROM trades "
         "WHERE account_login = ? AND status = 'closed' AND close_time_msc IS NOT NULL "
         "ORDER BY close_time_msc ASC",
         (login,),
     ).fetchall()
 
     equity_pts: list[tuple[int, float]] = []
+    series: list[dict] = []
     cum = 0.0
     for r in rows:
         cum += r["net_profit"] or 0.0  # a closed trade should have net; guard anyway
         equity_pts.append((r["close_time_msc"], cum))
+        # The point carries the trade it came from: the dashboard strip links on
+        # `position_id` (the detail route's key) and labels with `symbol_base`.
+        series.append({
+            "close_time_msc": r["close_time_msc"], "equity": cum,
+            "position_id": r["position_id"], "symbol_base": r["symbol_base"],
+        })
 
     r_pts: list[tuple[int, float]] = []
     cum_r = 0.0
@@ -226,7 +233,7 @@ def equity_curve(conn: sqlite3.Connection) -> dict:
     return {
         "n": len(equity_pts),
         "n_with_r": len(r_pts),
-        "series": [{"close_time_msc": t, "equity": e} for t, e in equity_pts],
+        "series": series,
         "equity_last": equity_pts[-1][1] if equity_pts else None,
         "r_last": r_pts[-1][1] if r_pts else None,
         "equity_svg": _svg_geometry(equity_pts),

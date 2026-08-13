@@ -413,6 +413,21 @@ def test_equity_curve_cumulative_last_equals_sum_and_r_sums_known(conn):
     assert eq["equity_svg"]["empty"] is False and eq["r_svg"]["empty"] is False
 
 
+def test_equity_curve_series_names_the_trade_it_came_from(conn):
+    # The dashboard strip reads this series; without an identity every row is a
+    # dead end (a time and a running total name no trade). `position_id` is the
+    # detail route's key — trades.id is never a URL (chart cache identity, M3).
+    _seed_account(conn)
+    _seed_trade(conn, 7, status="closed", close_time_msc=_ms(10, day=15),
+                net_profit=5.0, symbol="XAUUSDc")
+    _seed_trade(conn, 8, status="closed", close_time_msc=_ms(11, day=16),
+                net_profit=-2.0, symbol="BTCUSDc")
+    eq = views.equity_curve(conn)
+    assert [p["position_id"] for p in eq["series"]] == [7, 8]
+    # grouped identity, not the raw broker string (rule 11)
+    assert [p["symbol_base"] for p in eq["series"]] == ["XAUUSD", "BTCUSD"]
+
+
 def test_equity_curve_zero_trades_is_safe(conn):
     _seed_account(conn)  # account but no trades — must not divide by zero
     eq = views.equity_curve(conn)

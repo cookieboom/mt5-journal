@@ -38,6 +38,33 @@ home each, and a second copy is a future lie. Point, never duplicate.
 
 **Last updated:** 2026-08-14
 
+**2026-08-14 — the dashboard's last-trades strip stopped being a dead end
+(`worktree-dashboard-recent-links`).** "Trade terakhir" listed a close time and
+a running equity total: five rows naming no trade and clicking through to
+nothing, on the one page the journal opens to. The cause was upstream, in the
+payload — `equity_curve` built its point series as `{close_time_msc, equity}`
+and dropped the row it came from, so the component had nothing to link on.
+
+The same `SELECT` now also reads `position_id` and `symbol_base`, and the
+series carries them per point. `RecentTrades` gained a Simbol column whose
+`symbol_base` is a `Link` to `/trades/:position_id` — the detail route's key,
+never `trades.id` (that is the chart cache's identity, M3) — and the row key
+went from the array index to the position id. The link column also gives the
+strip an identity it never had: a time and a cumulative figure do not say
+whether you are looking at gold or bitcoin.
+
+Two notes. `symbol_base` and not `symbol`: rule 11, group and display by the
+normalised name. And the payload gained exactly the two fields the view uses —
+per-trade `net_profit` was drafted and dropped, since the panel deliberately
+shows the equity tape and an unread field is a future lie.
+
+Gates: `uv run pytest` **831 passed, 1 skipped** (+1: the series names its
+trade), `npm --prefix frontend test` **371 passed / 46 files** (+2, a new
+`RecentTrades.test.tsx` — every row links, and the empty state links to
+nothing), `tsc -b && vite build` clean, entry chunk unchanged at 171.76 KB.
+Against the live 62 MB store, read-only: `equity_curve` returns n=129 with a
+`position_id` on every point, all of them present in `trades`, no NULL symbol.
+
 **2026-08-14 — the SPA passes an interface audit it used to fail
 (`worktree-adapt-mobile-nav`, 9 commits, no `src/` change).** `/impeccable audit
 frontend/src` scored **12/20**, and the P0 was that below 768px there was no
@@ -79,9 +106,9 @@ that and through the three defects the 390px pass found.
 Left alone on purpose: `CoverageRibbon` is clipped at the viewport bottom on
 desktop too (pre-existing — it renders after the chart inside the `h-full` pane);
 the server-rendered trade PNG is blue/white on black, a palette belonging to no
-part of the system, but it is Python and already user-configurable; the
-dashboard's "Trade terakhir" rows cannot link to a trade because
-`Equity.series` carries no `position_id`.
+part of the system, but it is Python and already user-configurable. (The third —
+the dashboard's unlinkable "Trade terakhir" rows — was closed the same day; see
+the entry above.)
 
 Gates: `uv run pytest` **830 passed, 1 skipped**, `npm --prefix frontend test`
 **369 passed / 45 files**, `tsc -b && vite build` clean.

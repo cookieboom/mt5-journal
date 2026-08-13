@@ -53,7 +53,7 @@ export interface EquitySvg {
 export interface Equity {
   n: number; n_with_r: number;
   equity_last: number | null; r_last: number | null;
-  series: { close_time_msc: number; equity: number }[];
+  series: { close_time_msc: number; equity: number; position_id: number; symbol_base: string }[];
   equity_svg: EquitySvg; r_svg: EquitySvg;
 }
 

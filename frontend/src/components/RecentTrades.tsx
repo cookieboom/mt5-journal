@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import { Equity } from "../lib/types";
 import { wib, money } from "../lib/format";
 
@@ -16,13 +17,19 @@ export default function RecentTrades({
     <table className="w-full border-collapse text-body">
       <thead>
         <tr className="text-muted text-left">
+          <th className="pb-2 font-semibold uppercase text-label">Simbol</th>
           <th className="pb-2 font-semibold uppercase text-label">Tutup</th>
           <th className="pb-2 font-semibold uppercase text-label num text-right">Equity</th>
         </tr>
       </thead>
       <tbody>
-        {rows.map((r, i) => (
-          <tr key={i} className="border-t border-white/5">
+        {rows.map((r) => (
+          <tr key={r.position_id} className="border-t border-white/5">
+            <td className="py-2">
+              <Link className="text-cyan hover:underline" to={`/trades/${r.position_id}`}>
+                {r.symbol_base}
+              </Link>
+            </td>
             <td className="py-2 num">{wib(r.close_time_msc, offsetS)}</td>
             <td className="py-2 num text-right">{money(r.equity, currency)}</td>
           </tr>
