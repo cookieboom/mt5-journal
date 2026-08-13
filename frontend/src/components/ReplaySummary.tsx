@@ -30,7 +30,7 @@ export default function ReplaySummary(props: {
   const s = props.s;
   const c = props.counts;
   return (
-    <div className="glass p-3 space-y-1 text-xs">
+    <div className="glass p-3 space-y-1 text-body">
       <div className="font-semibold">{props.title}</div>
       {!s ? <div className="text-muted">—</div> : (
         <>

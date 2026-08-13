@@ -48,9 +48,15 @@ typography:
     fontWeight: 400
     lineHeight: 1.5
     letterSpacing: "normal"
+  meta:
+    fontFamily: "Inter, system-ui, sans-serif"
+    fontSize: "11px"
+    fontWeight: 400
+    lineHeight: 1.4
+    letterSpacing: "normal"
   label:
     fontFamily: "Inter, system-ui, sans-serif"
-    fontSize: "9.5px"
+    fontSize: "10px"
     fontWeight: 400
     lineHeight: 1.2
     letterSpacing: "0.09em"
@@ -154,7 +160,7 @@ sits back at 60% brightness until it is touched.
 
 The density is deliberately high and the type is deliberately small. This is a
 single-window instrument beside a running MT5 terminal, not a page to be admired
-across a room. Labels shrink to 9.5px so the numbers can own the contrast; panels
+across a room. Labels shrink to 10px so the numbers can own the contrast; panels
 carry 14–16px of padding, not 32px; the gap between cards is 12–14px. Nothing is
 sized to fill space. When a surface has nothing to say, it says so in muted text
 rather than growing an illustration.
@@ -169,7 +175,7 @@ person using it. Everything else is glass.
 - Violet dusk radial ground, fixed, never scrolling with content
 - Translucent panels at 4.5% white with a 9% white hairline and an 8px backdrop blur
 - Tabular numerals on every figure; the number never moves as it updates
-- Type ceiling of 23px; label floor of 9.5px uppercase at 0.09em
+- Type ceiling of 23px; label floor of 10px uppercase at 0.09em, and six roles between
 - Cyan reserved for now, violet reserved for the user's own marks
 - High density: 186px nav rail, 20–24px page padding, 12–14px card gutters
 
@@ -247,22 +253,38 @@ a continuous chart across either.
 command names quoted inside sentences.
 
 **Character:** One neutral grotesque doing every job, separated by size and weight
-rather than by family. The personality comes from the extremes — 9.5px letterspaced
+rather than by family. The personality comes from the extremes — 10px letterspaced
 labels against 23px tabular numerals — not from a display face. Type here is
 instrumentation labelling.
 
 ### Hierarchy
-- **Display** (700, 23px, tabular, `-0.01em`): KPI values only. The largest thing on
+
+Six roles, no sizes between them. Weight stays at the call site; size, leading and
+tracking come from the role.
+
+- **Display** (23px, tabular, `-0.01em`): KPI values only. The largest thing on
   any page is always a number.
-- **Headline** (700, 18px, `-0.01em`): the page title, once per route.
-- **Title** (600, 13px): panel headings. Often paired with an 11px muted subtitle
-  that states the unit or the method (`rata-rata R · win rate`).
-- **Body** (400, 12–13px): table cells, values, prose. 13px is the reading size,
-  12px the dense-table size.
-- **Label** (400, 9.5–11px, uppercase, `0.09em`): KPI captions and section eyebrows.
-  Always muted, always the smallest thing in the panel.
+- **Headline** (18px, `-0.01em`): the page title, once per route — and the title of
+  a layer that covers it, which is what a modal is.
+- **Title** (13px): panel headings, usually uppercase and `tracking-wider`, which is
+  the one piece of a role the token does not own.
+- **Body** (12px): table cells, values, prose. The reading size.
+- **Meta** (11px): the n-Beside-It role — sample sizes, units, method lines, panel
+  subtitles (`rata-rata R · win rate`). Everything that qualifies a figure.
+- **Label** (10px, uppercase, `0.09em`): KPI captions and section eyebrows. Always
+  muted, always the smallest thing in the panel, and the floor.
 
 ### Named Rules
+
+**The One Scale Rule.** Every size in the interface comes from
+`frontend/src/lib/type.ts`. `tailwind.config.ts` reads it as its *whole* `fontSize`
+theme — Tailwind's own `text-xs … text-2xl` are deleted, not extended — and SVG or
+inline text, which Tailwind cannot reach, calls `font(role)` from the same file. A
+`text-[13px]` in a component is a defect for the same reason a pasted `#hex` is: it
+compiles, and it leaves the system. This is not a hypothetical. Two scales ran side
+by side here for months — 18 distinct sizes for six roles, `text-[11.5px]` beside
+`text-[11px]` beside `text-xs` — until the roles stopped reading as roles.
+`src/lib/type.test.ts` scans every `.tsx` and fails on an off-scale size.
 
 **The Tabular Rule.** Every figure carries `font-variant-numeric: tabular-nums` via
 `.num`. A number that shifts its own column while polling is unreadable.
@@ -271,8 +293,9 @@ instrumentation labelling.
 never given a text shadow. Contrast belongs to data.
 
 **The n-Beside-It Rule.** A statistic is set with its sample size adjacent in muted
-11px (`n=42`, `12W · 7L · 3BE`). The pairing is typographic, not optional: never
-style an `n` so small or so faint that the figure reads as unqualified.
+**meta** (`n=42`, `12W · 7L · 3BE`) — the role exists for this job and is named for
+it. The pairing is typographic, not optional: never style an `n` so small or so
+faint that the figure reads as unqualified.
 
 ## Layout
 

@@ -14,7 +14,7 @@ export default function TradePngPanel(
     onChange({ ...settings, padBars: Math.min(PAD_MAX, Math.max(PAD_MIN, Math.round(n || PAD_MIN))) });
   };
   return (
-    <div className="mb-2 text-[12px]">
+    <div className="mb-2 text-body">
       <button className="text-cyan hover:underline" onClick={() => setOpen((o) => !o)}>
         {open ? "▾" : "▸"} Render settings
       </button>

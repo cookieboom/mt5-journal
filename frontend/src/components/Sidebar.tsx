@@ -17,7 +17,7 @@ export const LINKS = [
 // horizontally at a 44px touch height. Only the box changes; the active
 // treatment (the one place the two accents mix) does not.
 const item = (box: string) => ({ isActive }: { isActive: boolean }) =>
-  box + " rounded-lg text-[13px] transition " +
+  box + " rounded-lg text-title transition " +
   (isActive
     ? "text-white bg-gradient-to-r from-violet/25 to-cyan/5 ring-1 ring-inset ring-violet/35"
     : "text-muted hover:text-ink");
@@ -28,7 +28,7 @@ export default function Sidebar() {
       aria-label="Navigasi utama"
       className="w-[186px] shrink-0 border-r border-panel-border p-4 hidden md:flex md:flex-col gap-1"
     >
-      <div className="flex items-center gap-2 mb-5 font-bold text-[14px]">
+      <div className="flex items-center gap-2 mb-5 font-bold text-title">
         <span className="w-6 h-6 rounded-lg bg-gradient-to-br from-violet to-cyan" />
         mt5-journal
       </div>

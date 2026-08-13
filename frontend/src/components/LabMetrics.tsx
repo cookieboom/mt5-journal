@@ -28,10 +28,10 @@ function ActivateCell({ model, onActivate }: { model: LabModel; onActivate: (id:
   return (
     <td className="py-2">
       {model.active ? (
-        <span className="px-1.5 py-0.5 rounded text-[10px] bg-cyan/15 text-cyan">active</span>
+        <span className="px-1.5 py-0.5 rounded text-label bg-cyan/15 text-cyan">active</span>
       ) : (
         <button
-          className="px-2 py-1 rounded bg-white/5 ring-1 ring-panel-border text-ink text-[11px] hover:bg-white/10"
+          className="px-2 py-1 rounded bg-white/5 ring-1 ring-panel-border text-ink text-meta hover:bg-white/10"
           onClick={() => onActivate(model.id)}
         >
           Activate
@@ -96,14 +96,14 @@ export default function LabMetrics({
   models: LabModel[];
   onActivate: (id: number) => void;
 }) {
-  if (models.length === 0) return <p className="text-muted text-sm py-6">No models trained yet.</p>;
+  if (models.length === 0) return <p className="text-muted text-body py-6">No models trained yet.</p>;
   return (
     <div className="glass p-4 overflow-x-auto">
-      <table className="w-full border-collapse text-[12px]">
+      <table className="w-full border-collapse text-body">
         <thead>
           <tr className="text-muted text-left">
             {["stage", "regime", "model", "expectancy", "baseline", "win / acc", "AUC", "n", "age", ""].map((h) => (
-              <th key={h} className="pb-2 font-semibold uppercase text-[9.5px] tracking-wider whitespace-nowrap">{h}</th>
+              <th key={h} className="pb-2 font-semibold uppercase text-label whitespace-nowrap">{h}</th>
             ))}
           </tr>
         </thead>

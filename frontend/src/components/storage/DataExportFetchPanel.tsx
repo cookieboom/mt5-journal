@@ -138,16 +138,16 @@ export default function DataExportFetchPanel({
                 d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
               />
             </svg>
-            <h3 className="text-base">Fetch Custom Date Range</h3>
+            <h3 className="text-title">Fetch Custom Date Range</h3>
           </div>
-          <p className="text-xs text-muted leading-relaxed mb-4">
+          <p className="text-body text-muted leading-relaxed mb-4">
             Queue a backfill request to fetch historical candle data directly from MT5 Terminal.
           </p>
 
           {/* Feedback Banner */}
           {fetchFeedback && (
             <div
-              className={`mb-4 p-3 rounded-lg border text-xs flex items-center justify-between gap-2 ${
+              className={`mb-4 p-3 rounded-lg border text-body flex items-center justify-between gap-2 ${
                 fetchFeedback.type === "success"
                   ? "bg-pos/10 border-pos/30 text-pos"
                   : "bg-neg/10 border-neg/30 text-neg"
@@ -156,7 +156,7 @@ export default function DataExportFetchPanel({
               <span>{fetchFeedback.message}</span>
               <button
                 onClick={() => setFetchFeedback(null)}
-                className="text-muted hover:text-ink text-xs px-1"
+                className="text-muted hover:text-ink text-body px-1"
               >
                 ✕
               </button>
@@ -167,14 +167,14 @@ export default function DataExportFetchPanel({
             {/* Symbol & Timeframe Selection */}
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label htmlFor="backfill-symbol" className="block text-[11px] font-medium text-muted mb-1">
+                <label htmlFor="backfill-symbol" className="block text-meta font-medium text-muted mb-1">
                   Symbol
                 </label>
                 <select
                   id="backfill-symbol"
                   value={fetchSymbol}
                   onChange={(e) => setFetchSymbol(e.target.value)}
-                  className="w-full bg-bg/90 border border-panel-border rounded-lg px-3 py-1.5 text-xs text-ink focus:border-cyan"
+                  className="w-full bg-bg/90 border border-panel-border rounded-lg px-3 py-1.5 text-body text-ink focus:border-cyan"
                 >
                   {symbolsList.map((sym) => (
                     <option key={sym} value={sym}>
@@ -185,14 +185,14 @@ export default function DataExportFetchPanel({
               </div>
 
               <div>
-                <label htmlFor="backfill-timeframe" className="block text-[11px] font-medium text-muted mb-1">
+                <label htmlFor="backfill-timeframe" className="block text-meta font-medium text-muted mb-1">
                   Timeframe
                 </label>
                 <select
                   id="backfill-timeframe"
                   value={fetchTf}
                   onChange={(e) => setFetchTf(e.target.value)}
-                  className="w-full bg-bg/90 border border-panel-border rounded-lg px-3 py-1.5 text-xs text-ink focus:border-cyan"
+                  className="w-full bg-bg/90 border border-panel-border rounded-lg px-3 py-1.5 text-body text-ink focus:border-cyan"
                 >
                   {timeframesList.map((tf) => (
                     <option key={tf} value={tf}>
@@ -206,7 +206,7 @@ export default function DataExportFetchPanel({
             {/* Start & End Date Inputs */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <label htmlFor="backfill-start" className="block text-[11px] font-medium text-muted mb-1">
+                <label htmlFor="backfill-start" className="block text-meta font-medium text-muted mb-1">
                   Start Date & Time
                 </label>
                 <input
@@ -214,12 +214,12 @@ export default function DataExportFetchPanel({
                   type="datetime-local"
                   value={startDate}
                   onChange={(e) => setStartDate(e.target.value)}
-                  className="w-full bg-bg/90 border border-panel-border rounded-lg px-2.5 py-1.5 text-xs text-ink focus:border-cyan font-mono"
+                  className="w-full bg-bg/90 border border-panel-border rounded-lg px-2.5 py-1.5 text-body text-ink focus:border-cyan font-mono"
                 />
               </div>
 
               <div>
-                <label htmlFor="backfill-end" className="block text-[11px] font-medium text-muted mb-1">
+                <label htmlFor="backfill-end" className="block text-meta font-medium text-muted mb-1">
                   End Date & Time
                 </label>
                 <input
@@ -227,7 +227,7 @@ export default function DataExportFetchPanel({
                   type="datetime-local"
                   value={endDate}
                   onChange={(e) => setEndDate(e.target.value)}
-                  className="w-full bg-bg/90 border border-panel-border rounded-lg px-2.5 py-1.5 text-xs text-ink focus:border-cyan font-mono"
+                  className="w-full bg-bg/90 border border-panel-border rounded-lg px-2.5 py-1.5 text-body text-ink focus:border-cyan font-mono"
                 />
               </div>
             </div>
@@ -236,7 +236,7 @@ export default function DataExportFetchPanel({
               <button
                 type="submit"
                 disabled={isFetching}
-                className="w-full py-2 px-4 rounded-lg bg-cyan/20 hover:bg-cyan/30 text-cyan ring-1 ring-cyan/40 text-xs font-semibold transition-colors disabled:opacity-40 flex items-center justify-center gap-2"
+                className="w-full py-2 px-4 rounded-lg bg-cyan/20 hover:bg-cyan/30 text-cyan ring-1 ring-cyan/40 text-body font-semibold transition-colors disabled:opacity-40 flex items-center justify-center gap-2"
               >
                 {isFetching ? (
                   <>
@@ -276,9 +276,9 @@ export default function DataExportFetchPanel({
                 d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
               />
             </svg>
-            <h3 className="text-base">Export Candle Data</h3>
+            <h3 className="text-title">Export Candle Data</h3>
           </div>
-          <p className="text-xs text-muted leading-relaxed mb-4">
+          <p className="text-body text-muted leading-relaxed mb-4">
             Export stored historical candle records in CSV or JSON format for external analysis.
           </p>
 
@@ -286,14 +286,14 @@ export default function DataExportFetchPanel({
             {/* Symbol & Timeframe Selection */}
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label htmlFor="export-symbol" className="block text-[11px] font-medium text-muted mb-1">
+                <label htmlFor="export-symbol" className="block text-meta font-medium text-muted mb-1">
                   Symbol
                 </label>
                 <select
                   id="export-symbol"
                   value={exportSymbol}
                   onChange={(e) => setExportSymbol(e.target.value)}
-                  className="w-full bg-bg/90 border border-panel-border rounded-lg px-3 py-1.5 text-xs text-ink focus:border-violet"
+                  className="w-full bg-bg/90 border border-panel-border rounded-lg px-3 py-1.5 text-body text-ink focus:border-violet"
                 >
                   {symbolsList.map((sym) => (
                     <option key={sym} value={sym}>
@@ -304,14 +304,14 @@ export default function DataExportFetchPanel({
               </div>
 
               <div>
-                <label htmlFor="export-timeframe" className="block text-[11px] font-medium text-muted mb-1">
+                <label htmlFor="export-timeframe" className="block text-meta font-medium text-muted mb-1">
                   Timeframe
                 </label>
                 <select
                   id="export-timeframe"
                   value={exportTf}
                   onChange={(e) => setExportTf(e.target.value)}
-                  className="w-full bg-bg/90 border border-panel-border rounded-lg px-3 py-1.5 text-xs text-ink focus:border-violet"
+                  className="w-full bg-bg/90 border border-panel-border rounded-lg px-3 py-1.5 text-body text-ink focus:border-violet"
                 >
                   {timeframesList.map((tf) => (
                     <option key={tf} value={tf}>
@@ -326,12 +326,12 @@ export default function DataExportFetchPanel({
             {/* fieldset/legend rather than a floating <label>: the name belongs
                 to the radio group, and a label with no control names nothing. */}
             <fieldset>
-              <legend className="block text-[11px] font-medium text-muted mb-1.5">
+              <legend className="block text-meta font-medium text-muted mb-1.5">
                 Export Format
               </legend>
               <div className="grid grid-cols-2 gap-3">
                 <label
-                  className={`flex items-center justify-center gap-2 p-2 rounded-lg border text-xs cursor-pointer transition-colors focus-within:ring-2 focus-within:ring-cyan ${
+                  className={`flex items-center justify-center gap-2 p-2 rounded-lg border text-body cursor-pointer transition-colors focus-within:ring-2 focus-within:ring-cyan ${
                     exportFormat === "csv"
                       ? "bg-violet/20 border-violet/50 text-violet font-semibold"
                       : "bg-bg/60 border-panel-border text-muted hover:text-ink"
@@ -349,7 +349,7 @@ export default function DataExportFetchPanel({
                 </label>
 
                 <label
-                  className={`flex items-center justify-center gap-2 p-2 rounded-lg border text-xs cursor-pointer transition-colors focus-within:ring-2 focus-within:ring-cyan ${
+                  className={`flex items-center justify-center gap-2 p-2 rounded-lg border text-body cursor-pointer transition-colors focus-within:ring-2 focus-within:ring-cyan ${
                     exportFormat === "json"
                       ? "bg-violet/20 border-violet/50 text-violet font-semibold"
                       : "bg-bg/60 border-panel-border text-muted hover:text-ink"
@@ -371,7 +371,7 @@ export default function DataExportFetchPanel({
             {/* Optional Date Range Filter */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <label htmlFor="export-start" className="block text-[11px] font-medium text-muted mb-1">
+                <label htmlFor="export-start" className="block text-meta font-medium text-muted mb-1">
                   Start Date (Optional)
                 </label>
                 <input
@@ -379,12 +379,12 @@ export default function DataExportFetchPanel({
                   type="date"
                   value={exportStartDate}
                   onChange={(e) => setExportStartDate(e.target.value)}
-                  className="w-full bg-bg/90 border border-panel-border rounded-lg px-2.5 py-1.5 text-xs text-ink focus:border-violet font-mono"
+                  className="w-full bg-bg/90 border border-panel-border rounded-lg px-2.5 py-1.5 text-body text-ink focus:border-violet font-mono"
                 />
               </div>
 
               <div>
-                <label htmlFor="export-end" className="block text-[11px] font-medium text-muted mb-1">
+                <label htmlFor="export-end" className="block text-meta font-medium text-muted mb-1">
                   End Date (Optional)
                 </label>
                 <input
@@ -392,7 +392,7 @@ export default function DataExportFetchPanel({
                   type="date"
                   value={exportEndDate}
                   onChange={(e) => setExportEndDate(e.target.value)}
-                  className="w-full bg-bg/90 border border-panel-border rounded-lg px-2.5 py-1.5 text-xs text-ink focus:border-violet font-mono"
+                  className="w-full bg-bg/90 border border-panel-border rounded-lg px-2.5 py-1.5 text-body text-ink focus:border-violet font-mono"
                 />
               </div>
             </div>
@@ -401,7 +401,7 @@ export default function DataExportFetchPanel({
               <button
                 type="button"
                 onClick={handleDownloadExport}
-                className="w-full py-2 px-4 rounded-lg bg-violet/20 hover:bg-violet/30 text-violet ring-1 ring-violet/40 text-xs font-semibold transition-colors flex items-center justify-center gap-2"
+                className="w-full py-2 px-4 rounded-lg bg-violet/20 hover:bg-violet/30 text-violet ring-1 ring-violet/40 text-body font-semibold transition-colors flex items-center justify-center gap-2"
               >
                 <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path

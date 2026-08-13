@@ -9,8 +9,8 @@ export default function Commands() {
   if (!data) return null;
   return (
     <div>
-      <h1 className="text-[18px] font-bold tracking-tight mb-1">Log perintah</h1>
-      <div className="text-[12px] text-muted mb-4">audit — apa yang diminta vs apa yang terjadi</div>
+      <h1 className="text-headline font-bold mb-1">Log perintah</h1>
+      <div className="text-body text-muted mb-4">audit — apa yang diminta vs apa yang terjadi</div>
       <div className="glass p-4">
         <CommandsTable rows={data.commands} offsetS={data.header.offset_s} />
       </div>

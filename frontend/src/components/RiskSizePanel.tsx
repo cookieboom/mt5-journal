@@ -40,7 +40,7 @@ export default function RiskSizePanel(props: {
   const tone = direction === "buy" ? "text-pos" : direction === "sell" ? "text-neg" : "";
 
   return (
-    <div className="glass p-3 space-y-2 text-xs">
+    <div className="glass p-3 space-y-2 text-body">
       <div className="font-semibold">Ukuran otomatis</div>
 
       <div className="flex gap-1">

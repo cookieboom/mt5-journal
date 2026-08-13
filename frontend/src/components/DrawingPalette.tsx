@@ -42,7 +42,7 @@ export default function DrawingPalette({
   // way; the banners are ephemeral and shouldn't have to dodge a
   // fixed-position tool column.
   return (
-    <div className="glass absolute left-2 top-12 z-20 flex flex-col p-1 gap-1 text-[13px]">
+    <div className="glass absolute left-2 top-12 z-20 flex flex-col p-1 gap-1 text-title">
       {TOOLS.map(({ tool: t, icon, label }) => (
         <button
           key={t}

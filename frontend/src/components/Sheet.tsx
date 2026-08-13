@@ -39,7 +39,7 @@ export default function Sheet({
         aria-label={label}
       >
         <div className="flex items-center justify-between mb-3">
-          <div className="text-ink text-[13px]">{label}</div>
+          <div className="text-ink text-title">{label}</div>
           <button
             onClick={onClose}
             aria-label="tutup"

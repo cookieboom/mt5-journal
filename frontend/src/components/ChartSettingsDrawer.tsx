@@ -8,7 +8,7 @@ import {
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="mb-4">
-      <div className="text-muted text-[11px] uppercase tracking-wide mb-2">{title}</div>
+      <div className="text-muted text-label uppercase mb-2">{title}</div>
       <div className="space-y-2">{children}</div>
     </div>
   );
@@ -20,7 +20,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 function Field({ label, children, group }: {
   label: string; children: React.ReactNode; group?: boolean;
 }) {
-  const row = "flex items-center justify-between text-[12px] gap-2";
+  const row = "flex items-center justify-between text-body gap-2";
   const caption = <span className="text-muted">{label}</span>;
   return group ? (
     <div role="group" aria-label={label} className={row}>{caption}{children}</div>
@@ -48,7 +48,7 @@ export default function ChartSettingsDrawer({
       onClose={onClose}
       footer={
         <button onClick={onReset}
-          className="glass mt-2 px-3 py-1.5 text-[12px] text-muted hover:text-ink self-start">
+          className="glass mt-2 px-3 py-1.5 text-body text-muted hover:text-ink self-start">
           Reset ke default
         </button>
       }
@@ -58,7 +58,7 @@ export default function ChartSettingsDrawer({
               <div className="flex gap-1">
                 {(["dark", "light"] as const).map((t) => (
                   <button key={t} onClick={() => set("theme", t)}
-                    className={"px-2 py-1 rounded-md capitalize text-[12px] " +
+                    className={"px-2 py-1 rounded-md capitalize text-body " +
                       (settings.theme === t
                         ? "bg-violet/25 ring-1 ring-inset ring-violet/35 text-ink"
                         : "text-muted hover:text-ink")}>{t}</button>
@@ -105,7 +105,7 @@ export default function ChartSettingsDrawer({
               <div className="flex gap-1">
                 {(["linear", "log"] as const).map((m) => (
                   <button key={m} onClick={() => set("priceScale", m)}
-                    className={"px-2 py-1 rounded-md capitalize text-[12px] " +
+                    className={"px-2 py-1 rounded-md capitalize text-body " +
                       (settings.priceScale === m
                         ? "bg-violet/25 ring-1 ring-inset ring-violet/35 text-ink"
                         : "text-muted hover:text-ink")}>{m}</button>

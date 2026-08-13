@@ -11,7 +11,7 @@ export default function SymbolBars({ report }: { report: Report }) {
         const w = gated ? 0 : Math.min(100, (Math.abs((r.avg_r ?? 0) * r.n) / max) * 100);
         return (
           <div key={r.label}>
-            <div className="flex justify-between text-[11.5px] mb-1.5">
+            <div className="flex justify-between text-meta mb-1.5">
               <b className="text-white font-semibold">{r.label}</b>
               <span className={gated ? "text-muted/60" : "text-muted"}>
                 {gated ? `n=${r.n_with_r} (perlu ≥20)` : `${rmult(r.avg_r)} · ${pct(r.win_rate)}`}

@@ -1,11 +1,16 @@
 import type { Config } from "tailwindcss";
 import { palette, shadow } from "./src/lib/theme";
+import { typeScale } from "./src/lib/type";
 
 // Classes and canvas colours read the same tokens — see src/lib/theme.ts.
 export default {
   darkMode: "class",
   content: ["./index.html", "./src/**/*.{ts,tsx}"],
   theme: {
+    // Replaces Tailwind's scale rather than extending it: `text-xs … text-2xl`
+    // are deliberately gone, so the six roles in src/lib/type.ts are the only
+    // sizes the app can spell. See that file for why.
+    fontSize: { ...typeScale },
     extend: {
       colors: { ...palette },
       boxShadow: { ...shadow },

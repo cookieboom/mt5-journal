@@ -31,8 +31,8 @@ export default function Live() {
     <div>
       <div className="flex items-center justify-between mb-4">
         <div>
-          <h1 className="text-[18px] font-bold tracking-tight">Live</h1>
-          <div className="text-[12px] text-muted mt-0.5">
+          <h1 className="text-headline font-bold">Live</h1>
+          <div className="text-body text-muted mt-0.5">
             {live.count} posisi · total floating{" "}
             <span className={(live.total_floating >= 0 ? "text-pos" : "text-neg") + " num"}>
               {money(live.total_floating, header.currency, { sign: true })}
@@ -53,11 +53,11 @@ export default function Live() {
         </div>
       )}
 
-      {cmd.toast && <div className="glass p-3 mb-3 text-[12px] text-cyan">{cmd.toast}</div>}
-      {cmd.error && !cmd.preview && <div className="glass p-3 mb-3 text-[12px] text-neg">Ditolak: {cmd.error}</div>}
+      {cmd.toast && <div className="glass p-3 mb-3 text-body text-cyan">{cmd.toast}</div>}
+      {cmd.error && !cmd.preview && <div className="glass p-3 mb-3 text-body text-neg">Ditolak: {cmd.error}</div>}
 
       {live.empty ? (
-        <div className="glass p-6 text-muted text-sm">
+        <div className="glass p-6 text-muted text-body">
           Tidak ada posisi terbuka — atau <code>journal live</code> belum pernah jalan.
           Tanpa heartbeat, keduanya tak bisa dibedakan dari sini.
         </div>

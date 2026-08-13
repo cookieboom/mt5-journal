@@ -14,7 +14,7 @@ import { timeframeMs, type Sym, type Timeframe } from "../lib/candles";
 function ScoredBadge({ symbol, tf }: { symbol: Sym; tf: Timeframe }) {
   const { score, error } = useLabScore(symbol, tf, timeframeMs(tf));
   return error
-    ? <div className="text-neg text-[11px]">Lab: {error}</div>
+    ? <div className="text-neg text-meta">Lab: {error}</div>
     : <LabBadge score={score} />;
 }
 
@@ -36,7 +36,7 @@ export default function LiveLabBadge({ symbol, fallbackTf }: {
 
   return (
     <div>
-      <div className="text-[10px] text-muted uppercase tracking-wider mb-1">
+      <div className="text-label text-muted uppercase mb-1">
         {symbol}{tf ? ` · ${tf}` : ""}
       </div>
       {tf ? <ScoredBadge symbol={symbol} tf={tf} /> : <LabBadge score={null} />}

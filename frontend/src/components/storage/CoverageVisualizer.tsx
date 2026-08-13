@@ -59,8 +59,8 @@ export default function CoverageVisualizer({ completeness, loading }: CoverageVi
   if (!completeness || completeness.total_bars === 0 || completeness.from_ms === 0) {
     return (
       <div className="glass p-6 rounded-xl border border-panel-border text-center space-y-2">
-        <div className="text-sm font-semibold text-muted">Data Coverage Timeline</div>
-        <p className="text-xs text-muted/70">
+        <div className="text-title font-semibold text-muted">Data Coverage Timeline</div>
+        <p className="text-body text-muted/70">
           No candle history available for this symbol and timeframe.
         </p>
       </div>
@@ -92,13 +92,13 @@ export default function CoverageVisualizer({ completeness, loading }: CoverageVi
       {/* Header Info */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2.5">
-          <div className="flex items-center gap-1.5 font-bold text-ink text-base">
+          <div className="flex items-center gap-1.5 font-bold text-ink text-title">
             <span>{symbol}</span>
-            <span className="text-xs font-mono px-2 py-0.5 rounded bg-cyan/10 text-cyan border border-cyan/20">
+            <span className="text-body font-mono px-2 py-0.5 rounded bg-cyan/10 text-cyan border border-cyan/20">
               {timeframe}
             </span>
           </div>
-          <span className="text-xs text-muted font-mono">
+          <span className="text-body text-muted font-mono">
             ({total_bars.toLocaleString()} bars)
           </span>
         </div>
@@ -106,7 +106,7 @@ export default function CoverageVisualizer({ completeness, loading }: CoverageVi
         <div className="flex items-center gap-3">
           {/* Coverage Badge */}
           <div
-            className={`px-3 py-1 rounded-full border text-xs font-semibold font-mono flex items-center gap-1.5 ${getBadgeClass(
+            className={`px-3 py-1 rounded-full border text-body font-semibold font-mono flex items-center gap-1.5 ${getBadgeClass(
               coverage_percent
             )}`}
           >
@@ -177,7 +177,7 @@ export default function CoverageVisualizer({ completeness, loading }: CoverageVi
         </div>
 
         {/* Hover Tooltip / Status Banner */}
-        <div className="h-6 flex items-center justify-between text-xs font-mono">
+        <div className="h-6 flex items-center justify-between text-body font-mono">
           {hoveredInfo ? (
             <div className="flex items-center gap-2 text-ink bg-bg/90 px-2.5 py-0.5 rounded border border-panel-border">
               <span
@@ -185,7 +185,7 @@ export default function CoverageVisualizer({ completeness, loading }: CoverageVi
                   hoveredInfo.type === "covered" ? "bg-pos" : "bg-neg"
                 }`}
               />
-              <span className="font-semibold uppercase text-[10px] tracking-wider">
+              <span className="font-semibold uppercase text-label">
                 {hoveredInfo.type === "covered" ? "Covered Segment" : "Data Gap"}
               </span>
               <span className="text-muted">•</span>
@@ -198,7 +198,7 @@ export default function CoverageVisualizer({ completeness, loading }: CoverageVi
               </span>
             </div>
           ) : (
-            <span className="text-muted/60 text-[11px] italic">
+            <span className="text-muted/60 text-meta italic">
               Hover over timeline blocks to inspect range details
             </span>
           )}
@@ -206,7 +206,7 @@ export default function CoverageVisualizer({ completeness, loading }: CoverageVi
       </div>
 
       {/* Timeline Range Footer & Legend */}
-      <div className="pt-2 border-t border-panel-border/50 flex flex-wrap items-center justify-between gap-3 text-xs text-muted">
+      <div className="pt-2 border-t border-panel-border/50 flex flex-wrap items-center justify-between gap-3 text-body text-muted">
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-1.5">
             <span className="w-3 h-3 rounded-sm bg-pos/80 border border-pos/50 inline-block" />
@@ -218,7 +218,7 @@ export default function CoverageVisualizer({ completeness, loading }: CoverageVi
           </div>
         </div>
 
-        <div className="font-mono text-[11px] text-muted flex items-center gap-2">
+        <div className="font-mono text-meta text-muted flex items-center gap-2">
           <span>{formatDate(from_ms)}</span>
           <span>→</span>
           <span>{formatDate(to_ms)}</span>

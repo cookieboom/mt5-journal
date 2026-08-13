@@ -40,35 +40,35 @@ export default function Trades() {
   const linkQ = linkQuery(f);
 
   const chip = (active: boolean) =>
-    "px-2.5 py-1 rounded-full text-[11px] ring-1 " +
+    "px-2.5 py-1 rounded-full text-meta ring-1 " +
     (active ? "bg-violet/20 ring-violet/45 text-ink" : "bg-white/5 ring-panel-border text-muted");
 
   return (
     <div>
-      <h1 className="text-[18px] font-bold tracking-tight mb-1">
-        Trades <span className="text-muted num text-[13px]">({trades.length})</span>
+      <h1 className="text-headline font-bold mb-1">
+        Trades <span className="text-muted num text-title">({trades.length})</span>
       </h1>
-      <div className="text-[12px] text-muted mb-4">
+      <div className="text-body text-muted mb-4">
         Net dalam {header.currency} (US cents) — bar hanya penanda arah. Waktu WIB (UTC+7).
       </div>
 
       <div className="flex flex-col gap-2 mb-4">
         <div className="flex flex-wrap items-center gap-1.5">
-          <span className="text-[10px] uppercase tracking-wider text-muted mr-1">Symbol</span>
+          <span className="text-label uppercase text-muted mr-1">Symbol</span>
           <button className={chip(!f.symbol)} onClick={() => setF({ ...f, symbol: "" })}>semua</button>
           {symbols.map((s) => (
             <button key={s} className={chip(f.symbol === s)} onClick={() => setF({ ...f, symbol: s })}>{s}</button>
           ))}
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
-          <span className="text-[10px] uppercase tracking-wider text-muted mr-1">Status</span>
+          <span className="text-label uppercase text-muted mr-1">Status</span>
           <button className={chip(!f.status)} onClick={() => setF({ ...f, status: "" })}>semua</button>
           {STATUSES.map((s) => (
             <button key={s} className={chip(f.status === s)} onClick={() => setF({ ...f, status: s })}>{s}</button>
           ))}
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
-          <span className="text-[10px] uppercase tracking-wider text-muted mr-1">Source</span>
+          <span className="text-label uppercase text-muted mr-1">Source</span>
           <button className={chip(!f.source)} onClick={() => setF({ ...f, source: "" })}>semua</button>
           {SOURCES.map(([v, label]) => (
             <button key={v} className={chip(f.source === v)} onClick={() => setF({ ...f, source: v })}>{label}</button>
@@ -78,13 +78,13 @@ export default function Trades() {
 
       <div className="glass p-4 overflow-x-auto">
         {trades.length === 0 ? (
-          <div className="text-muted text-sm py-6">Tidak ada trade untuk filter ini.</div>
+          <div className="text-muted text-body py-6">Tidak ada trade untuk filter ini.</div>
         ) : (
-          <table className="w-full border-collapse text-[12px]">
+          <table className="w-full border-collapse text-body">
             <thead>
               <tr className="text-muted text-left">
                 {["Dibuka", "Symbol", "Arah", "Status", "Src", "Durasi", "Net", "", "R", "Tags"].map((h, i) => (
-                  <th key={i} className="pb-2 font-semibold uppercase text-[9.5px] tracking-wider whitespace-nowrap">{h}</th>
+                  <th key={i} className="pb-2 font-semibold uppercase text-label whitespace-nowrap">{h}</th>
                 ))}
               </tr>
             </thead>
@@ -111,7 +111,7 @@ export default function Trades() {
                     <td className="py-2">
                       <span className="flex flex-wrap gap-1">
                         {(tags[String(t.position_id)] ?? []).map(([tag, source]) => (
-                          <span key={tag} className={"px-1.5 py-0.5 rounded text-[10px] " +
+                          <span key={tag} className={"px-1.5 py-0.5 rounded text-label " +
                             (source === "manual" ? "bg-violet/15 text-violet" : "bg-white/6 text-muted")}>{tag}</span>
                         ))}
                       </span>

@@ -22,8 +22,8 @@ export default function Dashboard() {
     <div>
       <div className="flex items-center justify-between mb-4">
         <div>
-          <h1 className="text-[18px] font-bold tracking-tight">Dashboard</h1>
-          <div className="text-[12px] text-muted mt-0.5">{report.n_closed} trade tertutup</div>
+          <h1 className="text-headline font-bold">Dashboard</h1>
+          <div className="text-body text-muted mt-0.5">{report.n_closed} trade tertutup</div>
         </div>
         {/* Same three tints as StalenessBadge, but the header stays terse —
             a stale feed must not read cyan here just because it did before. */}
@@ -44,19 +44,19 @@ export default function Dashboard() {
 
       <div className="grid grid-cols-1 lg:grid-cols-[1.55fr_1fr] gap-3.5 mb-3.5">
         <div className="glass p-4">
-          <h2 className="text-[13px] font-semibold">Kurva R kumulatif</h2>
-          <div className="text-[11px] text-muted mb-3">pertumbuhan R dari waktu ke waktu</div>
+          <h2 className="text-title font-semibold">Kurva R kumulatif</h2>
+          <div className="text-meta text-muted mb-3">pertumbuhan R dari waktu ke waktu</div>
           <EquityChart svg={equity.r_svg} label="R" />
         </div>
         <div className="glass p-4">
-          <h2 className="text-[13px] font-semibold">Per simbol</h2>
-          <div className="text-[11px] text-muted mb-3">rata-rata R · win rate</div>
+          <h2 className="text-title font-semibold">Per simbol</h2>
+          <div className="text-meta text-muted mb-3">rata-rata R · win rate</div>
           <SymbolBars report={report} />
         </div>
       </div>
 
       <div className="glass p-4">
-        <h2 className="text-[13px] font-semibold mb-3">Trade terakhir</h2>
+        <h2 className="text-title font-semibold mb-3">Trade terakhir</h2>
         <RecentTrades equity={equity} currency={ccy} offsetS={header.offset_s} />
       </div>
     </div>

@@ -25,8 +25,8 @@ export default function Weekly() {
 
   return (
     <div>
-      <h1 className="text-[18px] font-bold tracking-tight mb-1">Weekly review · {wk(r.iso_year, r.iso_week)}</h1>
-      <div className="text-[12px] text-muted mb-4">Mon–Sun UTC · trade diatribusikan ke minggu saat ditutup (realized).</div>
+      <h1 className="text-headline font-bold mb-1">Weekly review · {wk(r.iso_year, r.iso_week)}</h1>
+      <div className="text-body text-muted mb-4">Mon–Sun UTC · trade diatribusikan ke minggu saat ditutup (realized).</div>
 
       {weeks.length > 0 && (
         <div className="flex flex-wrap gap-1.5 mb-4">
@@ -34,7 +34,7 @@ export default function Weekly() {
             const active = y === r.iso_year && w === r.iso_week;
             return (
               <Link key={wk(y, w)} to={`/weekly/${wk(y, w)}`}
-                className={"px-2.5 py-1 rounded-full text-[11px] ring-1 num " +
+                className={"px-2.5 py-1 rounded-full text-meta ring-1 num " +
                   (active ? "bg-violet/20 ring-violet/45 text-ink" : "bg-white/5 ring-panel-border text-muted")}>
                 {wk(y, w)}
               </Link>
@@ -45,51 +45,51 @@ export default function Weekly() {
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
         <div className="glass p-4">
-          <div className="text-[10px] uppercase tracking-wider text-muted">Realized net</div>
-          <div className={"text-[18px] font-bold num mt-1 " + tone}>{money(r.net_total, ccy, { sign: true })}</div>
-          <div className="text-[11px] text-muted mt-0.5">selalu ditampilkan (bukan gated)</div>
+          <div className="text-label uppercase text-muted">Realized net</div>
+          <div className={"text-headline font-bold num mt-1 " + tone}>{money(r.net_total, ccy, { sign: true })}</div>
+          <div className="text-meta text-muted mt-0.5">selalu ditampilkan (bukan gated)</div>
         </div>
         <div className="glass p-4">
-          <div className="text-[10px] uppercase tracking-wider text-muted">Closed</div>
-          <div className="text-[18px] font-bold num mt-1">{r.n_closed}</div>
+          <div className="text-label uppercase text-muted">Closed</div>
+          <div className="text-headline font-bold num mt-1">{r.n_closed}</div>
         </div>
         <div className="glass p-4">
-          <div className="text-[10px] uppercase tracking-wider text-muted">W / L / BE</div>
-          <div className="text-[18px] font-bold num mt-1">
+          <div className="text-label uppercase text-muted">W / L / BE</div>
+          <div className="text-headline font-bold num mt-1">
             <span className="text-pos">{r.n_wins}</span>/<span className="text-neg">{r.n_losses}</span>/{r.n_breakeven}
           </div>
         </div>
         <div className="glass p-4">
-          <div className="text-[10px] uppercase tracking-wider text-muted">Win rate</div>
-          <div className="text-[18px] font-bold num mt-1">{pct(r.win_rate)}</div>
-          <div className="text-[11px] text-muted mt-0.5">n={r.n_closed}{r.n_closed < 20 ? ", perlu ≥20" : ""}</div>
+          <div className="text-label uppercase text-muted">Win rate</div>
+          <div className="text-headline font-bold num mt-1">{pct(r.win_rate)}</div>
+          <div className="text-meta text-muted mt-0.5">n={r.n_closed}{r.n_closed < 20 ? ", perlu ≥20" : ""}</div>
         </div>
       </div>
 
       <div className="glass p-4 mb-4">
-        <h2 className="text-[13px] font-semibold uppercase tracking-wider text-muted mb-2">Money (§9-gated di level minggu)</h2>
-        <div className="grid grid-cols-2 gap-x-6 text-[13px]">
+        <h2 className="text-title font-semibold uppercase tracking-wider text-muted mb-2">Money (§9-gated di level minggu)</h2>
+        <div className="grid grid-cols-2 gap-x-6 text-title">
           <div className="flex justify-between py-1.5 border-b border-white/5"><span className="text-muted">Avg win</span><span className="num">{money(r.avg_win, ccy)}</span></div>
           <div className="flex justify-between py-1.5 border-b border-white/5"><span className="text-muted">Avg loss</span><span className="num">{money(r.avg_loss, ccy, { sign: true })}</span></div>
           <div className="flex justify-between py-1.5 border-b border-white/5"><span className="text-muted">Profit factor</span><span className="num">{r.profit_factor === null ? "n/a" : r.profit_factor.toFixed(2)}</span></div>
           <div className="flex justify-between py-1.5 border-b border-white/5"><span className="text-muted">Expectancy</span><span className="num">{money(r.expectancy, ccy, { sign: true })}</span></div>
         </div>
-        <p className="text-[11px] text-muted mt-2">Satu minggu jarang mencapai n≥20, jadi rate/rata-rata umumnya "n/a" — itu jujur, bukan bug.</p>
+        <p className="text-meta text-muted mt-2">Satu minggu jarang mencapai n≥20, jadi rate/rata-rata umumnya "n/a" — itu jujur, bukan bug.</p>
       </div>
 
       <div className="glass p-4">
-        <h2 className="text-[13px] font-semibold uppercase tracking-wider text-muted mb-3">
+        <h2 className="text-title font-semibold uppercase tracking-wider text-muted mb-3">
           Notes ({r.notes.length} trade dengan anotasi / tag manual)
         </h2>
         {r.notes.length === 0 ? (
-          <div className="text-muted text-sm py-4">Belum ada trade beranotasi minggu ini.</div>
+          <div className="text-muted text-body py-4">Belum ada trade beranotasi minggu ini.</div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full border-collapse text-[12px]">
+            <table className="w-full border-collapse text-body">
               <thead>
                 <tr className="text-muted text-left">
                   {["Trade", "Net", "Setup", "Conf", "Emosi", "Plan", "Catatan", "Tags"].map((h, i) => (
-                    <th key={i} className="pb-2 font-semibold uppercase text-[9.5px] tracking-wider">{h}</th>
+                    <th key={i} className="pb-2 font-semibold uppercase text-label">{h}</th>
                   ))}
                 </tr>
               </thead>
@@ -109,7 +109,7 @@ export default function Weekly() {
                     <td className="py-2">{n.notes ?? "—"}</td>
                     <td className="py-2">
                       <span className="flex flex-wrap gap-1">
-                        {n.tags.map((t) => <span key={t} className="px-1.5 py-0.5 rounded text-[10px] bg-white/6 text-muted">{t}</span>)}
+                        {n.tags.map((t) => <span key={t} className="px-1.5 py-0.5 rounded text-label bg-white/6 text-muted">{t}</span>)}
                       </span>
                     </td>
                   </tr>

@@ -7,13 +7,13 @@ export default function RecentTrades({
 }: { equity: Equity; currency: string; offsetS: number }) {
   const rows = [...equity.series].slice(-5).reverse();
   if (rows.length === 0)
-    return <div className="text-muted text-sm py-6">Belum ada trade tertutup.</div>;
+    return <div className="text-muted text-body py-6">Belum ada trade tertutup.</div>;
   return (
-    <table className="w-full border-collapse text-[12px]">
+    <table className="w-full border-collapse text-body">
       <thead>
         <tr className="text-muted text-left">
-          <th className="pb-2 font-semibold uppercase text-[9.5px] tracking-wider">Tutup</th>
-          <th className="pb-2 font-semibold uppercase text-[9.5px] tracking-wider num text-right">Equity</th>
+          <th className="pb-2 font-semibold uppercase text-label">Tutup</th>
+          <th className="pb-2 font-semibold uppercase text-label num text-right">Equity</th>
         </tr>
       </thead>
       <tbody>

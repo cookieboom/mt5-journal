@@ -45,7 +45,7 @@ export default function DiskStatsCard({ overview, loading }: DiskStatsCardProps)
       {/* 1. Database File Size */}
       <div className="glass p-4 rounded-xl border border-panel-border flex flex-col justify-between">
         <div>
-          <div className="flex items-center justify-between text-muted text-xs font-medium mb-1">
+          <div className="flex items-center justify-between text-muted text-label uppercase font-medium mb-1">
             <span>Database Size</span>
             <svg
               className="w-4 h-4 text-cyan"
@@ -61,9 +61,9 @@ export default function DiskStatsCard({ overview, loading }: DiskStatsCardProps)
               />
             </svg>
           </div>
-          <div className="text-2xl font-bold text-ink num">{formatBytes(db_size_bytes)}</div>
+          <div className="text-display font-bold text-ink num">{formatBytes(db_size_bytes)}</div>
         </div>
-        <div className="mt-3 pt-2 border-t border-panel-border/50 text-xs">
+        <div className="mt-3 pt-2 border-t border-panel-border/50 text-label">
           {wal_size_bytes > 0 ? (
             <span className="inline-flex items-center gap-1 text-cyan font-mono bg-cyan/10 px-2 py-0.5 rounded border border-cyan/20">
               <span className="w-1.5 h-1.5 rounded-full bg-cyan animate-pulse" />
@@ -78,7 +78,7 @@ export default function DiskStatsCard({ overview, loading }: DiskStatsCardProps)
       {/* 2. Total M1 Bars */}
       <div className="glass p-4 rounded-xl border border-panel-border flex flex-col justify-between">
         <div>
-          <div className="flex items-center justify-between text-muted text-xs font-medium mb-1">
+          <div className="flex items-center justify-between text-muted text-label uppercase font-medium mb-1">
             <span>Total M1 Bars</span>
             <svg
               className="w-4 h-4 text-violet"
@@ -94,11 +94,11 @@ export default function DiskStatsCard({ overview, loading }: DiskStatsCardProps)
               />
             </svg>
           </div>
-          <div className="text-2xl font-bold text-ink num">
+          <div className="text-display font-bold text-ink num">
             {total_m1_bars.toLocaleString()}
           </div>
         </div>
-        <div className="mt-3 pt-2 border-t border-panel-border/50 text-xs text-muted">
+        <div className="mt-3 pt-2 border-t border-panel-border/50 text-label text-muted">
           {symbols.length} symbol{symbols.length === 1 ? "" : "s"} tracked
         </div>
       </div>
@@ -106,7 +106,7 @@ export default function DiskStatsCard({ overview, loading }: DiskStatsCardProps)
       {/* 3. Reconstructed Trades */}
       <div className="glass p-4 rounded-xl border border-panel-border flex flex-col justify-between">
         <div>
-          <div className="flex items-center justify-between text-muted text-xs font-medium mb-1">
+          <div className="flex items-center justify-between text-muted text-label uppercase font-medium mb-1">
             <span>Reconstructed Trades</span>
             <svg
               className="w-4 h-4 text-pos"
@@ -122,11 +122,11 @@ export default function DiskStatsCard({ overview, loading }: DiskStatsCardProps)
               />
             </svg>
           </div>
-          <div className="text-2xl font-bold text-ink num">
+          <div className="text-display font-bold text-ink num">
             {total_trades.toLocaleString()}
           </div>
         </div>
-        <div className="mt-3 pt-2 border-t border-panel-border/50 text-xs text-muted">
+        <div className="mt-3 pt-2 border-t border-panel-border/50 text-label text-muted">
           Deals & positions aggregated
         </div>
       </div>
@@ -134,7 +134,7 @@ export default function DiskStatsCard({ overview, loading }: DiskStatsCardProps)
       {/* 4. Cache Size & File Count */}
       <div className="glass p-4 rounded-xl border border-panel-border flex flex-col justify-between">
         <div>
-          <div className="flex items-center justify-between text-muted text-xs font-medium mb-1">
+          <div className="flex items-center justify-between text-muted text-label uppercase font-medium mb-1">
             <span>PNG & Weekly Cache</span>
             <svg
               className="w-4 h-4 text-cyan"
@@ -150,11 +150,11 @@ export default function DiskStatsCard({ overview, loading }: DiskStatsCardProps)
               />
             </svg>
           </div>
-          <div className="text-2xl font-bold text-ink num">
+          <div className="text-display font-bold text-ink num">
             {formatBytes(cache_size_bytes)}
           </div>
         </div>
-        <div className="mt-3 pt-2 border-t border-panel-border/50 text-xs text-muted font-mono">
+        <div className="mt-3 pt-2 border-t border-panel-border/50 text-label text-muted font-mono">
           {cache_files_count.toLocaleString()} file{cache_files_count === 1 ? "" : "s"}
         </div>
       </div>

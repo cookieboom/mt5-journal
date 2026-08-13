@@ -25,7 +25,7 @@ export default function CoverageRibbon({
             style={{ width: `${((s.to - s.from) / span) * 100}%`, background: COLOR[s.kind] }} />
         ))}
       </div>
-      <div className="mt-1 flex items-center gap-2 text-[11px] text-muted">
+      <div className="mt-1 flex items-center gap-2 text-meta text-muted">
         {holes > 0 ? (
           <>
             <span className="text-neg">{holes} lubang belum di-fetch di tampilan ini</span>

@@ -179,15 +179,15 @@ export default function Lab() {
 
   return (
     <div>
-      <h1 className="text-[18px] font-bold tracking-tight mb-1">Lab</h1>
-      <p className="text-[12px] text-muted mb-4 max-w-[60ch]">
+      <h1 className="text-headline font-bold mb-1">Lab</h1>
+      <p className="text-body text-muted mb-4 max-w-[60ch]">
         Models trained here predict, on candle data only — nothing here places,
         sizes, or recommends a trade. Every number below is out-of-sample and
         net of trading cost; a model is only interesting where it beats the baseline.
       </p>
 
       <section className="glass p-4 mb-4">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-[12px]">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-body">
           <label className="flex flex-col gap-1 text-muted">Symbol
             <input className={fieldText} value={form.symbol}
                    onChange={(e) => setForm((f) => ({ ...f, symbol: e.target.value }))} />
@@ -221,8 +221,8 @@ export default function Lab() {
         </div>
 
         <fieldset className="mt-3">
-          <legend className="text-[10px] uppercase tracking-wider text-muted mb-1.5">Features</legend>
-          <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-[12px]">
+          <legend className="text-label uppercase text-muted mb-1.5">Features</legend>
+          <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-body">
             {LAB_FEATURES.map((name) => (
               <label key={name} className="flex items-center gap-1.5 text-ink">
                 <input type="checkbox" checked={form.features.includes(name)}
@@ -234,7 +234,7 @@ export default function Lab() {
         </fieldset>
 
         <button
-          className="mt-4 px-3 py-1.5 rounded bg-cyan/20 ring-1 ring-cyan/45 text-ink font-semibold text-[12px] disabled:opacity-50"
+          className="mt-4 px-3 py-1.5 rounded bg-cyan/20 ring-1 ring-cyan/45 text-ink font-semibold text-body disabled:opacity-50"
           onClick={onTrain}
           disabled={busy || form.features.length === 0}
         >
@@ -242,10 +242,10 @@ export default function Lab() {
         </button>
       </section>
 
-      {error && <p className="text-neg text-[12px] mb-3">{error}</p>}
+      {error && <p className="text-neg text-body mb-3">{error}</p>}
 
       {result && Object.keys(result.dropped_features).length > 0 && (
-        <p data-testid="dropped-features-warning" className="text-[12px] text-warn mb-3">
+        <p data-testid="dropped-features-warning" className="text-body text-warn mb-3">
           Dropped {Object.entries(result.dropped_features)
             .map(([k, v]) => `${k} (${Math.round(v * 100)}% unknown)`)
             .join(", ")}
@@ -255,17 +255,17 @@ export default function Lab() {
         </p>
       )}
 
-      {modelsError && <p className="text-neg text-[12px] mb-3">Failed to load models: {modelsError}</p>}
+      {modelsError && <p className="text-neg text-body mb-3">Failed to load models: {modelsError}</p>}
 
       <LabMetrics models={models} onActivate={onActivate} />
 
       <section className="glass p-4 mt-4">
-        <h2 className="text-[10px] uppercase tracking-wider text-muted mb-2">
+        <h2 className="text-label uppercase text-muted mb-2">
           Chart · regime shading &amp; take-profit probability
         </h2>
 
         {score && score.status === "ok" && (
-          <p className="text-[11px] text-muted mb-2">
+          <p className="text-meta text-muted mb-2">
             model age {formatAge(score.model_age_ms)}
             {score.expectancy_r !== null
               ? ` · expectancy ${score.expectancy_r >= 0 ? "+" : ""}${score.expectancy_r.toFixed(2)}R (n=${score.expectancy_n})`
@@ -284,9 +284,9 @@ export default function Lab() {
         )}
 
         {!symbol || !tf ? (
-          <p className="text-muted text-[12px] py-6">Enter a symbol this account trades to see its chart.</p>
+          <p className="text-muted text-body py-6">Enter a symbol this account trades to see its chart.</p>
         ) : !hasBars ? (
-          <p className="text-muted text-[12px] py-6">
+          <p className="text-muted text-body py-6">
             {data.status === "error" ? `Failed to load candles: ${data.error}` : "Loading chart…"}
           </p>
         ) : (
@@ -308,7 +308,7 @@ export default function Lab() {
               {bands.length > 0 && <RegimeOverlay bands={bands} toX={toX} height={CHART_HEIGHT} />}
               {score && score.status !== "ok" && (
                 <div className="absolute inset-0 flex items-center justify-center text-center px-6
-                                 text-[12px] text-muted bg-bg/70">
+                                 text-body text-muted bg-bg/70">
                   {scoreStatusText(score.status)}
                 </div>
               )}
@@ -329,14 +329,14 @@ export default function Lab() {
                   })}
                 </svg>
               ) : (
-                <p className="text-muted text-[11px]">
+                <p className="text-muted text-meta">
                   {score ? scoreStatusText(score.status) : ""}
                 </p>
               )}
             </div>
 
             {scoreError && (
-              <p className="text-neg text-[12px] mt-1">Failed to load regime scores: {scoreError}</p>
+              <p className="text-neg text-body mt-1">Failed to load regime scores: {scoreError}</p>
             )}
           </>
         )}

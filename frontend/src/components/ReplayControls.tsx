@@ -11,7 +11,7 @@ export default function ReplayControls(props: {
   onExit: () => void;
 }) {
   return (
-    <div className="glass flex items-center gap-2 px-3 py-2 text-xs">
+    <div className="glass flex items-center gap-2 px-3 py-2 text-body">
       <span className="rounded bg-cyan/20 px-2 py-0.5 text-cyan font-semibold">REPLAY</span>
       <button className="glass px-2 py-1" title="Reset ke awal" onClick={props.onReset}>|◀ Reset</button>
       <button className="glass px-2 py-1" onClick={props.onStep} disabled={props.atEnd}>▶| Step</button>

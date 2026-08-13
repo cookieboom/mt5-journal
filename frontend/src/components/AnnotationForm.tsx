@@ -57,8 +57,8 @@ export default function AnnotationForm({
   const field = "bg-white/5 rounded px-2 py-1 text-ink w-full";
   return (
     <div className="glass p-4">
-      <h2 className="text-[13px] font-semibold uppercase tracking-wider text-muted mb-3">Anotasi</h2>
-      <div className="flex flex-col gap-3 text-[12px]">
+      <h2 className="text-title font-semibold uppercase tracking-wider text-muted mb-3">Anotasi</h2>
+      <div className="flex flex-col gap-3 text-body">
         <label className="flex flex-col gap-1 text-muted">Setup
           <input className={field} value={setup} onChange={(e) => setSetup(e.target.value)} placeholder="mis. breakout" /></label>
         <label className="flex flex-col gap-1 text-muted">Confidence (1–5, kosong=belum dicatat)

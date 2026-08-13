@@ -1,4 +1,5 @@
 import { colorOf, type Projected } from "../lib/drawings";
+import { font } from "../lib/type";
 
 // Absolute SVG over the chart pane, pointer-events:none so the chart stays
 // interactive — the same arrangement MeasureOverlay uses. Everything here is a
@@ -33,7 +34,7 @@ export default function DrawingOverlay({
                 data-testid={`drawing-${d.id}`}
                 x={a.x + 4} y={a.y}
                 fill={color}
-                style={{ font: "11px/1.35 ui-monospace, monospace" }}
+                style={{ font: font("meta") }}
               >
                 {d.text}
               </text>

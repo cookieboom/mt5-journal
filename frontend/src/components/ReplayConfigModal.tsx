@@ -49,46 +49,46 @@ export default function ReplayConfigModal(props: {
   return (
     <Modal label="Mulai replay" width="w-[min(22.5rem,calc(100vw-2rem))]" onClose={props.onCancel}>
       <div className="space-y-3">
-        <h2 className="text-sm font-semibold">Mulai Replay</h2>
-        <label className="block text-xs">Simbol
+        <h2 className="text-title font-semibold">Mulai Replay</h2>
+        <label className="block text-body">Simbol
           <select className="glass mt-1 w-full px-2 py-1" value={symbol}
                   onChange={(e) => setSymbol(e.target.value as Sym)}>
             {SYMBOLS.map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
         </label>
-        <label className="block text-xs">Timeframe
+        <label className="block text-body">Timeframe
           <select className="glass mt-1 w-full px-2 py-1" value={tf}
                   onChange={(e) => setTf(e.target.value as Timeframe)}>
             {TIMEFRAMES.map((t) => <option key={t} value={t}>{t}</option>)}
           </select>
         </label>
-        <label className="block text-xs flex items-center gap-2 mt-4 text-warn font-semibold">
+        <label className="block text-body flex items-center gap-2 mt-4 text-warn font-semibold">
           <input type="checkbox" checked={compMode} onChange={(e) => setCompMode(e.target.checked)} />
           Competitive Mode
         </label>
         {compMode && (
           <div className="pl-4 space-y-2 border-l border-warn/50">
-            <label className="block text-xs flex items-center gap-2">
+            <label className="block text-body flex items-center gap-2">
               <input type="checkbox" checked={compHideDate} onChange={(e) => setCompHideDate(e.target.checked)} />
               Sembunyikan Tanggal
             </label>
-            <label className="block text-xs">Jumlah Skenario (0 = tak terbatas): {compRounds}
+            <label className="block text-body">Jumlah Skenario (0 = tak terbatas): {compRounds}
               <input type="range" min={0} max={20} className="w-full" value={compRounds}
                      onChange={(e) => setCompRounds(Number(e.target.value))} />
             </label>
           </div>
         )}
         {!compMode && (
-          <label className="block text-xs mt-2">Mulai dari tanggal (UTC)
+          <label className="block text-body mt-2">Mulai dari tanggal (UTC)
             <input type="date" className="glass mt-1 w-full px-2 py-1" value={startDate}
                    onChange={(e) => setStartDate(e.target.value)} />
           </label>
         )}
-        <label className="block text-xs">Bar histori sebelum mulai: {historyBars}
+        <label className="block text-body">Bar histori sebelum mulai: {historyBars}
           <input type="range" min={HISTORY_MIN} max={HISTORY_MAX} step={50} className="w-full" value={historyBars}
                  onChange={(e) => setHistoryBars(Number(e.target.value))} />
         </label>
-        <label className="block text-xs">Kecepatan: {speed} bar/dtk
+        <label className="block text-body">Kecepatan: {speed} bar/dtk
           <input type="range" min={SPEED_MIN} max={SPEED_MAX} className="w-full" value={speed}
                  onChange={(e) => setSpeed(Number(e.target.value))} />
         </label>

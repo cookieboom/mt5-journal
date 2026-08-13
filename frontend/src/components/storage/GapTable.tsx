@@ -92,7 +92,7 @@ export default function GapTable({ completeness, loading, onRefresh }: GapTableP
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2.5">
-          <h3 className="text-base font-bold text-ink flex items-center gap-2">
+          <h3 className="text-title font-bold text-ink flex items-center gap-2">
             <svg className="w-5 h-5 text-neg" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
                 strokeLinecap="round"
@@ -103,7 +103,7 @@ export default function GapTable({ completeness, loading, onRefresh }: GapTableP
             </svg>
             <span>Detected Gaps</span>
           </h3>
-          <span className="px-2 py-0.5 rounded-full text-xs font-mono font-semibold bg-neg/10 text-neg border border-neg/20">
+          <span className="px-2 py-0.5 rounded-full text-body font-mono font-semibold bg-neg/10 text-neg border border-neg/20">
             {gaps.length} {gaps.length === 1 ? "gap" : "gaps"}
           </span>
         </div>
@@ -112,7 +112,7 @@ export default function GapTable({ completeness, loading, onRefresh }: GapTableP
           type="button"
           onClick={handleFillAllGaps}
           disabled={loading || isFillingAll || gaps.length === 0}
-          className="py-1.5 px-3 rounded-lg bg-neg/20 hover:bg-neg/30 text-neg ring-1 ring-neg/40 text-xs font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
+          className="py-1.5 px-3 rounded-lg bg-neg/20 hover:bg-neg/30 text-neg ring-1 ring-neg/40 text-body font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
         >
           {isFillingAll ? (
             <>
@@ -140,7 +140,7 @@ export default function GapTable({ completeness, loading, onRefresh }: GapTableP
       {/* Feedback Banner */}
       {feedback && (
         <div
-          className={`p-3.5 rounded-xl border flex items-start justify-between gap-3 text-xs ${
+          className={`p-3.5 rounded-xl border flex items-start justify-between gap-3 text-body ${
             feedback.type === "success"
               ? "bg-pos/10 border-pos/30 text-pos"
               : "bg-neg/10 border-neg/30 text-neg"
@@ -160,7 +160,7 @@ export default function GapTable({ completeness, loading, onRefresh }: GapTableP
           </div>
           <button
             onClick={() => setFeedback(null)}
-            className="text-muted hover:text-ink text-xs px-1.5 py-0.5 rounded"
+            className="text-muted hover:text-ink text-body px-1.5 py-0.5 rounded"
           >
             Dismiss
           </button>
@@ -176,19 +176,19 @@ export default function GapTable({ completeness, loading, onRefresh }: GapTableP
         </div>
       ) : gaps.length === 0 ? (
         <div className="p-6 rounded-xl bg-pos/10 border border-pos/20 text-center space-y-2">
-          <div className="flex items-center justify-center gap-2 text-pos font-semibold text-sm">
+          <div className="flex items-center justify-center gap-2 text-pos font-semibold text-body">
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
             <span>No Gaps Detected</span>
           </div>
-          <p className="text-xs text-muted">
+          <p className="text-body text-muted">
             Candle coverage for {completeness?.symbol || "symbol"} ({completeness?.timeframe || "M1"}) is completely continuous!
           </p>
         </div>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs border-collapse">
+          <table className="w-full text-left text-body border-collapse">
             <thead>
               <tr className="border-b border-panel-border/80 text-muted font-medium">
                 <th className="py-2.5 px-3">Start Time</th>
@@ -220,7 +220,7 @@ export default function GapTable({ completeness, loading, onRefresh }: GapTableP
                         type="button"
                         onClick={() => handleFillSingleGap(gap)}
                         disabled={isItemLoading || isFillingAll}
-                        className="py-1 px-2.5 rounded bg-cyan/10 hover:bg-cyan/20 text-cyan ring-1 ring-cyan/30 text-xs font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-1.5"
+                        className="py-1 px-2.5 rounded bg-cyan/10 hover:bg-cyan/20 text-cyan ring-1 ring-cyan/30 text-body font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-1.5"
                       >
                         {isItemLoading ? (
                           <>

@@ -42,7 +42,7 @@ function rMultiple(value: number | null | undefined, n: number | null | undefine
 // stale/degraded one needing action, muted = nothing to show. On the one page
 // with order buttons, a degraded reading must look different, not just read
 // different (CLAUDE.md rule 9).
-const SHAPE = "text-[11px] px-2.5 py-1.5 rounded-lg ";
+const SHAPE = "text-meta px-2.5 py-1.5 rounded-lg ";
 const MUTED = `${SHAPE}text-muted ${TONE_TINT.absent}`;
 const OK = `${SHAPE}text-ink ${TONE_TINT.now}`;
 const STALE = `${SHAPE}text-ink ${TONE_TINT.wrong}`;

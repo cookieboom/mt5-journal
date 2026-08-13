@@ -3,7 +3,7 @@ import { palette, white } from "../lib/theme";
 
 export default function EquityChart({ svg, label }: { svg: EquitySvg; label: string }) {
   if (svg.empty) {
-    return <div className="text-muted text-sm py-10 text-center">Belum ada data {label}.</div>;
+    return <div className="text-muted text-body py-10 text-center">Belum ada data {label}.</div>;
   }
   const vbW = svg.viewbox.split(" ")[2] ?? "720";
   const uid = label.replace(/\s+/g, "-");

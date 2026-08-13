@@ -10,7 +10,7 @@ import { useTradePngPrefs } from "../hooks/useTradePngPrefs";
 
 function Fact({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="flex justify-between gap-4 py-1.5 border-b border-white/5 text-[13px]">
+    <div className="flex justify-between gap-4 py-1.5 border-b border-white/5 text-title">
       <span className="text-muted">{label}</span>
       <span className="num text-right">{children}</span>
     </div>
@@ -33,14 +33,14 @@ export default function TradeDetail() {
 
   return (
     <div>
-      <h1 className="text-[18px] font-bold tracking-tight mb-4">
+      <h1 className="text-headline font-bold mb-4">
         {trade.symbol_base} <span className="uppercase">{trade.direction}</span>
-        <span className="text-muted num text-[13px] ml-2">#{trade.position_id}</span>
+        <span className="text-muted num text-title ml-2">#{trade.position_id}</span>
       </h1>
 
       <div className="grid md:grid-cols-2 gap-4">
         <div className="glass p-4">
-          <h2 className="text-[13px] font-semibold uppercase tracking-wider text-muted mb-2">Trade</h2>
+          <h2 className="text-title font-semibold uppercase tracking-wider text-muted mb-2">Trade</h2>
           <Fact label="Status">{trade.status}</Fact>
           <Fact label="Source">{is_ea ? `EA (magic ${trade.magic})` : "Discretionary"}</Fact>
           <Fact label="Session">{session}</Fact>
@@ -63,12 +63,12 @@ export default function TradeDetail() {
         </div>
 
         <div className="glass p-4">
-          <h2 className="text-[13px] font-semibold uppercase tracking-wider text-muted mb-2">Chart</h2>
+          <h2 className="text-title font-semibold uppercase tracking-wider text-muted mb-2">Chart</h2>
           {chartable ? (
             <>
               <TradePngPanel settings={png.settings} onChange={png.update} />
               {chartFailed ? (
-                <p className="text-[12px] text-muted">
+                <p className="text-body text-muted">
                   Chart belum tersedia — jalankan <code>uv run journal candles</code> lalu{" "}
                   <button className="text-cyan hover:underline" onClick={() => setChartFailed(false)}>coba lagi</button>.
                 </p>
@@ -76,11 +76,11 @@ export default function TradeDetail() {
                 <img className="w-full rounded" src={`/trades/${trade.position_id}/chart.png?v=${png.version}`}
                   alt={`chart trade ${trade.position_id}`} onError={() => setChartFailed(true)} />
               )}
-              <a className="inline-block mt-2 text-[12px] text-cyan hover:underline"
+              <a className="inline-block mt-2 text-body text-cyan hover:underline"
                  href={`/trades/${trade.position_id}/view${window.location.search}`}>Lihat di chart interaktif →</a>
             </>
           ) : (
-            <p className="text-[12px] text-muted">Hanya trade closed yang bisa di-chart.</p>
+            <p className="text-body text-muted">Hanya trade closed yang bisa di-chart.</p>
           )}
         </div>
       </div>
@@ -90,7 +90,7 @@ export default function TradeDetail() {
         <TagEditor positionId={trade.position_id} tags={tags} onChanged={reload} />
       </div>
 
-      <p className="mt-4 text-[12px]"><a className="text-cyan hover:underline" href="/trades">← kembali ke daftar</a></p>
+      <p className="mt-4 text-body"><a className="text-cyan hover:underline" href="/trades">← kembali ke daftar</a></p>
     </div>
   );
 }

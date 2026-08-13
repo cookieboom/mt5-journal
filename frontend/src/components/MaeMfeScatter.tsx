@@ -16,13 +16,13 @@ export default function MaeMfeScatter({ series }: { series: ChartTrade[] }) {
   return (
     <div className="glass p-4">
       <div className="flex items-baseline justify-between mb-3">
-        <h2 className="text-[13px] font-semibold uppercase tracking-wider text-muted">MAE vs MFE (R)</h2>
-        <span className={"text-[11px] " + (thin ? "text-muted/60" : "text-muted")}>
+        <h2 className="text-title font-semibold uppercase tracking-wider text-muted">MAE vs MFE (R)</h2>
+        <span className={"text-meta " + (thin ? "text-muted/60" : "text-muted")}>
           n={pts.length}{thin ? " (perlu ≥20)" : ""}
         </span>
       </div>
       {pts.length === 0 ? (
-        <div className="text-muted text-sm py-8 text-center">Belum ada trade dengan MAE &amp; MFE (perlu candle + SL).</div>
+        <div className="text-muted text-body py-8 text-center">Belum ada trade dengan MAE &amp; MFE (perlu candle + SL).</div>
       ) : (
         <svg viewBox={`0 0 ${W} ${H}`} className={"w-full h-[200px] " + (thin ? "opacity-60" : "")}>
           <line x1={X(0)} y1={pad} x2={X(0)} y2={H - pad} stroke={white(0.15)} strokeWidth="1" />
@@ -33,8 +33,8 @@ export default function MaeMfeScatter({ series }: { series: ChartTrade[] }) {
               <title>#{p.position_id} {p.symbol_base}: MAE {p.mae_r}R, MFE {p.mfe_r}R</title>
             </circle>
           ))}
-          <text x={W - pad} y={Y(0) - 4} textAnchor="end" className="fill-muted text-[9px]">MAE →</text>
-          <text x={X(0) + 4} y={pad + 8} className="fill-muted text-[9px]">MFE ↑</text>
+          <text x={W - pad} y={Y(0) - 4} textAnchor="end" className="fill-muted text-label">MAE →</text>
+          <text x={X(0) + 4} y={pad + 8} className="fill-muted text-label">MFE ↑</text>
         </svg>
       )}
     </div>

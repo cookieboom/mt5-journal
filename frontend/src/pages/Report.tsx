@@ -8,13 +8,13 @@ import CalendarHeatmap from "../components/CalendarHeatmap";
 function BucketTable({ title, rows, ccy }: { title: string; rows: Bucket[]; ccy: string }) {
   return (
     <div className="glass p-4">
-      <h2 className="text-[13px] font-semibold uppercase tracking-wider text-muted mb-3">{title}</h2>
+      <h2 className="text-title font-semibold uppercase tracking-wider text-muted mb-3">{title}</h2>
       <div className="overflow-x-auto">
-        <table className="w-full border-collapse text-[12px]">
+        <table className="w-full border-collapse text-body">
           <thead>
             <tr className="text-muted text-left">
               {["", "n", "Win", "Expectancy", "Avg R"].map((h, i) => (
-                <th key={i} className="pb-2 font-semibold uppercase text-[9.5px] tracking-wider">{h}</th>
+                <th key={i} className="pb-2 font-semibold uppercase text-label">{h}</th>
               ))}
             </tr>
           </thead>
@@ -47,22 +47,22 @@ export default function Report() {
   const ccy = r.currency;
 
   const Kv = ({ label, children }: { label: string; children: React.ReactNode }) => (
-    <div className="flex justify-between gap-4 py-1.5 border-b border-white/5 text-[13px]">
+    <div className="flex justify-between gap-4 py-1.5 border-b border-white/5 text-title">
       <span className="text-muted">{label}</span><span className="num text-right">{children}</span>
     </div>
   );
 
   return (
     <div>
-      <h1 className="text-[18px] font-bold tracking-tight mb-1">Report</h1>
-      <div className="text-[12px] text-muted mb-4">
+      <h1 className="text-headline font-bold mb-1">Report</h1>
+      <div className="text-body text-muted mb-4">
         Coverage penuh untuk money (n={r.n_closed} closed). Net dalam {ccy} (US cents).
         Baris grey = bucket di bawah n≥20 (docs §9): count &amp; net tetap tampil, rate/rata-rata ditahan.
       </div>
 
       <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4 mb-4">
         <div className="glass p-4">
-          <h2 className="text-[13px] font-semibold uppercase tracking-wider text-muted mb-2">
+          <h2 className="text-title font-semibold uppercase tracking-wider text-muted mb-2">
             Money (coverage penuh, n={r.n_closed})
           </h2>
           <Kv label="Win rate">{pct(r.win_rate)}</Kv>
@@ -73,7 +73,7 @@ export default function Report() {
           <Kv label="W / L / BE">{r.n_wins} / {r.n_losses} / {r.n_breakeven}</Kv>
         </div>
         <div className="glass p-4">
-          <h2 className="text-[13px] font-semibold uppercase tracking-wider text-muted mb-2">
+          <h2 className="text-title font-semibold uppercase tracking-wider text-muted mb-2">
             MAE / MFE (§9: perlu n≥20, butuh candle + SL)
           </h2>
           <Kv label="Candle coverage">{r.n_with_mae} / {r.n_closed} closed</Kv>
@@ -82,7 +82,7 @@ export default function Report() {
           <Kv label="Avg R (akun)">{gatedR(r.n_with_r, r.avg_r)}</Kv>
         </div>
         <div className="glass p-4">
-          <h2 className="text-[13px] font-semibold uppercase tracking-wider text-muted mb-2">
+          <h2 className="text-title font-semibold uppercase tracking-wider text-muted mb-2">
             Sequence (urut close time, n={r.n_sequenced})
           </h2>
           <Kv label="Max drawdown">
@@ -90,7 +90,7 @@ export default function Report() {
           </Kv>
           <Kv label="Win streak terpanjang"><span className="text-pos">{r.max_win_streak}</span></Kv>
           <Kv label="Loss streak terpanjang"><span className="text-neg">{r.max_loss_streak}</span></Kv>
-          <div className="text-[11px] text-muted mt-2 leading-snug">
+          <div className="text-meta text-muted mt-2 leading-snug">
             Realized peak→trough, floating P&amp;L tidak ikut. Tidak digate §9:
             ini kejadian, bukan rata-rata. Trade tanpa close time
             ({r.n_closed - r.n_sequenced}) tidak masuk urutan.

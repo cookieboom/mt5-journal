@@ -96,7 +96,7 @@ export default function MaintenancePanel({ onSuccess }: MaintenancePanelProps) {
       {/* Feedback Banner */}
       {feedback && (
         <div
-          className={`p-4 rounded-xl border flex items-start justify-between gap-3 text-sm ${
+          className={`p-4 rounded-xl border flex items-start justify-between gap-3 text-body ${
             feedback.type === "success"
               ? "bg-pos/10 border-pos/30 text-pos"
               : "bg-neg/10 border-neg/30 text-neg"
@@ -116,7 +116,7 @@ export default function MaintenancePanel({ onSuccess }: MaintenancePanelProps) {
           </div>
           <button
             onClick={() => setFeedback(null)}
-            className="text-muted hover:text-ink text-xs px-2 py-0.5 rounded"
+            className="text-muted hover:text-ink text-body px-2 py-0.5 rounded"
           >
             Dismiss
           </button>
@@ -139,13 +139,13 @@ export default function MaintenancePanel({ onSuccess }: MaintenancePanelProps) {
               </svg>
               <span>PNG & Report Cache</span>
             </div>
-            <p className="text-xs text-muted leading-relaxed mb-4">
+            <p className="text-body text-muted leading-relaxed mb-4">
               Clear pre-rendered trade PNG images and weekly summary cache to free disk space.
             </p>
           </div>
           <button
             onClick={() => setActiveAction("cache")}
-            className="w-full py-2 px-3 rounded-lg bg-cyan/10 hover:bg-cyan/20 ring-1 ring-cyan/30 text-cyan text-xs font-semibold transition-colors flex items-center justify-center gap-1.5"
+            className="w-full py-2 px-3 rounded-lg bg-cyan/10 hover:bg-cyan/20 ring-1 ring-cyan/30 text-cyan text-body font-semibold transition-colors flex items-center justify-center gap-1.5"
           >
             Clear PNG & Report Cache
           </button>
@@ -165,13 +165,13 @@ export default function MaintenancePanel({ onSuccess }: MaintenancePanelProps) {
               </svg>
               <span>SQLite Database</span>
             </div>
-            <p className="text-xs text-muted leading-relaxed mb-4">
+            <p className="text-body text-muted leading-relaxed mb-4">
               Run SQLite VACUUM to defragment storage and reclaim unused space from deleted records.
             </p>
           </div>
           <button
             onClick={() => setActiveAction("vacuum")}
-            className="w-full py-2 px-3 rounded-lg bg-violet/10 hover:bg-violet/20 ring-1 ring-violet/30 text-violet text-xs font-semibold transition-colors flex items-center justify-center gap-1.5"
+            className="w-full py-2 px-3 rounded-lg bg-violet/10 hover:bg-violet/20 ring-1 ring-violet/30 text-violet text-body font-semibold transition-colors flex items-center justify-center gap-1.5"
           >
             Vacuum & Optimize DB
           </button>
@@ -191,13 +191,13 @@ export default function MaintenancePanel({ onSuccess }: MaintenancePanelProps) {
               </svg>
               <span>Trades & Auto-tags</span>
             </div>
-            <p className="text-xs text-muted leading-relaxed mb-4">
+            <p className="text-body text-muted leading-relaxed mb-4">
               Re-analyze MT5 raw deals, fold trade positions, recalculate MAE/MFE and refresh auto-tags.
             </p>
           </div>
           <button
             onClick={() => setActiveAction("rebuild")}
-            className="w-full py-2 px-3 rounded-lg bg-pos/10 hover:bg-pos/20 ring-1 ring-pos/30 text-pos text-xs font-semibold transition-colors flex items-center justify-center gap-1.5"
+            className="w-full py-2 px-3 rounded-lg bg-pos/10 hover:bg-pos/20 ring-1 ring-pos/30 text-pos text-body font-semibold transition-colors flex items-center justify-center gap-1.5"
           >
             Rebuild Trades & Auto-tags
           </button>
@@ -214,17 +214,17 @@ export default function MaintenancePanel({ onSuccess }: MaintenancePanelProps) {
             className="glass max-w-md w-full p-6 rounded-xl border border-panel-border space-y-4"
             onClick={(e) => e.stopPropagation()}
           >
-            <h2 className="text-base font-bold text-ink">
+            <h2 className="text-title font-bold text-ink">
               {modalDetails[activeAction].title}
             </h2>
-            <p className="text-xs text-muted leading-relaxed">
+            <p className="text-body text-muted leading-relaxed">
               {modalDetails[activeAction].body}
             </p>
 
             <div className="flex items-center justify-end gap-3 pt-2 border-t border-panel-border/50">
               <button
                 type="button"
-                className="px-4 py-2 rounded-lg bg-white/5 hover:bg-white/10 ring-1 ring-panel-border text-ink text-xs font-medium transition-colors"
+                className="px-4 py-2 rounded-lg bg-white/5 hover:bg-white/10 ring-1 ring-panel-border text-ink text-body font-medium transition-colors"
                 onClick={() => setActiveAction(null)}
                 disabled={submitting}
               >
@@ -232,7 +232,7 @@ export default function MaintenancePanel({ onSuccess }: MaintenancePanelProps) {
               </button>
               <button
                 type="button"
-                className={`px-4 py-2 rounded-lg text-xs transition-colors flex items-center gap-2 ${modalDetails[activeAction].buttonClass}`}
+                className={`px-4 py-2 rounded-lg text-body transition-colors flex items-center gap-2 ${modalDetails[activeAction].buttonClass}`}
                 onClick={handleExecute}
                 disabled={submitting}
               >

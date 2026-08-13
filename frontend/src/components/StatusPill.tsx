@@ -27,7 +27,7 @@ const DOT: Record<Tone, string> = {
 
 export default function StatusPill({ tone, children }: { tone: Tone; children: ReactNode }) {
   return (
-    <span className={`text-[11px] px-2.5 py-1 rounded-full flex items-center gap-1.5 ${TONE_TEXT[tone]} ${TONE_TINT[tone]}`}>
+    <span className={`text-meta px-2.5 py-1 rounded-full flex items-center gap-1.5 ${TONE_TEXT[tone]} ${TONE_TINT[tone]}`}>
       {DOT[tone] && <span className={`w-1.5 h-1.5 rounded-full ${DOT[tone]}`} />}
       {children}
     </span>

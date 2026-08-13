@@ -96,7 +96,7 @@ export default function StoragePage() {
       {/* Header & Page Title */}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="text-xl font-bold tracking-tight text-ink flex items-center gap-2.5">
+          <h1 className="text-headline font-bold text-ink flex items-center gap-2.5">
             <svg className="w-6 h-6 text-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
                 strokeLinecap="round"
@@ -107,14 +107,14 @@ export default function StoragePage() {
             </svg>
             <span>Storage & Data Management</span>
           </h1>
-          <p className="text-xs text-muted mt-1">
+          <p className="text-body text-muted mt-1">
             Monitor SQLite storage, inspect candle coverage gaps, execute maintenance, and manage data retention.
           </p>
         </div>
 
         <button
           onClick={handleRefreshAll}
-          className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 ring-1 ring-panel-border text-ink text-xs font-medium transition-colors flex items-center gap-1.5"
+          className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 ring-1 ring-panel-border text-ink text-body font-medium transition-colors flex items-center gap-1.5"
         >
           <svg className="w-3.5 h-3.5 text-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
@@ -127,7 +127,7 @@ export default function StoragePage() {
       <div className="flex items-center gap-2 border-b border-panel-border">
         <button
           onClick={() => setActiveTab("overview")}
-          className={`pb-3 px-4 text-xs font-semibold transition-colors relative flex items-center gap-2 ${
+          className={`pb-3 px-4 text-body font-semibold transition-colors relative flex items-center gap-2 ${
             activeTab === "overview"
               ? "text-cyan border-b-2 border-cyan"
               : "text-muted hover:text-ink"
@@ -141,7 +141,7 @@ export default function StoragePage() {
 
         <button
           onClick={() => setActiveTab("completeness")}
-          className={`pb-3 px-4 text-xs font-semibold transition-colors relative flex items-center gap-2 ${
+          className={`pb-3 px-4 text-body font-semibold transition-colors relative flex items-center gap-2 ${
             activeTab === "completeness"
               ? "text-cyan border-b-2 border-cyan"
               : "text-muted hover:text-ink"
@@ -155,7 +155,7 @@ export default function StoragePage() {
 
         <button
           onClick={() => setActiveTab("retention")}
-          className={`pb-3 px-4 text-xs font-semibold transition-colors relative flex items-center gap-2 ${
+          className={`pb-3 px-4 text-body font-semibold transition-colors relative flex items-center gap-2 ${
             activeTab === "retention"
               ? "text-cyan border-b-2 border-cyan"
               : "text-muted hover:text-ink"
@@ -172,7 +172,7 @@ export default function StoragePage() {
       {activeTab === "overview" && (
         <div className="space-y-6">
           {overviewError && (
-            <div className="p-4 rounded-xl bg-neg/10 border border-neg/30 text-neg text-xs">
+            <div className="p-4 rounded-xl bg-neg/10 border border-neg/30 text-neg text-body">
               {overviewError}
             </div>
           )}
@@ -180,7 +180,7 @@ export default function StoragePage() {
           <DiskStatsCard overview={overview} loading={loadingOverview} />
 
           <div className="pt-2">
-            <h2 className="text-sm font-bold text-ink mb-3">Database Maintenance & Optimization</h2>
+            <h2 className="text-title font-bold text-ink mb-3">Database Maintenance & Optimization</h2>
             <MaintenancePanel onSuccess={handleRefreshAll} />
           </div>
         </div>
@@ -193,12 +193,12 @@ export default function StoragePage() {
           <div className="glass p-4 rounded-xl border border-panel-border flex flex-wrap items-center justify-between gap-4">
             <div className="flex flex-wrap items-center gap-4">
               <div>
-                <label htmlFor="storage-symbol" className="block text-[11px] font-medium text-muted mb-1">Select Symbol</label>
+                <label htmlFor="storage-symbol" className="block text-meta font-medium text-muted mb-1">Select Symbol</label>
                 <select
                   id="storage-symbol"
                   value={selectedSymbol}
                   onChange={(e) => setSelectedSymbol(e.target.value)}
-                  className="bg-bg/90 border border-panel-border rounded-lg px-3 py-1.5 text-xs text-ink font-semibold focus:border-cyan"
+                  className="bg-bg/90 border border-panel-border rounded-lg px-3 py-1.5 text-body text-ink font-semibold focus:border-cyan"
                 >
                   {availableSymbols.map((sym) => (
                     <option key={sym} value={sym}>
@@ -209,13 +209,13 @@ export default function StoragePage() {
               </div>
 
               <div>
-                <label className="block text-[11px] font-medium text-muted mb-1">Timeframe</label>
+                <label className="block text-meta font-medium text-muted mb-1">Timeframe</label>
                 <div className="flex items-center gap-1 bg-bg/90 border border-panel-border p-1 rounded-lg">
                   {DEFAULT_TIMEFRAMES.map((tf) => (
                     <button
                       key={tf}
                       onClick={() => setSelectedTf(tf)}
-                      className={`px-2.5 py-1 rounded text-xs font-mono font-medium transition-colors ${
+                      className={`px-2.5 py-1 rounded text-body font-mono font-medium transition-colors ${
                         selectedTf === tf
                           ? "bg-cyan text-bg font-bold"
                           : "text-muted hover:text-ink"
@@ -231,7 +231,7 @@ export default function StoragePage() {
             <button
               onClick={() => loadCompleteness(selectedSymbol, selectedTf)}
               disabled={loadingCompleteness}
-              className="px-3 py-1.5 rounded-lg bg-cyan/10 hover:bg-cyan/20 ring-1 ring-cyan/30 text-cyan text-xs font-medium transition-colors disabled:opacity-40 flex items-center gap-1.5"
+              className="px-3 py-1.5 rounded-lg bg-cyan/10 hover:bg-cyan/20 ring-1 ring-cyan/30 text-cyan text-body font-medium transition-colors disabled:opacity-40 flex items-center gap-1.5"
             >
               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
@@ -241,7 +241,7 @@ export default function StoragePage() {
           </div>
 
           {completenessError && (
-            <div className="p-4 rounded-xl bg-neg/10 border border-neg/30 text-neg text-xs">
+            <div className="p-4 rounded-xl bg-neg/10 border border-neg/30 text-neg text-body">
               {completenessError}
             </div>
           )}

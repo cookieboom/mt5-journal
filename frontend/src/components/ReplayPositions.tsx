@@ -11,7 +11,7 @@ export default function ReplayPositions(props: {
   const closed = props.positions.filter((p) => p.status === "closed");
 
   return (
-    <div className="glass p-3 space-y-2 text-xs">
+    <div className="glass p-3 space-y-2 text-body">
       <div className="font-semibold">Posisi</div>
       {open.length === 0 && <div className="text-muted">Tidak ada posisi terbuka.</div>}
       {open.map((p) => {

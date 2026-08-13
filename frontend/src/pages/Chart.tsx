@@ -437,12 +437,12 @@ export default function Chart() {
         <button
           onClick={() => setPanelOpen(true)}
           aria-expanded={panelOpen}
-          className="glass lg:hidden ml-auto shrink-0 px-3 min-h-[44px] text-[12px] text-muted hover:text-ink"
+          className="glass lg:hidden ml-auto shrink-0 px-3 min-h-[44px] text-body text-muted hover:text-ink"
         >Panel</button>
       </div>
-      {liveCmd.toast && <div className="glass p-3 mb-3 text-[12px] text-cyan">{liveCmd.toast}</div>}
+      {liveCmd.toast && <div className="glass p-3 mb-3 text-body text-cyan">{liveCmd.toast}</div>}
       {liveCmd.error && !liveCmd.preview && (
-        <div className="glass p-3 mb-3 text-[12px] text-neg">Ditolak: {liveCmd.error}</div>
+        <div className="glass p-3 mb-3 text-body text-neg">Ditolak: {liveCmd.error}</div>
       )}
       {replayOpen && (
         <div className="mb-3 flex items-center justify-between">
@@ -457,7 +457,7 @@ export default function Chart() {
             onExit={exitReplay}
           />
           {replayPrefs.prefs.competitiveMode && (
-            <div className="flex items-center gap-4 text-xs font-semibold">
+            <div className="flex items-center gap-4 text-body font-semibold">
                <span className="text-warn">
                  Skenario {compRound} {replayPrefs.prefs.competitiveRounds > 0 ? `/ ${replayPrefs.prefs.competitiveRounds}` : ''}
                </span>
@@ -493,7 +493,7 @@ export default function Chart() {
               drawings={drawingsProp}
             />
           ) : (
-            <div className="glass h-full flex items-center justify-center text-muted text-sm">
+            <div className="glass h-full flex items-center justify-center text-muted text-body">
               {data.status === "loading" || data.status === "polling" ? (
                 <span>⌛ Memuat data {symbol} {tf}…</span>
               ) : data.status === "gaveup" ? (
@@ -510,16 +510,16 @@ export default function Chart() {
 
           {/* Non-blocking banners while bars are already shown */}
           {hasBars && (data.status === "loading" || data.status === "polling") && (
-            <div className="glass absolute top-2 left-2 px-2 py-1 text-[11px] text-muted">⌛ memuat data…</div>
+            <div className="glass absolute top-2 left-2 px-2 py-1 text-meta text-muted">⌛ memuat data…</div>
           )}
           {hasBars && data.status === "gaveup" && (
-            <div className="glass absolute top-2 left-2 px-2 py-1 text-[11px] text-muted flex items-center gap-2">
+            <div className="glass absolute top-2 left-2 px-2 py-1 text-meta text-muted flex items-center gap-2">
               <span>Data belum lengkap — jalankan <code>journal live</code>.</span>
               <button onClick={data.retry} className="text-cyan">Coba lagi</button>
             </div>
           )}
           {hasBars && data.status === "error" && (
-            <div className="glass absolute top-2 left-2 px-2 py-1 text-[11px] text-neg flex items-center gap-2">
+            <div className="glass absolute top-2 left-2 px-2 py-1 text-meta text-neg flex items-center gap-2">
               <span>Gagal memuat: {data.error}</span>
               <button onClick={data.retry} className="text-cyan">Coba lagi</button>
             </div>
@@ -547,10 +547,10 @@ export default function Chart() {
           {evalPause && (
             <div className="absolute inset-0 bg-black/80 flex flex-col items-center justify-center z-50 text-center">
                {evalPause.isSkip ? (
-                 <h2 className="text-2xl font-bold text-muted">Mencari Skenario Baru...</h2>
+                 <h2 className="text-display font-bold text-muted">Mencari Skenario Baru...</h2>
                ) : (
                  <>
-                   <h2 className="text-2xl font-bold mb-2">Evaluasi Skenario {compRound}</h2>
+                   <h2 className="text-display font-bold mb-2">Evaluasi Skenario {compRound}</h2>
                    <div className={`text-4xl font-bold ${evalPause.pnl >= 0 ? 'text-up' : 'text-down'}`}>
                      {evalPause.pnl > 0 ? '+' : ''}{evalPause.pnl.toFixed(2)}R
                    </div>

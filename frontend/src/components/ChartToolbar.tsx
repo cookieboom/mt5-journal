@@ -27,7 +27,7 @@ export default function ChartToolbar({
       <select
         value={symbol}
         onChange={(e) => onSymbol(e.target.value as Sym)}
-        className="glass px-2 py-1 text-[13px] bg-transparent"
+        className="glass px-2 py-1 text-title bg-transparent"
         aria-label="symbol"
       >
         {SYMBOLS.map((s) => (
@@ -35,7 +35,7 @@ export default function ChartToolbar({
         ))}
       </select>
 
-      <div className="glass flex overflow-hidden text-[12px]">
+      <div className="glass flex overflow-hidden text-body">
         {TIMEFRAMES.map((t) => (
           <button
             key={t}
@@ -52,7 +52,7 @@ export default function ChartToolbar({
 
       <button
         onClick={onJumpNow}
-        className="glass px-2.5 py-1 text-[12px] text-muted hover:text-ink"
+        className="glass px-2.5 py-1 text-body text-muted hover:text-ink"
       >
         Ke sekarang
       </button>
@@ -69,7 +69,7 @@ export default function ChartToolbar({
       <div className="ml-auto">
         <button
           onClick={() => setGear((g) => !g)}
-          className="glass px-2.5 py-1 text-[13px] text-muted hover:text-ink"
+          className="glass px-2.5 py-1 text-title text-muted hover:text-ink"
           aria-label="settings"
         >
           ⚙

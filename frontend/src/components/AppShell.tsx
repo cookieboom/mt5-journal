@@ -23,7 +23,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
       <a
         href="#main"
         className="sr-only focus:not-sr-only focus:fixed focus:left-2 focus:top-2 focus:z-50
-                   focus:rounded focus:bg-bg focus:px-3 focus:py-2 focus:text-[13px]
+                   focus:rounded focus:bg-bg focus:px-3 focus:py-2 focus:text-title
                    focus:text-ink focus:ring-1 focus:ring-cyan"
       >
         Lewati ke konten

@@ -29,7 +29,7 @@ export default function TextDrawingInput({
       ref={ref}
       aria-label="teks anotasi"
       data-testid="text-drawing-input"
-      className="glass absolute z-30 px-1 py-0.5 text-[11px] bg-bg text-ink"
+      className="glass absolute z-30 px-1 py-0.5 text-meta bg-bg text-ink"
       style={{ left: x, top: y - 18, width: 160 }}
       value={value}
       maxLength={MAX_TEXT_LEN}

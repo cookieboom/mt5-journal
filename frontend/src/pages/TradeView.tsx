@@ -16,7 +16,7 @@ import { clipToCursor } from "../lib/replay";
 
 function Fact({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="flex justify-between gap-4 py-1 border-b border-white/5 text-[13px]">
+    <div className="flex justify-between gap-4 py-1 border-b border-white/5 text-title">
       <span className="text-muted">{label}</span><span className="num text-right">{children}</span>
     </div>
   );
@@ -140,9 +140,9 @@ export default function TradeView() {
   return (
     <div className="flex gap-3 h-[calc(100vh-2rem)]">
       <div className="relative flex-1 min-h-0 flex flex-col">
-        <h1 className="text-[16px] font-bold mb-2">{t.symbol_base}{" "}
+        <h1 className="text-headline font-bold mb-2">{t.symbol_base}{" "}
           <span className="uppercase">{t.direction}</span>
-          <span className="text-muted num text-[12px] ml-2">#{t.position_id}</span></h1>
+          <span className="text-muted num text-body ml-2">#{t.position_id}</span></h1>
         <div className="flex-1 min-h-0">
           {chart.candles.length ? (
             <CandleChart symbol={t.symbol as Sym} tf={tf} settings={settings}
@@ -153,7 +153,7 @@ export default function TradeView() {
               markers={markers}
               drawings={drawingsProp} />
           ) : (
-            <div className="glass h-full flex items-center justify-center text-muted text-sm">
+            <div className="glass h-full flex items-center justify-center text-muted text-body">
               {chart.status === "gaveup"
                 ? <span>Belum ada data ter-cache — jalankan <code>journal live</code>.</span>
                 : <span>⌛ Memuat data {t.symbol} {tf}…</span>}
@@ -161,7 +161,7 @@ export default function TradeView() {
           )}
         </div>
         {/* optional playback reveal — pure visual, no evaluator/fills */}
-        <div className="flex justify-center items-center gap-2 mt-2 text-[12px]">
+        <div className="flex justify-center items-center gap-2 mt-2 text-body">
           <button className="glass px-2 py-1" onClick={() => { setCursor(startMs); setPlaying(true); }}>
             Putar ulang
           </button>
@@ -202,7 +202,7 @@ export default function TradeView() {
         </div>
         <AnnotationForm positionId={t.position_id} annotation={data.annotation} onSaved={reload} />
         <TagEditor positionId={t.position_id} tags={data.tags} onChanged={reload} />
-        <a className="text-[12px] text-cyan hover:underline" href={`/trades/${t.position_id}`}>← detail trade</a>
+        <a className="text-body text-cyan hover:underline" href={`/trades/${t.position_id}`}>← detail trade</a>
       </aside>
     </div>
   );

@@ -25,7 +25,7 @@ export default function DataHealthPanel({
   };
 
   return (
-    <div className="text-[12px] rounded-lg bg-white/5 p-3">
+    <div className="text-body rounded-lg bg-white/5 p-3">
       <div className="flex items-center justify-between">
         <span className="font-medium">Data health · {symbol} {tf}</span>
         <span className={pct >= 100 ? "text-cyan" : "text-neg"}>{pct}% tercover</span>

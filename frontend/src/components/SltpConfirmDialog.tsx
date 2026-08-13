@@ -25,15 +25,15 @@ export default function SltpConfirmDialog(props: {
       width="w-[min(24rem,calc(100vw-2rem))]"
       onClose={props.onCancel}
     >
-      <h2 className="text-[15px] font-bold mb-1">
+      <h2 className="text-headline font-bold mb-1">
         {props.removing ? `Hapus ${label}?` : `Atur ${label} — posisi #${props.positionId}`}
       </h2>
       {props.removing ? (
-        <p className="text-[12px] text-neg mb-3">
+        <p className="text-body text-neg mb-3">
           Posisi jadi tanpa {label === "SL" ? "stop-loss" : "take-profit"}. Lanjutkan?
         </p>
       ) : (
-        <label className="flex flex-col text-muted text-[10px] mb-3">
+        <label className="flex flex-col text-muted text-label mb-3">
           {label}
           <input
             className="bg-white/5 rounded px-2 py-1 text-ink num"
@@ -43,7 +43,7 @@ export default function SltpConfirmDialog(props: {
           />
         </label>
       )}
-      {fieldError && <div className="text-neg text-[11px] mb-2">{fieldError}</div>}
+      {fieldError && <div className="text-neg text-meta mb-2">{fieldError}</div>}
       <div className="flex justify-end gap-2">
         <button className="px-3 py-1.5 rounded bg-white/8 ring-1 ring-panel-border text-ink"
           onClick={props.onCancel}>Batal</button>
