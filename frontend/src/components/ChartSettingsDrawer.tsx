@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import Sheet from "./Sheet";
 import { SYMBOLS, TIMEFRAMES } from "../lib/candles";
 import {
   INITIAL_MAX, INITIAL_MIN, MAX_MAX, MAX_MIN, type ChartSettings,
@@ -35,27 +35,17 @@ export default function ChartSettingsDrawer({
   const setColor = (k: keyof ChartSettings["colors"], v: string) =>
     onChange({ ...settings, colors: { ...settings.colors, [k]: v } });
 
-  useEffect(() => {
-    const onEsc = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    window.addEventListener("keydown", onEsc);
-    return () => window.removeEventListener("keydown", onEsc);
-  }, [onClose]);
-
   return (
-    <>
-      <div className="fixed inset-0 z-30" onClick={onClose} />
-      <div
-        className="glass fixed right-0 top-0 z-40 h-full w-[300px] p-4
-                   flex flex-col"
-        role="dialog"
-        aria-label="Pengaturan chart"
-      >
-        <div className="flex items-center justify-between mb-3">
-          <div className="text-ink text-[13px]">Pengaturan chart</div>
-          <button onClick={onClose} className="text-muted hover:text-ink" aria-label="tutup">✕</button>
-        </div>
-
-        <div className="flex-1 overflow-y-auto min-h-0">
+    <Sheet
+      label="Pengaturan chart"
+      onClose={onClose}
+      footer={
+        <button onClick={onReset}
+          className="glass mt-2 px-3 py-1.5 text-[12px] text-muted hover:text-ink self-start">
+          Reset ke default
+        </button>
+      }
+    >
           <Section title="Tampilan">
             <Field label="Tema">
               <div className="flex gap-1">
@@ -156,13 +146,6 @@ export default function ChartSettingsDrawer({
               </select>
             </Field>
           </Section>
-        </div>
-
-        <button onClick={onReset}
-          className="glass mt-2 px-3 py-1.5 text-[12px] text-muted hover:text-ink self-start">
-          Reset ke default
-        </button>
-      </div>
-    </>
+    </Sheet>
   );
 }

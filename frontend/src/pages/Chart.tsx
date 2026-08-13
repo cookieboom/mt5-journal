@@ -26,6 +26,7 @@ import ReplayControls from "../components/ReplayControls";
 import ReplayPositions from "../components/ReplayPositions";
 import ReplaySummary from "../components/ReplaySummary";
 import RiskSizePanel from "../components/RiskSizePanel";
+import Sheet from "../components/Sheet";
 import { useChartData } from "../hooks/useChartData";
 import { useDrawings } from "../hooks/useDrawings";
 import { PLANNED_ID } from "../lib/sltpDrag";
@@ -42,6 +43,8 @@ export interface ChartHandle {
 
 export default function Chart() {
   const [params, setParams] = useSearchParams();
+  // Below lg the side column is a sheet instead of a third of the screen.
+  const [panelOpen, setPanelOpen] = useState(false);
   const { settings, update, reset } = useChartPrefs();
   const { symbol, tf } = parseSelection(params, {
     symbol: settings.defaultSymbol, tf: settings.defaultTimeframe,
@@ -326,8 +329,88 @@ export default function Chart() {
   const sessionCounts = useMemo(() => outcomeCounts(statPositions), [statPositions]);
   const sessionSummary = competitive ? summarize(statPositions) : replay.sessionSummary;
 
+  // One definition, two containers: the lg column and the sheet below it. Only
+  // one of them renders it at a time — RiskSizePanel must not exist twice.
+  const sidePanel = replayOpen ? (
+    <>
+      <RiskSizePanel
+        disabled={!replay.session || atEnd}
+        currency={currency}
+        prefs={sizing.prefs}
+        onPrefsChange={sizing.setPrefs}
+        entry={plannedEntry}
+        sl={plannedSl}
+        tp={plannedTp}
+        onSlChange={setPlannedSl}
+        onTpChange={setPlannedTp}
+        result={sizing.result}
+        loading={sizing.loading}
+        onSubmit={(o) => replay.open({
+          direction: o.direction, volume: o.volume,
+          sl: plannedSl ?? 0, tp: plannedTp ?? 0,
+        })}
+      />
+      <ReplayPositions
+        positions={replay.positions}
+        currentClose={currentClose}
+        currency={currency}
+        onClose={replay.close}
+      />
+      {/* Career card is hidden in competitive mode — the run total below
+          is the score that matters there. */}
+      {!competitive && <ReplaySummary title="Kumulatif" s={career ?? null} />}
+      <ReplaySummary
+        title={competitive ? `Kompetitif · Skenario ${compRound}` : "Sesi ini"}
+        s={sessionSummary}
+        counts={sessionCounts}
+      />
+    </>
+  ) : (
+    <>
+      <RiskSizePanel
+        disabled={!live} // load gate only — live.live.empty is never undefined
+        blocked={entryBlocked}
+        currency={currency}
+        prefs={sizing.prefs}
+        onPrefsChange={sizing.setPrefs}
+        entry={plannedEntry}
+        sl={plannedSl}
+        tp={plannedTp}
+        onSlChange={setPlannedSl}
+        onTpChange={setPlannedTp}
+        result={sizing.result}
+        loading={sizing.loading}
+        onSubmit={() => liveCmd.request(null, "open", {
+          symbol, entry: plannedEntry, sl: plannedSl, tp: plannedTp,
+          risk_mode: sizing.prefs.mode, risk_value: sizing.prefs.value,
+        })}
+      />
+      <div className="glass w-full p-3">
+        <ChartInfoPanel
+          symbol={symbol}
+          tf={tf}
+          candles={data.candles}
+          hovered={hovered}
+          live={live ?? null}
+          currency={currency}
+          chartType={settings.chartType}
+        />
+      </div>
+      <DataHealthPanel
+        bars={shownCandles}
+        missing={data.missing}
+        window={[shownCandles[0]?.time_msc ?? Date.now(), shownCandles[shownCandles.length - 1]?.time_msc ?? Date.now()]}
+        tf={tf}
+        symbol={symbol}
+        onBackfilled={() => data.retry()}
+      />
+    </>
+  );
+
+  // Below md the shell reserves 76px for the nav bar; the chart column has to
+  // subtract it too or the canvas runs underneath it.
   return (
-    <div className="flex flex-col h-[calc(100vh-2rem)]">
+    <div className="flex flex-col h-[calc(100vh-6rem)] md:h-[calc(100vh-2rem)]">
       {configOpen && <ReplayConfigModal initial={replayPrefs.prefs} onStart={onStart} onCancel={exitReplay} />}
       <div className="flex items-center gap-3">
         <ChartToolbar
@@ -343,6 +426,11 @@ export default function Chart() {
           replayActive={replayOpen}
         />
         <LiveDot status={liveStatus} />
+        <button
+          onClick={() => setPanelOpen(true)}
+          aria-expanded={panelOpen}
+          className="glass lg:hidden ml-auto shrink-0 px-3 min-h-[44px] text-[12px] text-muted hover:text-ink"
+        >Panel</button>
       </div>
       {liveCmd.toast && <div className="glass p-3 mb-3 text-[12px] text-cyan">{liveCmd.toast}</div>}
       {liveCmd.error && !liveCmd.preview && (
@@ -465,83 +553,14 @@ export default function Chart() {
           )}
         </div>
         <aside className="w-[240px] shrink-0 hidden lg:flex lg:flex-col gap-3 overflow-y-auto">
-          {replayOpen ? (
-            <>
-              <RiskSizePanel
-                disabled={!replay.session || atEnd}
-                currency={currency}
-                prefs={sizing.prefs}
-                onPrefsChange={sizing.setPrefs}
-                entry={plannedEntry}
-                sl={plannedSl}
-                tp={plannedTp}
-                onSlChange={setPlannedSl}
-                onTpChange={setPlannedTp}
-                result={sizing.result}
-                loading={sizing.loading}
-                onSubmit={(o) => replay.open({
-                  direction: o.direction, volume: o.volume,
-                  sl: plannedSl ?? 0, tp: plannedTp ?? 0,
-                })}
-              />
-              <ReplayPositions
-                positions={replay.positions}
-                currentClose={currentClose}
-                currency={currency}
-                onClose={replay.close}
-              />
-              {/* Career card is hidden in competitive mode — the run total below
-                  is the score that matters there. */}
-              {!competitive && <ReplaySummary title="Kumulatif" s={career ?? null} />}
-              <ReplaySummary
-                title={competitive ? `Kompetitif · Skenario ${compRound}` : "Sesi ini"}
-                s={sessionSummary}
-                counts={sessionCounts}
-              />
-            </>
-          ) : (
-            <>
-              <RiskSizePanel
-                disabled={!live} // load gate only — live.live.empty is never undefined
-                blocked={entryBlocked}
-                currency={currency}
-                prefs={sizing.prefs}
-                onPrefsChange={sizing.setPrefs}
-                entry={plannedEntry}
-                sl={plannedSl}
-                tp={plannedTp}
-                onSlChange={setPlannedSl}
-                onTpChange={setPlannedTp}
-                result={sizing.result}
-                loading={sizing.loading}
-                onSubmit={() => liveCmd.request(null, "open", {
-                  symbol, entry: plannedEntry, sl: plannedSl, tp: plannedTp,
-                  risk_mode: sizing.prefs.mode, risk_value: sizing.prefs.value,
-                })}
-              />
-              <div className="glass w-full p-3">
-                <ChartInfoPanel
-                  symbol={symbol}
-                  tf={tf}
-                  candles={data.candles}
-                  hovered={hovered}
-                  live={live ?? null}
-                  currency={currency}
-                  chartType={settings.chartType}
-                />
-              </div>
-              <DataHealthPanel
-                bars={shownCandles}
-                missing={data.missing}
-                window={[shownCandles[0]?.time_msc ?? Date.now(), shownCandles[shownCandles.length - 1]?.time_msc ?? Date.now()]}
-                tf={tf}
-                symbol={symbol}
-                onBackfilled={() => data.retry()}
-              />
-            </>
-          )}
+          {!panelOpen && sidePanel}
         </aside>
       </div>
+      {panelOpen && (
+        <Sheet label={replayOpen ? "Panel replay" : "Panel chart"} onClose={() => setPanelOpen(false)}>
+          <div className="flex flex-col gap-3">{sidePanel}</div>
+        </Sheet>
+      )}
       {sltpDialog && (
         <SltpConfirmDialog
           positionId={sltpDialog.positionId}

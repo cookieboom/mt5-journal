@@ -527,4 +527,25 @@ describe("risk sizing panel", () => {
     expect(props.drawings.editable).toBe(false);
     expect(props.drawings.items).toEqual([]);
   });
+
+  // Below lg the side column becomes a sheet. Rendering `sidePanel` in the lg
+  // column AND the sheet at the same time would mount RiskSizePanel twice —
+  // two "Buka" buttons aimed at the same live account, one of them invisible.
+  // jsdom has no viewport, so both containers exist here and the count is the
+  // assertion that catches it.
+  it("moves the side panel into a sheet instead of duplicating it", async () => {
+    renderChartPage({ replayOpen: false });
+    await screen.findByTestId("candle-chart");
+
+    expect(screen.getAllByText("Ukuran otomatis")).toHaveLength(1);
+    expect(screen.queryByRole("dialog")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Panel" }));
+
+    expect(screen.getByRole("dialog", { name: "Panel chart" })).toBeInTheDocument();
+    expect(screen.getAllByText("Ukuran otomatis")).toHaveLength(1);
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
 });
