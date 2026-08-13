@@ -269,7 +269,7 @@ def status(db: str = typer.Option(_DEFAULT_DB, help="SQLite DB path.")) -> None:
     No bridge, no writes, no repairs — it prints the command that fixes each
     finding and stops there. The checks live in `store/health.py`; each one
     composes a detector that already ships in the command that owns it, so
-    `status` can never disagree with `verify`, `backup` or `live`.
+    `status` can never disagree with `verify`, `backup`, `live` or `serve`.
 
     Exit code 1 only when something is WRONG (a corrupt file, money that does
     not add up). "Undone" — an overdue backup, unrebuilt trades, no daemon — is

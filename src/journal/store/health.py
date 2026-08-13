@@ -229,6 +229,27 @@ def _live(conn: sqlite3.Connection, now: float) -> Check:
     return Check("live", "ok", f"heartbeat {_age(age)} ago" + queued)
 
 
+def _dist() -> Check:
+    """The other half of the "am I running old code" question `_live` asks.
+
+    `journal serve` mounts `frontend/dist` from disk and never builds it, so a
+    forgotten `npm run build` serves yesterday's JavaScript against today's
+    Python — the symptom is a fix that "did not work". `serve` already prints
+    this, once, at startup: in a terminal a human scrolled past days ago, on a
+    process nobody restarts to re-read a warning. Asking it here costs one
+    mtime scan and is the whole point of a command that asks everything at once.
+
+    Never a `fail`: an unbuilt bundle serves an old page, it does not make a
+    single number in this store untrue.
+    """
+    from ..web.app import stale_dist_reason
+
+    reason = stale_dist_reason()
+    if reason is None:
+        return Check("frontend", "ok", "dist is newer than every source file")
+    return Check("frontend", "warn", reason, "npm --prefix frontend run build")
+
+
 def checks(conn: sqlite3.Connection, db_path: Path | str, *,
            now: float | None = None) -> list[Check]:
     """Every check, in the order a broken journal breaks. Pure given
@@ -240,6 +261,7 @@ def checks(conn: sqlite3.Connection, db_path: Path | str, *,
         ("trades", lambda: _trades(conn)),
         ("backup", lambda: _backup(db_path, t)),
         ("live", lambda: _live(conn, t)),
+        ("frontend", lambda: _dist()),
     ]
     out: list[Check] = []
     for name, run in todo:

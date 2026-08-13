@@ -330,7 +330,8 @@ def test_a_corrupt_page_fails_the_check_that_hits_it_instead_of_the_command(tmp_
     finally:
         conn.close()
 
-    assert [c.name for c in results] == ["integrity", "balance", "trades", "backup", "live"]
+    assert [c.name for c in results] == ["integrity", "balance", "trades", "backup",
+                                         "live", "frontend"]
     assert any(c.state == "fail" for c in results)
     for c in results:
         if c.state != "ok":
@@ -388,3 +389,38 @@ def test_newest_source_points_at_a_real_python_file():
     """No monkeypatch: the real scan must find this package's own sources."""
     name, mtime = health.newest_source()
     assert name.endswith(".py") and mtime > 0
+
+
+# ------------------------------------------------------------------ frontend
+
+
+def test_frontend_warns_when_the_bundle_is_behind_the_source(db, monkeypatch):
+    """The other half of "am I running old code": `journal serve` mounts
+    `frontend/dist` from disk and only says this at startup, in a terminal the
+    human scrolled past days ago."""
+    conn, path = db
+    monkeypatch.setattr("journal.web.app.stale_dist_reason",
+                        lambda: "frontend/dist is 2 file(s) behind the source "
+                                "(newest: src/pages/Chart.tsx)")
+
+    c = _by_name(health.checks(conn, path))["frontend"]
+    assert c.state == "warn"
+    assert "src/pages/Chart.tsx" in c.detail
+    assert c.fix and "build" in c.fix
+
+
+def test_frontend_ok_when_the_bundle_is_current(db, monkeypatch):
+    conn, path = db
+    monkeypatch.setattr("journal.web.app.stale_dist_reason", lambda: None)
+
+    assert _by_name(health.checks(conn, path))["frontend"].state == "ok"
+
+
+def test_a_stale_bundle_never_fails_the_exit_code(db, monkeypatch):
+    """Undone, not wrong (§ the three states) — an unbuilt bundle serves an old
+    page, it does not make a single number in this store untrue."""
+    conn, path = db
+    monkeypatch.setattr("journal.web.app.stale_dist_reason",
+                        lambda: "frontend/dist is missing")
+
+    assert not any(c.state == "fail" for c in health.checks(conn, path))

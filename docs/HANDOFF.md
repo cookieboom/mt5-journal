@@ -38,6 +38,30 @@ home each, and a second copy is a future lie. Point, never duplicate.
 
 **Last updated:** 2026-08-13
 
+**2026-08-13 — `journal status` now asks the bundle's age too (`health._dist`).**
+The previous entry taught `status` that a running daemon can be running old
+code. The served frontend has exactly the same failure and it already had a
+detector — `web.app.stale_dist_reason`, added two entries below — which ran in
+exactly one place: the moment `journal serve` starts. That is the wrong moment.
+`serve` is a process nobody restarts, so the warning scrolls off once and the
+bundle then goes stale in silence for days; the 2026-08-12 parity fix sat
+unbuilt on disk precisely that way. A check that only fires on a process you
+never restart is a check you do not have.
+
+So `checks()` composes it as a sixth entry, `frontend`, exactly the way it
+composes `verify` and `backup.due` — no new detection lives in `health.py`
+(§ its own docstring), the import is lazy so a bridge-free status pass still
+pays nothing for FastAPI until the check runs, and it is a WARN forever: an
+unbuilt bundle serves an old page, it does not make one number in this store
+untrue. The mtime blind spot is inherited from both neighbours and stated
+there; note it also reads the *importing checkout's* `frontend/`, so running
+`status` from a worktree measures that worktree, not what `serve` mounts.
+
+Gates: `uv run pytest` **812 passed, 1 skipped in 37.61 s** (+3), and
+`journal rebuild` on a 62 MB `--dest` snapshot of the live store: **OK, 129
+trades**. Against the live store it prints `[warn] frontend  frontend/dist is
+missing -> npm --prefix frontend run build` from the worktree, exit 0.
+
 **2026-08-13 — `journal status` can now see that the daemon is running OLD code
 (`live_heartbeat.started_msc`, migration 011).** Five of the last seven changes
 to `journal live` ended with the same sentence — *needs a `journal live`

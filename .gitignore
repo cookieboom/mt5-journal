@@ -1,5 +1,15 @@
 data/
 cache/
+
+# A store that landed anywhere but data/. `journal backup --dest ./x.db` and
+# `journal restore` both write where you ran them, and a `git add -A` in that
+# directory stages a 62 MB file with the real login inside it. `origin` is
+# PUBLIC and rule 10 has been broken twice; this one nearly made it three.
+# No .db file has ever been tracked here — fixtures are JSON.
+*.db
+*.db-wal
+*.db-shm
+
 __pycache__/
 *.pyc
 .venv/
