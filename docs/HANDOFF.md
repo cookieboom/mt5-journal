@@ -87,6 +87,19 @@ adds no source), `npm test` **346 passed**, `npm run build` clean, `uv sync
 --locked` clean. Every CI command was run locally first, in a fresh worktree
 with a fresh `npm ci`.
 
+**And the first run found something in 47 seconds, which is the whole
+argument.** `frontend` passed. `python` came back **15 failed, 779 passed, 6
+errors**, and every one of them was one line: `OSError: dlopen(...
+lib_lightgbm.dylib): Library not loaded: @rpath/libomp.dylib`. LightGBM's macOS
+wheel does not ship OpenMP; it dlopens Homebrew's, from
+`/opt/homebrew/opt/libomp/lib`. **This machine has `libomp` from some earlier
+install and nothing in this repository ever recorded that** — so `lab/` could
+not import at all on a Mac that has never run `brew install libomp`, and the
+only way to discover it was a restore, a second Mac, or this. The workflow now
+installs it before `uv sync`, and the README's quick start names it as the one
+macOS prerequisite. Not a test bug and not worth pinning with a test: it is an
+environment fact, and CI is the thing that keeps asking about it.
+
 **2026-08-13 — a queued command now has a shelf life
 (`execute.expire_stale`).** `journal status` learned this morning to *report* a
 `trade_commands` row queued with nothing running to send it. Nothing ever

@@ -23,6 +23,12 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+      # lightgbm's macOS wheel dlopens `@rpath/libomp.dylib` and ships without
+      # it, so `lab/` cannot even import on a Mac that has never run
+      # `brew install libomp`. The dev machine has it from some earlier install
+      # and nothing in this repo recorded that; the first CI run found it in
+      # 47 s — 15 failures and 6 errors, every one of them this missing dylib.
+      - run: brew install libomp
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true

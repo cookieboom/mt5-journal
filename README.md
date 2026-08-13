@@ -32,6 +32,7 @@ with no terminal, no bridge, and no broker.
 ## Quick start
 
 ```bash
+brew install libomp        # macOS only: lightgbm's wheel dlopens it, `lab/` needs it
 uv sync
 uv run journal doctor      # is the adapter alive?
 uv run journal sync        # pull deals/orders into the raw tables
