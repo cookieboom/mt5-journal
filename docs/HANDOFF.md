@@ -36,7 +36,55 @@ home each, and a second copy is a future lie. Point, never duplicate.
 
 ## CURRENT STATE — update this section every session
 
-**Last updated:** 2026-08-13
+**Last updated:** 2026-08-14
+
+**2026-08-14 — the SPA passes an interface audit it used to fail
+(`worktree-adapt-mobile-nav`, 9 commits, no `src/` change).** `/impeccable audit
+frontend/src` scored **12/20**, and the P0 was that below 768px there was no
+navigation at all: the rail is `hidden md:flex` and nothing replaced it, so a
+phone opened the dashboard and could reach no other route. Seven waves closed
+the backlog.
+
+- **adapt** — `MobileNav` in `components/Sidebar.tsx` is now the ONLY navigation
+  below md, and `Sidebar.test.tsx` asserts it carries exactly the rail's routes.
+  The Chart side column became a sheet below lg; `sidePanel` renders in exactly
+  one container (`{!panelOpen && sidePanel}`), because mounting it twice gives
+  two live "Buka" buttons aimed at the same account, one invisible.
+- **harden** — labels on the form controls, one cyan `focus-visible` ring,
+  dialog semantics on the modals, route titles, skip link.
+- **extract** — `lib/theme.ts` is the one palette (Tailwind imports it) and
+  `lib/type.ts` the one type scale, six roles, Tailwind's own `fontSize` steps
+  deleted. The `storage/` subtree had been a second design system — 66 raw
+  palette hits, all 11 hand-rolled focus styles — and was folded back in.
+- **animate** — every looping animation has a reduced-motion alternative that
+  keeps its meaning (a stopped spinner still reads as "waiting").
+- **optimize** — every route is a `React.lazy` behind one `Suspense` in
+  `AppShell`. Entry chunk **544.14 KB → 171.76 KB** (gzip 164.78 → 56.46);
+  `lightweight-charts` is a 212.31 KB chunk only `/chart`, `/trades/:id/view`
+  and `/lab` fetch. `recharts` was a dependency with zero imports; dropped.
+
+Two things worth keeping. **Testing phone width needs CDP, not the browser
+tools** — the extension's `resize_window` reports success at 390 while the
+window floor is ~606 CSS px, and headless `--window-size=390` lays out at the
+minimum then *crops* the capture, which fakes horizontal clipping convincingly
+enough to nearly get a non-existent bug filed. Use
+`Emulation.setDeviceMetricsOverride` and assert
+`document.documentElement.scrollWidth === viewport`. And a **rendered pass finds
+what a source pass cannot**: walking every route against the live API turned up
+the chart time axis printing the full `YYYY-MM-DD HH:MM` on every tick, smearing
+into itself on M1/M5 — fixed at the root in `lib/candles.ts:axisTickLabel` by
+honouring lightweight-charts' own `TickMarkType`. Unit tests were green through
+that and through the three defects the 390px pass found.
+
+Left alone on purpose: `CoverageRibbon` is clipped at the viewport bottom on
+desktop too (pre-existing — it renders after the chart inside the `h-full` pane);
+the server-rendered trade PNG is blue/white on black, a palette belonging to no
+part of the system, but it is Python and already user-configurable; the
+dashboard's "Trade terakhir" rows cannot link to a trade because
+`Equity.series` carries no `position_id`.
+
+Gates: `uv run pytest` **830 passed, 1 skipped**, `npm --prefix frontend test`
+**369 passed / 45 files**, `tsc -b && vite build` clean.
 
 **2026-08-13 — `journal report` finally answers "how bad did it get"
 (`analytics.report.sequence_stats`).** Every statistic in the report until now
