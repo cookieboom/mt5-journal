@@ -38,6 +38,55 @@ home each, and a second copy is a future lie. Point, never duplicate.
 
 **Last updated:** 2026-08-13
 
+**2026-08-13 — the gates now run somewhere other than this laptop
+(`.github/workflows/ci.yml`), and the public repo finally has a front page
+(`README.md`).** § Definition of done says a task is finished when `pytest`
+passes and the output is pasted. That has held — because a human and an agent
+remembered every time, on one machine, in one checkout. Nothing enforced it,
+and two of the last three months' bugs were environment-shaped rather than
+logic-shaped: a bundle that had never been rebuilt (`ab8431c`), and a
+dependency question ("is `httpx` actually declared?") that could only be
+settled by hand-building a fresh venv. Both are exactly what a cold checkout
+answers for free.
+
+Two jobs, both running commands that already exist — nothing new to learn, and
+nothing that can drift from what the human types:
+
+- **python**, on `macos-latest`: `uv sync --locked` then `uv run pytest -q`.
+  `--locked` is the point of the first step, not a detail — it fails when
+  `uv.lock` and `pyproject.toml` have drifted, which is the dependency question
+  above, asked automatically. arm64 macOS rather than a cheaper Linux runner
+  because a Linux job would be proving a build of lightgbm/pandas nobody here
+  ever executes.
+- **frontend**, on `ubuntu-latest`: `npm ci`, `npm test`, `npm run build`. The
+  build is `tsc -b && vite build`, so it is the type check too — one step, not
+  two. It compiles into a `dist` that is thrown away with the runner: CI proves
+  the bundle BUILDS, it never ships one, and `journal serve`'s stale-dist
+  warning remains the thing that notices a real `frontend/dist` behind its
+  sources.
+
+No MT5 anywhere in it, and that is hard rule 1 paying for itself: every import
+of the terminal sits behind `adapter/`, so all 800 tests run on a machine that
+has never seen a broker. `data/` is absent from a checkout (rule 10), which
+also decides what `tests/test_repo_hygiene.py` does there: its DB-derived layer
+skips and the tracked-file scan runs — the layer that actually matters on a
+**public** repository.
+
+The README is the same rule 10 problem in a different shape: the repo is
+public, was a bare file list, and the first thing a reader met was
+`CLAUDE.md`'s account section. It now opens with what this is, why it exists
+(Trap 16, stated plainly), the descriptive-not-predictive boundary, and the
+quick start — and carries no login, broker, server or funding reference.
+Verified rather than assumed: `test_repo_hygiene.py` was run with the live
+`data/journal.db` symlinked into the worktree, so the layer with teeth
+(identifiers read out of the real DB) ran against both new files and passed
+3/3.
+
+Gates: `uv run pytest` **800 passed, 1 skipped in 47.02 s** (unchanged — this
+adds no source), `npm test` **346 passed**, `npm run build` clean, `uv sync
+--locked` clean. Every CI command was run locally first, in a fresh worktree
+with a fresh `npm ci`.
+
 **2026-08-13 — a queued command now has a shelf life
 (`execute.expire_stale`).** `journal status` learned this morning to *report* a
 `trade_commands` row queued with nothing running to send it. Nothing ever

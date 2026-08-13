@@ -1,0 +1,54 @@
+# The gates in CLAUDE.md § Definition of done, run by something that never
+# forgets. Nothing here needs MT5: hard rule 1 keeps every import of the
+# terminal behind `adapter/`, so the whole suite runs against `adapter/fake.py`
+# on a machine that has never seen a broker.
+#
+# `data/` and `cache/` are gitignored (rule 10), so a checkout has neither. That
+# is deliberate rather than a limitation: `tests/test_repo_hygiene.py` runs its
+# DB-derived scan only when `data/journal.db` is present, and here it falls back
+# to the tracked-file scan — which is exactly the scan that matters on a PUBLIC
+# repository, and the one whose rule has been broken twice.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  python:
+    # macOS/arm64, matching the only platform this project runs on (CLAUDE.md).
+    # A Linux runner would be cheaper and would also be testing a build of
+    # lightgbm/pandas the human never executes.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      # --locked, not plain sync: it fails when uv.lock and pyproject.toml have
+      # drifted apart, which is the one dependency question this project has
+      # actually had ("is httpx really declared?") and had to answer by hand.
+      - run: uv sync --locked
+      - run: uv run pytest -q
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+        working-directory: frontend
+      - run: npm test
+        working-directory: frontend
+      # `build` is `tsc -b && vite build`, so this is the type check too — one
+      # step, not two. It builds into `frontend/dist`, which is gitignored and
+      # thrown away with the runner: CI proves the bundle COMPILES, it does not
+      # ship one. The stale-bundle warning in `journal serve` stays the thing
+      # that notices a dist behind its sources on the live machine.
+      - run: npm run build
+        working-directory: frontend
