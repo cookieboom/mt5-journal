@@ -455,8 +455,11 @@ CREATE TABLE IF NOT EXISTS training_session_stats (
 
 -- Single-row liveness beacon. `journal live` overwrites beat_msc every cycle.
 CREATE TABLE IF NOT EXISTS live_heartbeat (
-    id       INTEGER PRIMARY KEY CHECK (id = 1),
-    beat_msc INTEGER NOT NULL
+    id          INTEGER PRIMARY KEY CHECK (id = 1),
+    beat_msc    INTEGER NOT NULL,
+    -- When the running daemon loaded its code. NULL = it started before this
+    -- column existed. `journal status` compares it to the newest source file.
+    started_msc INTEGER
 );
 
 -- Demand-driven watch registry. Web upserts (with a TTL); `journal live` reads

@@ -42,6 +42,24 @@ BACKUP_MAX_AGE_S = 24 * 3600
 HEARTBEAT_MAX_AGE_S = 60.0
 
 
+_PKG = Path(__file__).resolve().parent.parent   # src/journal
+
+
+def newest_source(pkg: Path | None = None) -> tuple[str, float]:
+    """The most recently edited `.py` in this package: `(relative name, mtime)`.
+
+    The daemon's code age, measured the same way `web.app.stale_dist_reason`
+    measures the bundle's — mtimes, no hashes, no build stamp. It inherits that
+    check's one blind spot too: a `git checkout` rewrites mtimes, so restoring
+    OLD code can read as new. Both only ever cost a warning, never correctness.
+    """
+    files = [p for p in (pkg or _PKG).glob("**/*.py") if p.is_file()]
+    if not files:
+        return ("", 0.0)
+    newest = max(files, key=lambda p: p.stat().st_mtime)
+    return (str(newest.relative_to(pkg or _PKG)), newest.stat().st_mtime)
+
+
 @dataclass(frozen=True)
 class Check:
     name: str
@@ -171,7 +189,7 @@ def _live(conn: sqlite3.Connection, now: float) -> Check:
     `sync` and `rebuild` by hand. A command queued with nothing running to send
     it is: the human believes an SL is in flight and it is sitting in a table.
     """
-    from .live_store import read_heartbeat
+    from .live_store import read_heartbeat, read_started
 
     beat = read_heartbeat(conn)
     (pending,) = conn.execute(
@@ -193,6 +211,21 @@ def _live(conn: sqlite3.Connection, now: float) -> Check:
                      f"last heartbeat {_age(age)} ago — `journal live` is not running"
                      + queued,
                      "journal live")
+
+    # Alive, but is it running the code on disk? A restart is the last step of
+    # nearly every change to the live loop, it is the one step no test can
+    # perform, and until now nothing said it had been skipped.
+    started = read_started(conn)
+    if started is not None:
+        name, src_mtime = newest_source()
+        started_s = started / 1000.0
+        if src_mtime > started_s:
+            return Check("live", "warn",
+                         f"heartbeat {_age(age)} ago, but the daemon has been up "
+                         f"{_age(now - started_s)} and {name} changed "
+                         f"{_age(now - src_mtime)} ago — it is running OLD code"
+                         + queued,
+                         "restart `journal live`")
     return Check("live", "ok", f"heartbeat {_age(age)} ago" + queued)
 
 

@@ -335,3 +335,56 @@ def test_a_corrupt_page_fails_the_check_that_hits_it_instead_of_the_command(tmp_
     for c in results:
         if c.state != "ok":
             assert c.fix
+
+
+def test_live_warns_when_the_daemon_predates_the_newest_source_file(db, monkeypatch):
+    """The bug this exists for: three features shipped in one week, each ending
+    "needs a `journal live` RESTART", and nothing on the machine says the daemon
+    is running last week's code."""
+    conn, path = db
+    now_s = 1_000_000.0
+    conn.execute(
+        "INSERT INTO live_heartbeat (id, beat_msc, started_msc) VALUES (1, ?, ?)",
+        (int(now_s * 1000) - 3_000, int(now_s * 1000) - 6 * 3600 * 1000),
+    )
+    conn.commit()
+    monkeypatch.setattr(health, "newest_source",
+                        lambda: ("ingest/live.py", now_s - 3600))
+
+    c = _by_name(health.checks(conn, path, now=now_s))["live"]
+    assert c.state == "warn"
+    assert "ingest/live.py" in c.detail
+    assert c.fix and "live" in c.fix
+
+
+def test_live_stays_ok_when_the_daemon_started_after_the_newest_edit(db, monkeypatch):
+    conn, path = db
+    now_s = 1_000_000.0
+    conn.execute(
+        "INSERT INTO live_heartbeat (id, beat_msc, started_msc) VALUES (1, ?, ?)",
+        (int(now_s * 1000) - 3_000, int(now_s * 1000) - 60_000),
+    )
+    conn.commit()
+    monkeypatch.setattr(health, "newest_source",
+                        lambda: ("ingest/live.py", now_s - 3600))
+
+    assert _by_name(health.checks(conn, path, now=now_s))["live"].state == "ok"
+
+
+def test_live_says_nothing_about_code_age_when_the_daemon_never_recorded_a_start(db, monkeypatch):
+    """A daemon from before this column existed: unknown start, no accusation."""
+    conn, path = db
+    now_s = 1_000_000.0
+    conn.execute("INSERT INTO live_heartbeat (id, beat_msc) VALUES (1, ?)",
+                 (int(now_s * 1000) - 3_000,))
+    conn.commit()
+    monkeypatch.setattr(health, "newest_source",
+                        lambda: ("ingest/live.py", now_s - 3600))
+
+    assert _by_name(health.checks(conn, path, now=now_s))["live"].state == "ok"
+
+
+def test_newest_source_points_at_a_real_python_file():
+    """No monkeypatch: the real scan must find this package's own sources."""
+    name, mtime = health.newest_source()
+    assert name.endswith(".py") and mtime > 0

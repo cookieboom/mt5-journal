@@ -22,9 +22,32 @@ def beat(conn: sqlite3.Connection, now_msc: int) -> None:
     conn.commit()
 
 
+def mark_started(conn: sqlite3.Connection, now_msc: int) -> None:
+    """Record when THIS process loaded its code. Called once, at loop start.
+
+    A heartbeat says the daemon is alive; it cannot say it is current. Every
+    change to the live loop ships with "restart `journal live`", and nothing on
+    the machine could see that the restart never happened — see
+    `health.newest_source`.
+    """
+    conn.execute(
+        "INSERT INTO live_heartbeat (id, beat_msc, started_msc) VALUES (1, ?, ?) "
+        "ON CONFLICT(id) DO UPDATE SET beat_msc = excluded.beat_msc, "
+        "started_msc = excluded.started_msc",
+        (now_msc, now_msc),
+    )
+    conn.commit()
+
+
 def read_heartbeat(conn: sqlite3.Connection) -> int | None:
     row = conn.execute("SELECT beat_msc FROM live_heartbeat WHERE id = 1").fetchone()
     return None if row is None else int(row["beat_msc"])
+
+
+def read_started(conn: sqlite3.Connection) -> int | None:
+    """When the running daemon started, or None if it never said."""
+    row = conn.execute("SELECT started_msc FROM live_heartbeat WHERE id = 1").fetchone()
+    return None if row is None or row["started_msc"] is None else int(row["started_msc"])
 
 
 def upsert_watch(conn: sqlite3.Connection, symbol: str, timeframe: str,

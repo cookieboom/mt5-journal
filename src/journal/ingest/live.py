@@ -524,6 +524,7 @@ def live_loop(
     not about the bridge, and it is here because this is the only process that
     runs all day — see that function.
     """
+    live_store.mark_started(conn, now_ms())
     recovered = recover_interrupted(conn, login)
     if recovered:
         log.info("live: recovered %d interrupted command(s) at startup", recovered)

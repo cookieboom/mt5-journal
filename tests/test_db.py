@@ -58,6 +58,10 @@ def test_migration_009_allows_an_open_command(tmp_path):
         """
         CREATE TABLE schema_version (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL);
         INSERT INTO schema_version (version, applied_at) VALUES (8, 1);
+        -- A real v8 store has this (migration 007); later migrations ALTER it,
+        -- so the stand-in has to carry it or the fixture is lying about v8.
+        CREATE TABLE live_heartbeat (
+            id INTEGER PRIMARY KEY CHECK (id = 1), beat_msc INTEGER NOT NULL);
         CREATE TABLE trade_commands (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             account_login INTEGER NOT NULL,
@@ -81,7 +85,7 @@ def test_migration_009_allows_an_open_command(tmp_path):
     raw.close()
 
     conn = connect(db)
-    assert current_version(conn) == SCHEMA_VERSION == 10
+    assert current_version(conn) == SCHEMA_VERSION
 
     # (a) the pre-existing row survived, intent columns untouched
     old = conn.execute("SELECT * FROM trade_commands WHERE id = 1").fetchone()

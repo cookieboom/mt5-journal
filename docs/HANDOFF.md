@@ -38,6 +38,35 @@ home each, and a second copy is a future lie. Point, never duplicate.
 
 **Last updated:** 2026-08-13
 
+**2026-08-13 — `journal status` can now see that the daemon is running OLD code
+(`live_heartbeat.started_msc`, migration 011).** Five of the last seven changes
+to `journal live` ended with the same sentence — *needs a `journal live`
+RESTART* — and the restart is the one step no test can perform. Nothing on the
+machine could tell whether it had happened: `beat_msc` proves a process is
+alive, never that it is current. The failure is silent and it compounds, since
+the daemon holds the features that exist because they run unattended (the daily
+backup, the command-queue expiry, the bridge-blip retry). A human reading
+`[ok] live  heartbeat 3s ago` had every reason to believe the fix was live.
+
+`live_loop` now calls `live_store.mark_started` once, at startup; `_live`
+compares that timestamp against the newest `.py` under `src/journal/` and warns
+with the filename when the code is newer than the process. It is
+`web.app.stale_dist_reason` applied to the daemon instead of the bundle —
+mtimes, no hashes, no build stamp, same known blind spot (a `git checkout`
+rewrites mtimes, so restoring old code can read as new). Both cost a warning
+and never correctness, which is what makes the cheap check the right one.
+
+`started_msc` is NULLable and NULL means *unknown, do not accuse*: the daemon
+running right now predates the column, so the check stays quiet until the next
+restart writes one — the guard cannot fire on its own deployment. It is a WARN,
+so the exit code stays 0 (§ the three states).
+
+Gates: `uv run pytest` **809 passed, 1 skipped in 21.52 s** (+4). Migration and
+`journal rebuild` both run on a 62 MB `--dest` snapshot of the live store: **OK,
+129 trades**, and `journal status` on that snapshot prints `[ok] live` (NULL
+start) then, with a hand-set two-hour-old `started_msc`, `[warn] live ... it is
+running OLD code -> restart journal live`, exit 0.
+
 **2026-08-13 — `journal live` no longer dies when the bridge blinks
 (`live_loop`).** Every expensive thing in this project now lives inside that one
 loop: the SL/TP snapshots that Trap 16 makes unrecoverable, the daily backup,
