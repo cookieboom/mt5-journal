@@ -26,6 +26,7 @@ from journal.execute import claim_next, enqueue, get_command
 from journal.ingest.candles import CandlesReport
 from journal.ingest.deals import SyncReport
 from journal.ingest.live import live_cycle, live_loop
+from journal.store import live_store
 from journal.store.db import connect, now_ms
 
 _LOGIN = 1_000_001  # placeholder, never the real login (rule 10)
@@ -555,6 +556,89 @@ def test_loop_survives_a_failing_backup(conn, tmp_path, monkeypatch):
 
     # Kept cycling through the raised OSError instead of dying on it.
     assert r.cycles > 1 and r.stopped_by == "duration"
+
+
+# ------------------------------------------------- the bridge going away
+
+
+class FlakyClient(FakeLiveClient):
+    """`positions_get()` raises for the first `n_fail` calls, then behaves. The
+    real shape of this: the MT5 Docker container restarts and localhost:8001
+    refuses connections for a minute."""
+
+    def __init__(self, batches, n_fail):
+        super().__init__(batches)
+        self.n_fail = n_fail
+        self.calls = 0
+
+    def positions_get(self):
+        self.calls += 1
+        if self.calls <= self.n_fail:
+            raise ConnectionError("bridge unreachable")
+        return super().positions_get()
+
+
+def _run(client, conn, **kw):
+    clock = {"t": 0.0}
+    return live_loop(
+        client, conn, _LOGIN, interval_idle=5.0,
+        sleep=lambda s: clock.__setitem__("t", clock["t"] + s),
+        monotonic=lambda: clock["t"], **kw,
+    )
+
+
+def test_loop_survives_the_bridge_going_away_and_resumes(conn):
+    # Losing the loop loses the live SL history that cannot be re-synced, and
+    # stops the daily backup — a bridge blip must never cost that.
+    client = FlakyClient([[_pos(identifier=111)]], n_fail=2)
+
+    r = _run(client, conn, duration=11.0)
+
+    assert r.stopped_by == "duration"
+    assert r.failed_cycles == 2
+    assert r.cycles > 2                      # kept going past the failures
+    # and once the bridge came back the mirror was written for real.
+    assert conn.execute("SELECT COUNT(*) FROM open_positions").fetchone()[0] == 1
+
+
+def test_a_failed_cycle_leaves_no_open_write_transaction(conn):
+    # This project has twice paid for holding the WAL writer slot; a cycle that
+    # raised mid-write must not carry its transaction into the next sleep.
+    class MidWriteBoom(FakeLiveClient):
+        def positions_get(self):
+            live_store.beat(conn, now_ms())   # dirties the connection
+            raise ConnectionError("bridge unreachable")
+
+    r = _run(MidWriteBoom([[]]), conn, once=True)
+
+    assert r.failed_cycles == 1
+    assert not conn.in_transaction
+
+
+def test_once_returns_even_when_the_cycle_fails(conn):
+    r = _run(FlakyClient([[_pos(identifier=111)]], n_fail=1), conn, once=True)
+    assert r.stopped_by == "once" and r.cycles == 1 and r.failed_cycles == 1
+
+
+def test_a_locked_database_still_escapes_the_loop(conn):
+    # Past the 5 s busy_timeout, "database is locked" means a SECOND journal
+    # live on this DB — a configuration error `cli.live` explains and exits on.
+    # Retrying it every five seconds forever would bury that message.
+    class Locked(FakeLiveClient):
+        def positions_get(self):
+            raise sqlite3.OperationalError("database is locked")
+
+    with pytest.raises(sqlite3.OperationalError):
+        _run(Locked([[]]), conn, duration=6.0)
+
+
+def test_the_backup_still_runs_while_the_bridge_is_down(conn, tmp_path):
+    # The one process that snapshots the DB must keep snapshotting it even when
+    # the thing it talks to is gone — nothing about a backup needs the bridge.
+    r = _run(FlakyClient([[]], n_fail=99), conn, duration=6.0)
+
+    assert r.failed_cycles == r.cycles > 1
+    assert len(_snaps(tmp_path)) == 1
 
 
 # ---------------------------------------------------------------- candle requests

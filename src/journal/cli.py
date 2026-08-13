@@ -825,6 +825,10 @@ def live(
 
     typer.echo("== live ==")
     typer.echo(f"cycles:         {r.cycles}")
+    if r.failed_cycles:
+        # Without this a run whose every cycle raised prints "cycles: 720" and
+        # reads as a healthy night.
+        typer.echo(f"failed:         {r.failed_cycles} cycle(s) raised (see the log)")
     typer.echo(f"recovered:      {r.recovered} interrupted command(s) at startup")
     typer.echo(f"trading:        {'on' if trading else 'off (--no-trading)'}")
     typer.echo(f"stopped by:     {r.stopped_by}")

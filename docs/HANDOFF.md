@@ -38,6 +38,54 @@ home each, and a second copy is a future lie. Point, never duplicate.
 
 **Last updated:** 2026-08-13
 
+**2026-08-13 — `journal live` no longer dies when the bridge blinks
+(`live_loop`).** Every expensive thing in this project now lives inside that one
+loop: the SL/TP snapshots that Trap 16 makes unrecoverable, the daily backup,
+the beacon, the command queue. And the loop had exactly one exception handler
+inside it — around the ingest pipeline, with a comment saying *"a failed ingest
+must NOT kill the loop — losing the loop loses unrecoverable live SL history."*
+Everything else in the cycle was unguarded, starting with `positions_get()` on
+its first line. A Docker restart of the MT5 bridge, or any second where
+`localhost:8001` refuses a connection, killed the process — and nothing restarts
+it. The failure mode is silent by construction: the human is not watching a
+terminal at 02:00, and the next morning the journal has a hole in it.
+
+`live_cycle` is now wrapped in the loop: rollback, count, log, sleep, retry. Two
+decisions carry the weight:
+
+- **Roll back before sleeping.** The connection uses SQLite's implicit
+  transactions, so a cycle that raised after a write holds the WAL writer slot
+  until something ends it. Carrying that across a 5 s sleep starves `journal
+  serve`'s enqueue past its `busy_timeout` — the exact bug already paid for
+  twice (`deals.sync`, `candle_fill.fill_range`). It is one line and it is the
+  reason the retry is safe at all.
+- **`database is locked` still escapes.** Past the 5 s `busy_timeout` that
+  message means a SECOND `journal live` on this DB, which is a configuration
+  error `cli.live` already prints a plain-language exit for. Retrying it every
+  five seconds forever would bury that message under a spinning process. It is
+  the one exception the loop refuses to absorb.
+
+Nothing beats the heartbeat on the failure path, deliberately: the process is up
+but cannot see the broker, and a beat would tell `/live` and `journal status`
+that all is well while the position mirror sits frozen. "live down" is the more
+honest of the two available readings. Consecutive failures log once at the top
+of a streak (with traceback) and again every 60th, so a night with a dead bridge
+costs one screen of log rather than 17,000 lines; the recovery line names the
+streak length. `LiveLoopReport.failed_cycles` and one `journal live` summary line
+make a run whose every cycle raised stop reading as "cycles: 720", healthy.
+
+`poll_loop` (M4, `journal poll`) has the same unguarded shape and was left alone
+on purpose: it is a FOREGROUND command a human watches, so its traceback lands
+in front of the person who can restart it. `journal live` is the one that runs
+unattended.
+
+Gates: `uv run pytest` **805 passed, 1 skipped in 40.16 s** (+5: bridge
+recovery, no-dangling-transaction, `--once`, backup-while-down, and the lock
+escape). `journal rebuild` on a fresh 62 MB snapshot of the live store: **OK,
+129 trades**. `test_repo_hygiene.py` re-run with `data/` symlinked in: 3/3.
+**Needs a `journal live` RESTART to take effect** — the running daemon is the
+old code.
+
 **2026-08-13 — the gates now run somewhere other than this laptop
 (`.github/workflows/ci.yml`), and the public repo finally has a front page
 (`README.md`).** § Definition of done says a task is finished when `pytest`

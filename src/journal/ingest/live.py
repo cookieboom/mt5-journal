@@ -124,6 +124,7 @@ class LiveReport:
 class LiveLoopReport:
     cycles: int = 0
     recovered: int = 0                    # orphans closed out at startup
+    failed_cycles: int = 0                # cycles that raised (bridge gone, etc)
     stopped_by: str = "duration"          # 'once' | 'duration' | 'interrupt'
 
 
@@ -511,6 +512,13 @@ def live_loop(
     cycle and before the next sleep, so a `duration` run never sleeps after its
     final cycle. Ctrl+C stops cleanly with `stopped_by='interrupt'`.
 
+    A cycle that RAISES does not end the loop: it is rolled back, counted in
+    `failed_cycles`, and retried on the next tick. Nothing beats the heartbeat on
+    that path on purpose — the process is up but cannot see the broker, and a
+    beat would tell `/live` and `journal status` that everything is fine while
+    the position mirror sits frozen. "live down" is the more honest of the two
+    available lies; the log line says which one it is.
+
     Every cycle also asks `_maybe_backup` whether the DB is due a snapshot
     (`backup_every_s=None` turns that off). It is the only thing here that is
     not about the bridge, and it is here because this is the only process that
@@ -524,23 +532,55 @@ def live_loop(
         log.info("live: requeued %d orphaned candle request(s) at startup", requeued)
 
     cycles = 0
+    failed = 0          # total, reported
+    streak = 0          # consecutive, resets on the first good cycle
     deadline = monotonic() + duration if duration is not None else None
+
+    def _report(stopped_by: str) -> LiveLoopReport:
+        return LiveLoopReport(
+            cycles=cycles, recovered=recovered, failed_cycles=failed,
+            stopped_by=stopped_by,
+        )
 
     try:
         while True:
-            r = live_cycle(client, conn, login, trading=trading, on_closing=on_closing)
+            try:
+                r = live_cycle(client, conn, login, trading=trading, on_closing=on_closing)
+            except Exception as e:
+                # The bridge went away mid-cycle (container restart, refused
+                # connection) — the single most likely way this process dies, and
+                # dying is the expensive outcome: live SL/TP history is the one
+                # thing here that CANNOT be re-synced later (Trap 16), and the
+                # daily snapshot only exists inside this loop. Log, sleep, retry.
+                conn.rollback()   # never carry a half-written cycle's WAL writer
+                                  # slot into the sleep — `journal serve` blocks
+                                  # on it, and this project has paid for that twice
+                if isinstance(e, sqlite3.OperationalError) and "locked" in str(e).lower():
+                    # Past a 5 s busy_timeout this is a SECOND `journal live` on
+                    # the same DB, not a blip. Only one loop may own the bridge:
+                    # let it out so `cli.live` can say so and exit, instead of
+                    # retrying a configuration error every five seconds forever.
+                    raise
+                failed += 1
+                streak += 1
+                if streak == 1:
+                    log.exception("live: cycle failed — retrying, the loop stays up")
+                elif streak % 60 == 0:
+                    log.warning("live: cycle still failing, %d in a row", streak)
+            else:
+                if streak:
+                    log.info("live: recovered after %d failed cycle(s)", streak)
+                    streak = 0
+                if on_cycle is not None:
+                    on_cycle(r)
             cycles += 1
-            if on_cycle is not None:
-                on_cycle(r)
             if backup_every_s is not None:
                 _maybe_backup(conn, login, backup_every_s, backup_keep)
             if once:
-                return LiveLoopReport(cycles=cycles, recovered=recovered, stopped_by="once")
+                return _report("once")
             if deadline is not None and monotonic() >= deadline:
-                return LiveLoopReport(
-                    cycles=cycles, recovered=recovered, stopped_by="duration"
-                )
+                return _report("duration")
             interval = interval_busy if pending_count(conn, login) > 0 else interval_idle
             sleep(interval)
     except KeyboardInterrupt:
-        return LiveLoopReport(cycles=cycles, recovered=recovered, stopped_by="interrupt")
+        return _report("interrupt")
