@@ -5,6 +5,7 @@ import KpiCard from "../components/KpiCard";
 import EquityChart from "../components/EquityChart";
 import SymbolBars from "../components/SymbolBars";
 import RecentTrades from "../components/RecentTrades";
+import StatusPill from "../components/StatusPill";
 
 export default function Dashboard() {
   const { data, error, loading } = useApi<DashboardData>("/api/dashboard", 5000);
@@ -24,10 +25,11 @@ export default function Dashboard() {
           <h1 className="text-[18px] font-bold tracking-tight">Dashboard</h1>
           <div className="text-[12px] text-muted mt-0.5">{report.n_closed} trade tertutup</div>
         </div>
-        <div className="text-[11px] text-cyan flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-cyan/10 ring-1 ring-cyan/25">
-          <span className="w-1.5 h-1.5 rounded-full bg-cyan shadow-[0_0_8px_#22d3ee]" />
-          {live.empty ? "live idle" : live.stale ? "stale" : `live · ${live.age_s}s`}
-        </div>
+        {/* Same three tints as StalenessBadge, but the header stays terse —
+            a stale feed must not read cyan here just because it did before. */}
+        <StatusPill tone={live.empty ? "absent" : live.stale ? "wrong" : "now"}>
+          {live.empty ? "idle" : live.stale ? `basi · ${live.age_s}s` : `live · ${live.age_s}s`}
+        </StatusPill>
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">

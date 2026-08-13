@@ -62,12 +62,12 @@ export default function ReplayConfigModal(props: {
             {TIMEFRAMES.map((t) => <option key={t} value={t}>{t}</option>)}
           </select>
         </label>
-        <label className="block text-xs flex items-center gap-2 mt-4 text-orange-300 font-semibold">
+        <label className="block text-xs flex items-center gap-2 mt-4 text-warn font-semibold">
           <input type="checkbox" checked={compMode} onChange={(e) => setCompMode(e.target.checked)} />
           Competitive Mode
         </label>
         {compMode && (
-          <div className="pl-4 space-y-2 border-l border-orange-500/50">
+          <div className="pl-4 space-y-2 border-l border-warn/50">
             <label className="block text-xs flex items-center gap-2">
               <input type="checkbox" checked={compHideDate} onChange={(e) => setCompHideDate(e.target.checked)} />
               Sembunyikan Tanggal

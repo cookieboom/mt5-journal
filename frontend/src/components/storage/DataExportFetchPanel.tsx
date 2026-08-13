@@ -174,7 +174,7 @@ export default function DataExportFetchPanel({
                   id="backfill-symbol"
                   value={fetchSymbol}
                   onChange={(e) => setFetchSymbol(e.target.value)}
-                  className="w-full bg-slate-900/90 border border-panel-border rounded-lg px-3 py-1.5 text-xs text-ink focus:border-cyan"
+                  className="w-full bg-bg/90 border border-panel-border rounded-lg px-3 py-1.5 text-xs text-ink focus:border-cyan"
                 >
                   {symbolsList.map((sym) => (
                     <option key={sym} value={sym}>
@@ -192,7 +192,7 @@ export default function DataExportFetchPanel({
                   id="backfill-timeframe"
                   value={fetchTf}
                   onChange={(e) => setFetchTf(e.target.value)}
-                  className="w-full bg-slate-900/90 border border-panel-border rounded-lg px-3 py-1.5 text-xs text-ink focus:border-cyan"
+                  className="w-full bg-bg/90 border border-panel-border rounded-lg px-3 py-1.5 text-xs text-ink focus:border-cyan"
                 >
                   {timeframesList.map((tf) => (
                     <option key={tf} value={tf}>
@@ -214,7 +214,7 @@ export default function DataExportFetchPanel({
                   type="datetime-local"
                   value={startDate}
                   onChange={(e) => setStartDate(e.target.value)}
-                  className="w-full bg-slate-900/90 border border-panel-border rounded-lg px-2.5 py-1.5 text-xs text-ink focus:border-cyan font-mono"
+                  className="w-full bg-bg/90 border border-panel-border rounded-lg px-2.5 py-1.5 text-xs text-ink focus:border-cyan font-mono"
                 />
               </div>
 
@@ -227,7 +227,7 @@ export default function DataExportFetchPanel({
                   type="datetime-local"
                   value={endDate}
                   onChange={(e) => setEndDate(e.target.value)}
-                  className="w-full bg-slate-900/90 border border-panel-border rounded-lg px-2.5 py-1.5 text-xs text-ink focus:border-cyan font-mono"
+                  className="w-full bg-bg/90 border border-panel-border rounded-lg px-2.5 py-1.5 text-xs text-ink focus:border-cyan font-mono"
                 />
               </div>
             </div>
@@ -293,7 +293,7 @@ export default function DataExportFetchPanel({
                   id="export-symbol"
                   value={exportSymbol}
                   onChange={(e) => setExportSymbol(e.target.value)}
-                  className="w-full bg-slate-900/90 border border-panel-border rounded-lg px-3 py-1.5 text-xs text-ink focus:border-violet"
+                  className="w-full bg-bg/90 border border-panel-border rounded-lg px-3 py-1.5 text-xs text-ink focus:border-violet"
                 >
                   {symbolsList.map((sym) => (
                     <option key={sym} value={sym}>
@@ -311,7 +311,7 @@ export default function DataExportFetchPanel({
                   id="export-timeframe"
                   value={exportTf}
                   onChange={(e) => setExportTf(e.target.value)}
-                  className="w-full bg-slate-900/90 border border-panel-border rounded-lg px-3 py-1.5 text-xs text-ink focus:border-violet"
+                  className="w-full bg-bg/90 border border-panel-border rounded-lg px-3 py-1.5 text-xs text-ink focus:border-violet"
                 >
                   {timeframesList.map((tf) => (
                     <option key={tf} value={tf}>
@@ -334,7 +334,7 @@ export default function DataExportFetchPanel({
                   className={`flex items-center justify-center gap-2 p-2 rounded-lg border text-xs cursor-pointer transition-colors focus-within:ring-2 focus-within:ring-cyan ${
                     exportFormat === "csv"
                       ? "bg-violet/20 border-violet/50 text-violet font-semibold"
-                      : "bg-slate-900/60 border-panel-border text-muted hover:text-ink"
+                      : "bg-bg/60 border-panel-border text-muted hover:text-ink"
                   }`}
                 >
                   <input
@@ -352,7 +352,7 @@ export default function DataExportFetchPanel({
                   className={`flex items-center justify-center gap-2 p-2 rounded-lg border text-xs cursor-pointer transition-colors focus-within:ring-2 focus-within:ring-cyan ${
                     exportFormat === "json"
                       ? "bg-violet/20 border-violet/50 text-violet font-semibold"
-                      : "bg-slate-900/60 border-panel-border text-muted hover:text-ink"
+                      : "bg-bg/60 border-panel-border text-muted hover:text-ink"
                   }`}
                 >
                   <input
@@ -379,7 +379,7 @@ export default function DataExportFetchPanel({
                   type="date"
                   value={exportStartDate}
                   onChange={(e) => setExportStartDate(e.target.value)}
-                  className="w-full bg-slate-900/90 border border-panel-border rounded-lg px-2.5 py-1.5 text-xs text-ink focus:border-violet font-mono"
+                  className="w-full bg-bg/90 border border-panel-border rounded-lg px-2.5 py-1.5 text-xs text-ink focus:border-violet font-mono"
                 />
               </div>
 
@@ -392,7 +392,7 @@ export default function DataExportFetchPanel({
                   type="date"
                   value={exportEndDate}
                   onChange={(e) => setExportEndDate(e.target.value)}
-                  className="w-full bg-slate-900/90 border border-panel-border rounded-lg px-2.5 py-1.5 text-xs text-ink focus:border-violet font-mono"
+                  className="w-full bg-bg/90 border border-panel-border rounded-lg px-2.5 py-1.5 text-xs text-ink focus:border-violet font-mono"
                 />
               </div>
             </div>

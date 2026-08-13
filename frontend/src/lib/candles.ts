@@ -2,6 +2,7 @@
 // divide by 1000 only when feeding lightweight-charts. Rule 4: liveLines draws
 // real prices only (skips null = unknown and 0.0 = none set).
 import type { Candle, CandlesResponse, LivePosition } from "./types";
+import { palette } from "./theme";
 
 export type Timeframe = "M1" | "M5" | "M15" | "H1" | "H4" | "D1";
 export const TIMEFRAMES: Timeframe[] = ["M1", "M5", "M15", "H1", "H4", "D1"];
@@ -95,7 +96,7 @@ export function barCloseCountdown(nowMs: number, tf: Timeframe): string {
                 : `${p(Math.floor(s / 60))}:${p(s % 60)}`;
 }
 
-export const LINE_COLORS ={ sl: "#fb7185", tp: "#34d399", entry: "#9a97c4" };
+export const LINE_COLORS = { sl: palette.neg, tp: palette.pos, entry: palette.muted };
 
 export type LiveLineKind = "entry" | "sl" | "tp";
 

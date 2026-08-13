@@ -1,5 +1,6 @@
 import { LINE_COLORS, timeframeMs, TIMEFRAMES, type Timeframe } from "./candles";
 import type { TradeFull, TradeRow } from "./types";
+import { palette } from "./theme";
 
 const real = (v: number | null): v is number => v !== null && Math.abs(v) > 1e-9;
 
@@ -7,7 +8,8 @@ const real = (v: number | null): v is number => v !== null && Math.abs(v) > 1e-9
 export function tradeLines(t: TradeFull): { price: number; color: string; title: string }[] {
   const out: { price: number; color: string; title: string }[] = [];
   if (real(t.open_price)) out.push({ price: t.open_price!, color: LINE_COLORS.entry, title: "entry" });
-  if (real(t.close_price)) out.push({ price: t.close_price!, color: "#f59e0b", title: "exit" });
+  if (real(t.close_price))
+    out.push({ price: t.close_price!, color: palette["exit-amber"], title: "exit" });
   if (real(t.sl_initial)) out.push({ price: t.sl_initial!, color: LINE_COLORS.sl, title: "SL" });
   if (real(t.tp_initial)) out.push({ price: t.tp_initial!, color: LINE_COLORS.tp, title: "TP" });
   return out;

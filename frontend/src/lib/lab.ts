@@ -2,6 +2,7 @@
 // bestModel are pure and tested. Mirrors src/journal/lab/features.py
 // PRICE_FEATURES and web/lab_api.py's payload shapes — see lib/types.ts.
 import { postJson } from "./api";
+import { palette, tint, white } from "./theme";
 import { TIMEFRAMES, type Timeframe } from "./candles";
 import type { LabModel, LabScore, LabStage } from "./types";
 
@@ -54,13 +55,13 @@ export type TrainResponse = {
 
 // Muted enough to sit behind candles without competing with them.
 const REGIME_COLORS: Record<string, string> = {
-  trend_up: "rgba(38, 166, 154, 0.10)",
-  trend_down: "rgba(239, 83, 80, 0.10)",
-  range: "rgba(120, 120, 120, 0.08)",
+  trend_up: tint(palette.pos, 0.1),
+  trend_down: tint(palette.neg, 0.1),
+  range: white(0.06),
 };
 
 export function regimeColor(regime: string): string {
-  return REGIME_COLORS[regime] ?? "rgba(120, 120, 120, 0.05)";
+  return REGIME_COLORS[regime] ?? white(0.04);
 }
 
 export function formatAge(ms: number | null): string {

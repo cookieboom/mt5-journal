@@ -1,5 +1,6 @@
 import { formatAge } from "../lib/lab";
 import type { LabScore, LabScoreStatus } from "../lib/types";
+import { TONE_TINT } from "./StatusPill";
 
 const STALE_MS = 30 * 86_400_000;
 
@@ -41,9 +42,10 @@ function rMultiple(value: number | null | undefined, n: number | null | undefine
 // stale/degraded one needing action, muted = nothing to show. On the one page
 // with order buttons, a degraded reading must look different, not just read
 // different (CLAUDE.md rule 9).
-const MUTED = "text-[11px] text-muted px-2.5 py-1.5 rounded-lg bg-white/5";
-const OK = "text-[11px] text-ink px-2.5 py-1.5 rounded-lg bg-cyan/10 ring-1 ring-cyan/25";
-const STALE = "text-[11px] text-ink px-2.5 py-1.5 rounded-lg bg-neg/10 ring-1 ring-neg/25";
+const SHAPE = "text-[11px] px-2.5 py-1.5 rounded-lg ";
+const MUTED = `${SHAPE}text-muted ${TONE_TINT.absent}`;
+const OK = `${SHAPE}text-ink ${TONE_TINT.now}`;
+const STALE = `${SHAPE}text-ink ${TONE_TINT.wrong}`;
 
 export default function LabBadge({ score }: { score: LabScore | null }) {
   if (!score) return <div className={MUTED} data-status="loading">Lab —</div>;

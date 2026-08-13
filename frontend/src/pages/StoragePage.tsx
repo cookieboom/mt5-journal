@@ -198,7 +198,7 @@ export default function StoragePage() {
                   id="storage-symbol"
                   value={selectedSymbol}
                   onChange={(e) => setSelectedSymbol(e.target.value)}
-                  className="bg-slate-900/90 border border-panel-border rounded-lg px-3 py-1.5 text-xs text-ink font-semibold focus:border-cyan"
+                  className="bg-bg/90 border border-panel-border rounded-lg px-3 py-1.5 text-xs text-ink font-semibold focus:border-cyan"
                 >
                   {availableSymbols.map((sym) => (
                     <option key={sym} value={sym}>
@@ -210,14 +210,14 @@ export default function StoragePage() {
 
               <div>
                 <label className="block text-[11px] font-medium text-muted mb-1">Timeframe</label>
-                <div className="flex items-center gap-1 bg-slate-900/90 border border-panel-border p-1 rounded-lg">
+                <div className="flex items-center gap-1 bg-bg/90 border border-panel-border p-1 rounded-lg">
                   {DEFAULT_TIMEFRAMES.map((tf) => (
                     <button
                       key={tf}
                       onClick={() => setSelectedTf(tf)}
                       className={`px-2.5 py-1 rounded text-xs font-mono font-medium transition-colors ${
                         selectedTf === tf
-                          ? "bg-cyan text-slate-950 font-bold"
+                          ? "bg-cyan text-bg font-bold"
                           : "text-muted hover:text-ink"
                       }`}
                     >

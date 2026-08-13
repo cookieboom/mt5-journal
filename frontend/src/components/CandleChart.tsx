@@ -33,15 +33,10 @@ import {
   anchorToX, hitTest, moveDrawing, projectDrawing, timeAtLogical,
   type Anchor, type Drawing, type Projected, type Tool,
 } from "../lib/drawings";
+import { chartDark, chartLight } from "../lib/theme";
 
-const DARK = {
-  bg: "transparent", text: "#9a97c4", grid: "rgba(255,255,255,0.06)",
-  border: "rgba(255,255,255,0.09)", up: "#34d399", down: "#fb7185",
-};
-const LIGHT = {
-  bg: "#ffffff", text: "#334155", grid: "rgba(0,0,0,0.06)",
-  border: "rgba(0,0,0,0.12)", up: "#059669", down: "#e11d48",
-};
+const DARK = chartDark;
+const LIGHT = chartLight;
 
 const CROSSHAIR = {
   normal: CrosshairMode.Normal, magnet: CrosshairMode.Magnet, hidden: CrosshairMode.Hidden,

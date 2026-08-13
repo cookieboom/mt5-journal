@@ -82,9 +82,9 @@ export default function CoverageVisualizer({ completeness, loading }: CoverageVi
 
   // Helper for badge color based on coverage %
   const getBadgeClass = (pct: number) => {
-    if (pct >= 98) return "bg-emerald-500/10 text-emerald-400 border-emerald-500/30";
-    if (pct >= 85) return "bg-amber-500/10 text-amber-400 border-amber-500/30";
-    return "bg-rose-500/10 text-rose-400 border-rose-500/30";
+    if (pct >= 98) return "bg-pos/10 text-pos border-pos/30";
+    if (pct >= 85) return "bg-warn/10 text-warn border-warn/30";
+    return "bg-neg/10 text-neg border-neg/30";
   };
 
   return (
@@ -113,10 +113,10 @@ export default function CoverageVisualizer({ completeness, loading }: CoverageVi
             <span
               className={`w-2 h-2 rounded-full ${
                 coverage_percent >= 98
-                  ? "bg-emerald-400"
+                  ? "bg-pos"
                   : coverage_percent >= 85
-                  ? "bg-amber-400"
-                  : "bg-rose-400 animate-pulse"
+                  ? "bg-warn"
+                  : "bg-neg animate-pulse"
               }`}
             />
             <span>{coverage_percent.toFixed(2)}% Covered</span>
@@ -126,9 +126,9 @@ export default function CoverageVisualizer({ completeness, loading }: CoverageVi
 
       {/* Interactive Timeline Bar */}
       <div className="space-y-1.5">
-        <div className="relative h-8 w-full bg-slate-900/80 rounded-lg overflow-hidden border border-panel-border/80 flex items-center shadow-inner">
+        <div className="relative h-8 w-full bg-bg/80 rounded-lg overflow-hidden border border-panel-border/80 flex items-center shadow-inner">
           {/* Base Background representing gaps */}
-          <div className="absolute inset-0 bg-rose-500/20" />
+          <div className="absolute inset-0 bg-neg/20" />
 
           {/* Render Gaps (explicit blocks) */}
           {gaps.map((gap, idx) => {
@@ -139,7 +139,7 @@ export default function CoverageVisualizer({ completeness, loading }: CoverageVi
               <div
                 key={`gap-${idx}-${gap.from_ms}`}
                 style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
-                className="absolute top-0 bottom-0 bg-rose-500/80 hover:bg-rose-400 transition-colors cursor-pointer z-10"
+                className="absolute top-0 bottom-0 bg-neg/80 hover:bg-neg transition-colors cursor-pointer z-10"
                 onMouseEnter={() =>
                   setHoveredInfo({
                     type: "gap",
@@ -162,7 +162,7 @@ export default function CoverageVisualizer({ completeness, loading }: CoverageVi
               <div
                 key={`cov-${idx}-${range.from_ms}`}
                 style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
-                className="absolute top-0 bottom-0 bg-emerald-500/80 hover:bg-emerald-400 transition-colors cursor-pointer z-20"
+                className="absolute top-0 bottom-0 bg-pos/80 hover:bg-pos transition-colors cursor-pointer z-20"
                 onMouseEnter={() =>
                   setHoveredInfo({
                     type: "covered",
@@ -179,10 +179,10 @@ export default function CoverageVisualizer({ completeness, loading }: CoverageVi
         {/* Hover Tooltip / Status Banner */}
         <div className="h-6 flex items-center justify-between text-xs font-mono">
           {hoveredInfo ? (
-            <div className="flex items-center gap-2 text-ink bg-slate-800/90 px-2.5 py-0.5 rounded border border-panel-border">
+            <div className="flex items-center gap-2 text-ink bg-bg/90 px-2.5 py-0.5 rounded border border-panel-border">
               <span
                 className={`w-2 h-2 rounded-full ${
-                  hoveredInfo.type === "covered" ? "bg-emerald-400" : "bg-rose-400"
+                  hoveredInfo.type === "covered" ? "bg-pos" : "bg-neg"
                 }`}
               />
               <span className="font-semibold uppercase text-[10px] tracking-wider">
@@ -209,11 +209,11 @@ export default function CoverageVisualizer({ completeness, loading }: CoverageVi
       <div className="pt-2 border-t border-panel-border/50 flex flex-wrap items-center justify-between gap-3 text-xs text-muted">
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-1.5">
-            <span className="w-3 h-3 rounded-sm bg-emerald-500/80 border border-emerald-400/50 inline-block" />
+            <span className="w-3 h-3 rounded-sm bg-pos/80 border border-pos/50 inline-block" />
             <span>Covered Data</span>
           </div>
           <div className="flex items-center gap-1.5">
-            <span className="w-3 h-3 rounded-sm bg-rose-500/80 border border-rose-400/50 inline-block" />
+            <span className="w-3 h-3 rounded-sm bg-neg/80 border border-neg/50 inline-block" />
             <span>Gap Range</span>
           </div>
         </div>

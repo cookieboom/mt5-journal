@@ -1,6 +1,7 @@
 // Pure model for hand-drawn chart annotations. No React, no chart API here —
 // the same discipline as measure.ts. Time is epoch ms (broker server = UTC,
 // CLAUDE.md rule 3); prices are REAL and only ever compared with tolerance.
+import { palette } from "./theme";
 
 export interface Anchor {
   timeMs: number;   // epoch ms, integer, UTC
@@ -23,10 +24,10 @@ export const MAX_TEXT_LEN = 280;
 // Per-kind defaults. An absent `color` on an item means "use this" — absent is
 // unknown, not black (rule 4 in spirit).
 export const KIND_COLORS: Record<DrawingKind, string> = {
-  trend: "#7dd3fc",
-  hline: "#a78bfa",
-  rect: "#fbbf24",
-  text: "#e6e6f0",
+  trend: palette["mark-sky"],
+  hline: palette.violet,
+  rect: palette["mark-amber"],
+  text: palette["mark-chalk"],
 };
 
 export function colorOf(d: Drawing): string {

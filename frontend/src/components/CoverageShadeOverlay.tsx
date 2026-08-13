@@ -1,6 +1,11 @@
 import type { Segment } from "../lib/coverage";
+import { palette, tint } from "../lib/theme";
 
-const FILL = { unfetched: "rgba(251,113,133,0.14)", closed: "rgba(63,63,82,0.28)", covered: "" };
+const FILL = {
+  unfetched: tint(palette.neg, 0.14),
+  closed: tint(palette["closed-slate"], 0.28),
+  covered: "",
+};
 
 // Absolute-positioned bands over the chart canvas. `project(ms)` returns the x
 // pixel for a timestamp (CandleChart supplies one backed by the time scale's

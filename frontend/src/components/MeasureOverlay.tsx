@@ -1,4 +1,5 @@
 import { fmtSpan, type MeasureMetrics } from "../lib/measure";
+import { palette, tint } from "../lib/theme";
 
 export interface ProjectedPoint { x: number; y: number }
 export interface MeasureOverlayProps {
@@ -47,7 +48,8 @@ export default function MeasureOverlay(props: MeasureOverlayProps) {
           <div
             data-testid="measure-label"
             style={{
-              display: "inline-block", background: "rgba(15,15,25,0.85)", color: "#e6e6f0",
+              display: "inline-block", background: tint(palette.bg, 0.85),
+              color: palette["mark-chalk"],
               font: "11px/1.35 ui-monospace, monospace", padding: "3px 6px", borderRadius: 4,
               border: `1px solid ${color}`, whiteSpace: "nowrap",
             }}

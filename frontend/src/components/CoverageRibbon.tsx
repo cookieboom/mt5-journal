@@ -2,8 +2,11 @@ import { useMemo } from "react";
 import type { Candle } from "../lib/types";
 import { classifyGaps } from "../lib/coverage";
 import type { Timeframe } from "../lib/candles";
+import { palette } from "../lib/theme";
 
-const COLOR = { covered: "#22d3ee", unfetched: "#fb7185", closed: "#3f3f52" };
+const COLOR = {
+  covered: palette.cyan, unfetched: palette.neg, closed: palette["closed-slate"],
+};
 
 export default function CoverageRibbon({
   bars, missing, window, tf, onBackfill,

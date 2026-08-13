@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "r
 import CandleChart from "../components/CandleChart";
 import LabMetrics from "../components/LabMetrics";
 import RegimeOverlay from "../components/RegimeOverlay";
+import { palette, tint } from "../lib/theme";
 import { SYMBOLS, TIMEFRAMES as ALL_TIMEFRAMES, initialWindow, type Sym, type Timeframe } from "../lib/candles";
 import { DEFAULT_SETTINGS } from "../lib/chartPrefs";
 import {
@@ -244,7 +245,7 @@ export default function Lab() {
       {error && <p className="text-neg text-[12px] mb-3">{error}</p>}
 
       {result && Object.keys(result.dropped_features).length > 0 && (
-        <p data-testid="dropped-features-warning" className="text-[12px] text-amber-400 mb-3">
+        <p data-testid="dropped-features-warning" className="text-[12px] text-warn mb-3">
           Dropped {Object.entries(result.dropped_features)
             .map(([k, v]) => `${k} (${Math.round(v * 100)}% unknown)`)
             .join(", ")}
@@ -323,7 +324,7 @@ export default function Lab() {
                     const h = Math.max(1, b.p_tp_long * STRIP_HEIGHT);
                     return (
                       <rect key={b.time_msc} x={x - 1} y={STRIP_HEIGHT - h} width={2} height={h}
-                            fill="rgba(34,211,238,0.7)" />
+                            fill={tint(palette.cyan, 0.7)} />
                     );
                   })}
                 </svg>

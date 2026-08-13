@@ -93,7 +93,7 @@ export default function GapTable({ completeness, loading, onRefresh }: GapTableP
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2.5">
           <h3 className="text-base font-bold text-ink flex items-center gap-2">
-            <svg className="w-5 h-5 text-rose-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="w-5 h-5 text-neg" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
                 strokeLinecap="round"
                 strokeLinejoin="round"
@@ -103,7 +103,7 @@ export default function GapTable({ completeness, loading, onRefresh }: GapTableP
             </svg>
             <span>Detected Gaps</span>
           </h3>
-          <span className="px-2 py-0.5 rounded-full text-xs font-mono font-semibold bg-rose-500/10 text-rose-400 border border-rose-500/20">
+          <span className="px-2 py-0.5 rounded-full text-xs font-mono font-semibold bg-neg/10 text-neg border border-neg/20">
             {gaps.length} {gaps.length === 1 ? "gap" : "gaps"}
           </span>
         </div>
@@ -112,7 +112,7 @@ export default function GapTable({ completeness, loading, onRefresh }: GapTableP
           type="button"
           onClick={handleFillAllGaps}
           disabled={loading || isFillingAll || gaps.length === 0}
-          className="py-1.5 px-3 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 ring-1 ring-rose-500/40 text-xs font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
+          className="py-1.5 px-3 rounded-lg bg-neg/20 hover:bg-neg/30 text-neg ring-1 ring-neg/40 text-xs font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
         >
           {isFillingAll ? (
             <>
@@ -175,8 +175,8 @@ export default function GapTable({ completeness, loading, onRefresh }: GapTableP
           ))}
         </div>
       ) : gaps.length === 0 ? (
-        <div className="p-6 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-center space-y-2">
-          <div className="flex items-center justify-center gap-2 text-emerald-400 font-semibold text-sm">
+        <div className="p-6 rounded-xl bg-pos/10 border border-pos/20 text-center space-y-2">
+          <div className="flex items-center justify-center gap-2 text-pos font-semibold text-sm">
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
@@ -210,7 +210,7 @@ export default function GapTable({ completeness, loading, onRefresh }: GapTableP
                     <td className="py-2.5 px-3 font-mono text-ink">
                       {formatDate(gap.to_ms)}
                     </td>
-                    <td className="py-2.5 px-3 font-mono text-amber-400">
+                    <td className="py-2.5 px-3 font-mono text-warn">
                       {gap.duration_hours >= 24
                         ? `${(gap.duration_hours / 24).toFixed(1)} days`
                         : `${gap.duration_hours.toFixed(1)} hrs`}

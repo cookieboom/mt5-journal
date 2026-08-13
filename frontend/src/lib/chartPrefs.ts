@@ -3,6 +3,7 @@
 // a legacy Phase B object {theme,grid} (no version) migrates in place. DB
 // persistence + localStorage mirror live in hooks/useChartPrefs.ts.
 import { SYMBOLS, TIMEFRAMES, type Sym, type Timeframe } from "./candles";
+import { palette } from "./theme";
 
 export type ChartTheme = "dark" | "light";
 export type ChartType = "candle" | "bar" | "line" | "area";
@@ -30,7 +31,7 @@ export const DEFAULT_SETTINGS: ChartSettings = {
   version: 1,
   theme: "dark",
   grid: true,
-  colors: { up: "#34d399", down: "#fb7185", wick: "#9a97c4" },
+  colors: { up: palette.pos, down: palette.neg, wick: palette.muted },
   chartType: "candle",
   crosshair: "normal",
   priceScale: "linear",

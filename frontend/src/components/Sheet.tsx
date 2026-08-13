@@ -33,7 +33,7 @@ export default function Sheet({
         className="fixed right-0 top-0 z-40 h-full w-[300px] max-w-[85vw]
                    p-4 pb-[76px] md:pb-4 flex flex-col
                    bg-bg/95 backdrop-blur-[8px] border-l border-panel-border
-                   shadow-[0_12px_32px_rgba(0,0,0,0.45)]"
+                   shadow-float"
         role="dialog"
         aria-modal="true"
         aria-label={label}

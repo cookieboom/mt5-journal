@@ -12,6 +12,7 @@ colors:
   cyan: "#22d3ee"
   pos: "#34d399"
   neg: "#fb7185"
+  warn: "#fbbf24"
   exit-amber: "#f59e0b"
   mark-amber: "#fbbf24"
   mark-sky: "#7dd3fc"
@@ -193,6 +194,10 @@ green/rose pair that means only one thing: outcome.
   candles, losing R, the SL line, unfetched coverage holes, rejected commands, a
   dead daemon. One colour for "this went against you" and "this is broken", because
   both demand the same response: look.
+- **Caution Amber** (`{colors.warn}`): degraded but not wrong — coverage that is
+  85–99% complete, a feature the trainer dropped, a replay caveat. It exists so
+  rose keeps meaning "wrong"; a partial fetch is not a broken one. Never an
+  outcome, never a mood.
 
 ### Tertiary
 Chart annotation colours, used only on the canvas and never in chrome:
@@ -221,9 +226,15 @@ Chart annotation colours, used only on the canvas and never in chrome:
 does not change with time is a bug, and a violet element that reports a market fact
 is a bug. Outcomes are green/rose only.
 
-**The One Glow Rule.** The cyan live dot (`box-shadow: 0 0 8px #22d3ee`) is the only
+**The One Glow Rule.** The cyan live dot (`shadow-glow`, `0 0 8px` cyan) is the only
 light-emitting element in the interface. Its rarity is what makes it read as a
 heartbeat. Do not glow a second thing.
+
+**The One Palette Rule.** Every colour in the interface comes from
+`frontend/src/lib/theme.ts`. `tailwind.config.ts` reads that file for its class
+tokens, and canvas/SVG code — which Tailwind cannot reach — imports `palette`,
+`tint()`, and `white()` from it. A raw `bg-slate-900`, `text-rose-400`, or pasted
+`#hex` in a component is a defect: it is a colour a light theme cannot find.
 
 **The Honest Absence Rule.** Missing data is coloured, not hidden: rose for a hole
 that could be filled, slate for a market closure that never had bars. Never render
@@ -400,6 +411,12 @@ pill at 11px containing a 6px dot and a terse state string, in one of three tint
 
 The pill always states the machine-readable reason next to the state — an age in
 seconds, a percentage, a count — never a bare word like "OK".
+
+It ships as `components/StatusPill.tsx` (`tone="now" | "wrong" | "absent"`), and
+`LiveDot`, `StalenessBadge`, and the dashboard header all render through it. A
+surface that needs the same three tints in a different shape — `LabBadge`'s
+multi-line card — imports `TONE_TINT` and supplies its own shape, so the
+vocabulary stays in one file even when the geometry does not.
 
 ### Chart Canvas (signature)
 The chart is transparent-backed and inherits the page ground, so panels and canvas

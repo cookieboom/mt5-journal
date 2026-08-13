@@ -458,7 +458,7 @@ export default function Chart() {
           />
           {replayPrefs.prefs.competitiveMode && (
             <div className="flex items-center gap-4 text-xs font-semibold">
-               <span className="text-orange-300">
+               <span className="text-warn">
                  Skenario {compRound} {replayPrefs.prefs.competitiveRounds > 0 ? `/ ${replayPrefs.prefs.competitiveRounds}` : ''}
                </span>
                <button className="glass px-3 py-1 text-cyan hover:bg-cyan/10" onClick={() => nextCompetitiveRound(true)}>

@@ -40,7 +40,7 @@ export default function Modal({
       // the dialog element itself is a click on the scrim.
       onClick={(e) => { if (e.target === ref.current) onClose(); }}
       className={`glass p-5 text-ink backdrop:bg-black/60
-                  shadow-[0_12px_32px_rgba(0,0,0,0.45)] ${width}`}
+                  shadow-float ${width}`}
     >
       {children}
     </dialog>
