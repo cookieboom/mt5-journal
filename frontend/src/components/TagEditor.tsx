@@ -45,7 +45,7 @@ export default function TagEditor({
         ))}
       </div>
       <div className="flex gap-2 text-[12px]">
-        <input className="bg-white/5 rounded px-2 py-1 text-ink flex-1" value={newTag}
+        <input aria-label="tag manual" className="bg-white/5 rounded px-2 py-1 text-ink flex-1" value={newTag}
           onChange={(e) => setNewTag(e.target.value)} placeholder="tag manual, mis. revenge-trade"
           onKeyDown={(e) => { if (e.key === "Enter") add(); }} />
         <button className="px-3 py-1.5 rounded bg-violet/20 ring-1 ring-violet/40 text-ink" onClick={add} disabled={busy}>Tambah</button>

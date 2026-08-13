@@ -4,6 +4,7 @@ import {
   HISTORY_MIN, HISTORY_MAX, SPEED_MIN, SPEED_MAX, type ReplayFormPrefs,
 } from "../lib/replayPrefs";
 import type { ReplayConfig } from "../hooks/useReplaySession";
+import Modal from "./Modal";
 
 // Config for a new replay: symbol, timeframe, a start date (the reveal cursor),
 // how many bars of history to show before it, and playback speed. range_start is
@@ -46,8 +47,8 @@ export default function ReplayConfigModal(props: {
   };
 
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50">
-      <div className="glass w-[360px] p-4 space-y-3">
+    <Modal label="Mulai replay" width="w-[min(22.5rem,calc(100vw-2rem))]" onClose={props.onCancel}>
+      <div className="space-y-3">
         <h2 className="text-sm font-semibold">Mulai Replay</h2>
         <label className="block text-xs">Simbol
           <select className="glass mt-1 w-full px-2 py-1" value={symbol}
@@ -96,6 +97,6 @@ export default function ReplayConfigModal(props: {
           <button className="glass px-3 py-1 text-cyan" onClick={submit}>Mulai</button>
         </div>
       </div>
-    </div>
+    </Modal>
   );
 }

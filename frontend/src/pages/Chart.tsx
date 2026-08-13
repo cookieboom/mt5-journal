@@ -413,6 +413,12 @@ export default function Chart() {
   // has always hung below the container — harmless until the nav bar sat there.
   return (
     <div className="flex flex-col h-[calc(100vh-8rem)] md:h-[calc(100vh-2rem)]">
+      {/* The other ten routes carry a visible 18px title; this one gives that
+          line to the toolbar, and on a phone a title row would cost the chart
+          30px it does not have. The heading still has to exist — hidden, so a
+          screen reader gets the route name the nav highlight gives everyone
+          else. */}
+      <h1 className="sr-only">Chart</h1>
       {configOpen && <ReplayConfigModal initial={replayPrefs.prefs} onStart={onStart} onCancel={exitReplay} />}
       <div className="flex flex-wrap items-center gap-3">
         <ChartToolbar

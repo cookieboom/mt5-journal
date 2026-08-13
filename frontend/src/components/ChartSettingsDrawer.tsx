@@ -13,12 +13,19 @@ function Section({ title, children }: { title: string; children: React.ReactNode
     </div>
   );
 }
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label className="flex items-center justify-between text-[12px] gap-2">
-      <span className="text-muted">{label}</span>
-      {children}
-    </label>
+// A <label> may only wrap a form control, and two of these fields hold a button
+// group instead. There the label is not merely wrong markup: `button` is a
+// labelable element, so clicking the caption "Tema" fires the first button and
+// silently flips the setting. Those pass `group` and get a named group instead.
+function Field({ label, children, group }: {
+  label: string; children: React.ReactNode; group?: boolean;
+}) {
+  const row = "flex items-center justify-between text-[12px] gap-2";
+  const caption = <span className="text-muted">{label}</span>;
+  return group ? (
+    <div role="group" aria-label={label} className={row}>{caption}{children}</div>
+  ) : (
+    <label className={row}>{caption}{children}</label>
   );
 }
 
@@ -47,7 +54,7 @@ export default function ChartSettingsDrawer({
       }
     >
           <Section title="Tampilan">
-            <Field label="Tema">
+            <Field label="Tema" group>
               <div className="flex gap-1">
                 {(["dark", "light"] as const).map((t) => (
                   <button key={t} onClick={() => set("theme", t)}
@@ -94,7 +101,7 @@ export default function ChartSettingsDrawer({
           </Section>
 
           <Section title="Skala">
-            <Field label="Mode harga">
+            <Field label="Mode harga" group>
               <div className="flex gap-1">
                 {(["linear", "log"] as const).map((m) => (
                   <button key={m} onClick={() => set("priceScale", m)}

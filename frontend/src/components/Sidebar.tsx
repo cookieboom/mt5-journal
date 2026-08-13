@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 
-const LINKS = [
+export const LINKS = [
   { to: "/", label: "Dashboard", end: true },
   { to: "/live", label: "Live" },
   { to: "/chart", label: "Chart" },

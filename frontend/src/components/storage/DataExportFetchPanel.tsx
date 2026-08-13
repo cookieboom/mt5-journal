@@ -167,13 +167,14 @@ export default function DataExportFetchPanel({
             {/* Symbol & Timeframe Selection */}
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-[11px] font-medium text-muted mb-1">
+                <label htmlFor="backfill-symbol" className="block text-[11px] font-medium text-muted mb-1">
                   Symbol
                 </label>
                 <select
+                  id="backfill-symbol"
                   value={fetchSymbol}
                   onChange={(e) => setFetchSymbol(e.target.value)}
-                  className="w-full bg-slate-900/90 border border-panel-border rounded-lg px-3 py-1.5 text-xs text-ink focus:outline-none focus:border-cyan"
+                  className="w-full bg-slate-900/90 border border-panel-border rounded-lg px-3 py-1.5 text-xs text-ink focus:border-cyan"
                 >
                   {symbolsList.map((sym) => (
                     <option key={sym} value={sym}>
@@ -184,13 +185,14 @@ export default function DataExportFetchPanel({
               </div>
 
               <div>
-                <label className="block text-[11px] font-medium text-muted mb-1">
+                <label htmlFor="backfill-timeframe" className="block text-[11px] font-medium text-muted mb-1">
                   Timeframe
                 </label>
                 <select
+                  id="backfill-timeframe"
                   value={fetchTf}
                   onChange={(e) => setFetchTf(e.target.value)}
-                  className="w-full bg-slate-900/90 border border-panel-border rounded-lg px-3 py-1.5 text-xs text-ink focus:outline-none focus:border-cyan"
+                  className="w-full bg-slate-900/90 border border-panel-border rounded-lg px-3 py-1.5 text-xs text-ink focus:border-cyan"
                 >
                   {timeframesList.map((tf) => (
                     <option key={tf} value={tf}>
@@ -204,26 +206,28 @@ export default function DataExportFetchPanel({
             {/* Start & End Date Inputs */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <label className="block text-[11px] font-medium text-muted mb-1">
+                <label htmlFor="backfill-start" className="block text-[11px] font-medium text-muted mb-1">
                   Start Date & Time
                 </label>
                 <input
+                  id="backfill-start"
                   type="datetime-local"
                   value={startDate}
                   onChange={(e) => setStartDate(e.target.value)}
-                  className="w-full bg-slate-900/90 border border-panel-border rounded-lg px-2.5 py-1.5 text-xs text-ink focus:outline-none focus:border-cyan font-mono"
+                  className="w-full bg-slate-900/90 border border-panel-border rounded-lg px-2.5 py-1.5 text-xs text-ink focus:border-cyan font-mono"
                 />
               </div>
 
               <div>
-                <label className="block text-[11px] font-medium text-muted mb-1">
+                <label htmlFor="backfill-end" className="block text-[11px] font-medium text-muted mb-1">
                   End Date & Time
                 </label>
                 <input
+                  id="backfill-end"
                   type="datetime-local"
                   value={endDate}
                   onChange={(e) => setEndDate(e.target.value)}
-                  className="w-full bg-slate-900/90 border border-panel-border rounded-lg px-2.5 py-1.5 text-xs text-ink focus:outline-none focus:border-cyan font-mono"
+                  className="w-full bg-slate-900/90 border border-panel-border rounded-lg px-2.5 py-1.5 text-xs text-ink focus:border-cyan font-mono"
                 />
               </div>
             </div>
@@ -282,13 +286,14 @@ export default function DataExportFetchPanel({
             {/* Symbol & Timeframe Selection */}
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-[11px] font-medium text-muted mb-1">
+                <label htmlFor="export-symbol" className="block text-[11px] font-medium text-muted mb-1">
                   Symbol
                 </label>
                 <select
+                  id="export-symbol"
                   value={exportSymbol}
                   onChange={(e) => setExportSymbol(e.target.value)}
-                  className="w-full bg-slate-900/90 border border-panel-border rounded-lg px-3 py-1.5 text-xs text-ink focus:outline-none focus:border-violet"
+                  className="w-full bg-slate-900/90 border border-panel-border rounded-lg px-3 py-1.5 text-xs text-ink focus:border-violet"
                 >
                   {symbolsList.map((sym) => (
                     <option key={sym} value={sym}>
@@ -299,13 +304,14 @@ export default function DataExportFetchPanel({
               </div>
 
               <div>
-                <label className="block text-[11px] font-medium text-muted mb-1">
+                <label htmlFor="export-timeframe" className="block text-[11px] font-medium text-muted mb-1">
                   Timeframe
                 </label>
                 <select
+                  id="export-timeframe"
                   value={exportTf}
                   onChange={(e) => setExportTf(e.target.value)}
-                  className="w-full bg-slate-900/90 border border-panel-border rounded-lg px-3 py-1.5 text-xs text-ink focus:outline-none focus:border-violet"
+                  className="w-full bg-slate-900/90 border border-panel-border rounded-lg px-3 py-1.5 text-xs text-ink focus:border-violet"
                 >
                   {timeframesList.map((tf) => (
                     <option key={tf} value={tf}>
@@ -317,13 +323,15 @@ export default function DataExportFetchPanel({
             </div>
 
             {/* Export Format Radio Group */}
-            <div>
-              <label className="block text-[11px] font-medium text-muted mb-1.5">
+            {/* fieldset/legend rather than a floating <label>: the name belongs
+                to the radio group, and a label with no control names nothing. */}
+            <fieldset>
+              <legend className="block text-[11px] font-medium text-muted mb-1.5">
                 Export Format
-              </label>
+              </legend>
               <div className="grid grid-cols-2 gap-3">
                 <label
-                  className={`flex items-center justify-center gap-2 p-2 rounded-lg border text-xs cursor-pointer transition-colors ${
+                  className={`flex items-center justify-center gap-2 p-2 rounded-lg border text-xs cursor-pointer transition-colors focus-within:ring-2 focus-within:ring-cyan ${
                     exportFormat === "csv"
                       ? "bg-violet/20 border-violet/50 text-violet font-semibold"
                       : "bg-slate-900/60 border-panel-border text-muted hover:text-ink"
@@ -341,7 +349,7 @@ export default function DataExportFetchPanel({
                 </label>
 
                 <label
-                  className={`flex items-center justify-center gap-2 p-2 rounded-lg border text-xs cursor-pointer transition-colors ${
+                  className={`flex items-center justify-center gap-2 p-2 rounded-lg border text-xs cursor-pointer transition-colors focus-within:ring-2 focus-within:ring-cyan ${
                     exportFormat === "json"
                       ? "bg-violet/20 border-violet/50 text-violet font-semibold"
                       : "bg-slate-900/60 border-panel-border text-muted hover:text-ink"
@@ -358,31 +366,33 @@ export default function DataExportFetchPanel({
                   <span>JSON Payload (.json)</span>
                 </label>
               </div>
-            </div>
+            </fieldset>
 
             {/* Optional Date Range Filter */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <label className="block text-[11px] font-medium text-muted mb-1">
+                <label htmlFor="export-start" className="block text-[11px] font-medium text-muted mb-1">
                   Start Date (Optional)
                 </label>
                 <input
+                  id="export-start"
                   type="date"
                   value={exportStartDate}
                   onChange={(e) => setExportStartDate(e.target.value)}
-                  className="w-full bg-slate-900/90 border border-panel-border rounded-lg px-2.5 py-1.5 text-xs text-ink focus:outline-none focus:border-violet font-mono"
+                  className="w-full bg-slate-900/90 border border-panel-border rounded-lg px-2.5 py-1.5 text-xs text-ink focus:border-violet font-mono"
                 />
               </div>
 
               <div>
-                <label className="block text-[11px] font-medium text-muted mb-1">
+                <label htmlFor="export-end" className="block text-[11px] font-medium text-muted mb-1">
                   End Date (Optional)
                 </label>
                 <input
+                  id="export-end"
                   type="date"
                   value={exportEndDate}
                   onChange={(e) => setExportEndDate(e.target.value)}
-                  className="w-full bg-slate-900/90 border border-panel-border rounded-lg px-2.5 py-1.5 text-xs text-ink focus:outline-none focus:border-violet font-mono"
+                  className="w-full bg-slate-900/90 border border-panel-border rounded-lg px-2.5 py-1.5 text-xs text-ink focus:border-violet font-mono"
                 />
               </div>
             </div>

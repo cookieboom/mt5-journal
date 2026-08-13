@@ -123,13 +123,14 @@ export default function PrunePanel({
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t border-panel-border/50">
           {/* Target Symbol Selection */}
           <div>
-            <label className="block text-xs font-medium text-muted mb-1.5">
+            <label htmlFor="prune-symbol" className="block text-xs font-medium text-muted mb-1.5">
               Target Symbol
             </label>
             <select
+              id="prune-symbol"
               value={selectedSymbol}
               onChange={(e) => setSelectedSymbol(e.target.value)}
-              className="w-full bg-slate-900/90 border border-panel-border rounded-lg px-3 py-2 text-xs text-ink focus:outline-none focus:border-rose-500"
+              className="w-full bg-slate-900/90 border border-panel-border rounded-lg px-3 py-2 text-xs text-ink focus:border-rose-500"
             >
               <option value="all">All Symbols (Global Prune)</option>
               {symbolsList.map((sym) => (
@@ -142,13 +143,14 @@ export default function PrunePanel({
 
           {/* Retention Threshold Selector */}
           <div>
-            <label className="block text-xs font-medium text-muted mb-1.5">
+            <label htmlFor="prune-cutoff" className="block text-xs font-medium text-muted mb-1.5">
               Cutoff Retention Threshold
             </label>
             <select
+              id="prune-cutoff"
               value={olderThanDays}
               onChange={(e) => setOlderThanDays(Number(e.target.value))}
-              className="w-full bg-slate-900/90 border border-panel-border rounded-lg px-3 py-2 text-xs text-ink focus:outline-none focus:border-rose-500 font-mono"
+              className="w-full bg-slate-900/90 border border-panel-border rounded-lg px-3 py-2 text-xs text-ink focus:border-rose-500 font-mono"
             >
               {CUTOFF_OPTIONS.map((opt) => (
                 <option key={opt.value} value={opt.value}>

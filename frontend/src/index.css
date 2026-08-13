@@ -13,6 +13,23 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* Keyboard focus, once, for every control in the app (DESIGN.md § Buttons:
+   "a visible :focus-visible ring at cyan on every control"). Written as an
+   outline rather than a ring utility so it never reflows a dense toolbar, and
+   wrapped in :where() so its specificity is 0 — a call site that wants a
+   different focus treatment still wins without !important. */
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid theme(colors.cyan);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* The press state the same section asks for: controls should feel operated,
+   not merely recoloured. Disabled controls stay put. */
+:where(button, [role="button"]):not(:disabled):active {
+  transform: translateY(1px);
+}
+
 /* data numerals: solid, high-contrast, tabular (never gradient) */
 .num { font-variant-numeric: tabular-nums; }
 

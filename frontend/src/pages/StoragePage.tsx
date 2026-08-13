@@ -193,11 +193,12 @@ export default function StoragePage() {
           <div className="glass p-4 rounded-xl border border-panel-border flex flex-wrap items-center justify-between gap-4">
             <div className="flex flex-wrap items-center gap-4">
               <div>
-                <label className="block text-[11px] font-medium text-muted mb-1">Select Symbol</label>
+                <label htmlFor="storage-symbol" className="block text-[11px] font-medium text-muted mb-1">Select Symbol</label>
                 <select
+                  id="storage-symbol"
                   value={selectedSymbol}
                   onChange={(e) => setSelectedSymbol(e.target.value)}
-                  className="bg-slate-900/90 border border-panel-border rounded-lg px-3 py-1.5 text-xs text-ink font-semibold focus:outline-none focus:border-cyan"
+                  className="bg-slate-900/90 border border-panel-border rounded-lg px-3 py-1.5 text-xs text-ink font-semibold focus:border-cyan"
                 >
                   {availableSymbols.map((sym) => (
                     <option key={sym} value={sym}>
