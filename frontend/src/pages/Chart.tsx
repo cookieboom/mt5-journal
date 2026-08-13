@@ -408,11 +408,13 @@ export default function Chart() {
   );
 
   // Below md the shell reserves 76px for the nav bar; the chart column has to
-  // subtract it too or the canvas runs underneath it.
+  // subtract it too or the canvas runs underneath it. The extra 2rem is for
+  // CoverageRibbon, which renders after the chart inside the h-full pane and so
+  // has always hung below the container — harmless until the nav bar sat there.
   return (
-    <div className="flex flex-col h-[calc(100vh-6rem)] md:h-[calc(100vh-2rem)]">
+    <div className="flex flex-col h-[calc(100vh-8rem)] md:h-[calc(100vh-2rem)]">
       {configOpen && <ReplayConfigModal initial={replayPrefs.prefs} onStart={onStart} onCancel={exitReplay} />}
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         <ChartToolbar
           symbol={symbol}
           tf={tf}

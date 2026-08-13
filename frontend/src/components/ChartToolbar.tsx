@@ -19,7 +19,11 @@ export default function ChartToolbar({
 }) {
   const [gear, setGear] = useState(false);
   return (
-    <div className="flex items-center gap-2 mb-3">
+    // Below lg the toolbar owns its own full-width line and wraps inside it.
+    // Unwrapped, the row overflows a phone and everything after the timeframes
+    // — "Ke sekarang", Replay, and the ⚙ that opens the settings drawer — sits
+    // past the right edge with no way to scroll to it.
+    <div className="flex flex-wrap items-center gap-2 mb-3 w-full lg:w-auto">
       <select
         value={symbol}
         onChange={(e) => onSymbol(e.target.value as Sym)}
