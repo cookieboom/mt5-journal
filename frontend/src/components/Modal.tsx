@@ -1,4 +1,5 @@
 import { ReactNode, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 
 // The centred blocking layer, once. Two of the three call sites gate a command
 // queued against the live account, so the dialog affordances are not optional:
@@ -29,7 +30,12 @@ export default function Modal({
     else d.setAttribute("open", "");
   }, []);
 
-  return (
+  // Mounted on <body>, not where it was opened. A dialog rendered inside a
+  // `space-y-*` panel inherits that container's `margin-top` on its siblings —
+  // which outranks the `margin: auto` the UA centres a modal with, and pinned
+  // every modal in the app to the top edge. The layer is not part of the panel;
+  // the DOM should say so.
+  return createPortal(
     <dialog
       ref={ref}
       aria-label={label}
@@ -39,10 +45,11 @@ export default function Modal({
       // In the top layer the backdrop is not a child, so a click that lands on
       // the dialog element itself is a click on the scrim.
       onClick={(e) => { if (e.target === ref.current) onClose(); }}
-      className={`glass p-5 text-ink backdrop:bg-black/60
+      className={`glass m-auto p-5 text-ink backdrop:bg-black/60
                   shadow-float ${width}`}
     >
       {children}
-    </dialog>
+    </dialog>,
+    document.body,
   );
 }

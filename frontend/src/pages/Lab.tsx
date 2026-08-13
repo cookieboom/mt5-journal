@@ -30,10 +30,10 @@ const STRIP_HEIGHT = 32;
 // task brief. The other two are less common backend states, worded plainly.
 function scoreStatusText(status: LabScoreStatus): string {
   switch (status) {
-    case "no_model": return "No model trained yet for this symbol/timeframe — train one above.";
-    case "artifact_missing": return "Model file missing on disk — train again to restore it.";
-    case "stale_features": return "RETRAIN — this model was fit on features the current data no longer has.";
-    case "no_bars": return "FILL — not enough candle data cached for this range.";
+    case "no_model": return "Belum ada model untuk symbol/timeframe ini — latih satu di atas.";
+    case "artifact_missing": return "File model hilang di disk — latih ulang untuk memulihkannya.";
+    case "stale_features": return "RETRAIN — model ini dilatih pada fitur yang sudah tidak ada di data sekarang.";
+    case "no_bars": return "FILL — candle yang tersimpan belum cukup untuk rentang ini.";
     default: return "";
   }
 }
@@ -255,7 +255,7 @@ export default function Lab() {
         </p>
       )}
 
-      {modelsError && <p className="text-neg text-body mb-3">Failed to load models: {modelsError}</p>}
+      {modelsError && <p className="text-neg text-body mb-3">Gagal memuat model: {modelsError}</p>}
 
       <LabMetrics models={models} onActivate={onActivate} />
 
@@ -284,10 +284,10 @@ export default function Lab() {
         )}
 
         {!symbol || !tf ? (
-          <p className="text-muted text-body py-6">Enter a symbol this account trades to see its chart.</p>
+          <p className="text-muted text-body py-6">Isi symbol yang ditradingkan akun ini untuk lihat chart-nya.</p>
         ) : !hasBars ? (
           <p className="text-muted text-body py-6">
-            {data.status === "error" ? `Failed to load candles: ${data.error}` : "Loading chart…"}
+            {data.status === "error" ? `Gagal memuat candle: ${data.error}` : "Memuat chart…"}
           </p>
         ) : (
           <>
@@ -336,7 +336,7 @@ export default function Lab() {
             </div>
 
             {scoreError && (
-              <p className="text-neg text-body mt-1">Failed to load regime scores: {scoreError}</p>
+              <p className="text-neg text-body mt-1">Gagal memuat skor regime: {scoreError}</p>
             )}
           </>
         )}

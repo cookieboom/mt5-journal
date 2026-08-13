@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { CandleCompleteness } from "../../lib/storageApi";
+import { wib } from "../../lib/format";
 
 export interface CoverageVisualizerProps {
   completeness?: CandleCompleteness | null;
@@ -13,10 +14,10 @@ interface HoverTooltipInfo {
   duration_hours?: number;
 }
 
+// WIB at display time, like every other timestamp in the app (PRODUCT.md).
 function formatDate(ms: number): string {
-  if (!ms || ms <= 0) return "N/A";
-  const d = new Date(ms);
-  return d.toISOString().replace("T", " ").slice(0, 19) + " UTC";
+  if (!ms || ms <= 0) return "—";
+  return wib(ms);
 }
 
 function formatDuration(from_ms: number, to_ms: number): string {
@@ -42,7 +43,7 @@ export default function CoverageVisualizer({ completeness, loading }: CoverageVi
 
   if (loading) {
     return (
-      <div className="glass p-5 rounded-xl border border-panel-border space-y-4 animate-pulse">
+      <div className="glass p-5 space-y-4 animate-pulse">
         <div className="flex items-center justify-between">
           <div className="h-5 bg-white/10 rounded w-1/4"></div>
           <div className="h-5 bg-white/10 rounded w-16"></div>
@@ -58,10 +59,10 @@ export default function CoverageVisualizer({ completeness, loading }: CoverageVi
 
   if (!completeness || completeness.total_bars === 0 || completeness.from_ms === 0) {
     return (
-      <div className="glass p-6 rounded-xl border border-panel-border text-center space-y-2">
-        <div className="text-title font-semibold text-muted">Data Coverage Timeline</div>
+      <div className="glass p-6 text-center space-y-2">
+        <div className="text-title font-semibold text-muted">Timeline coverage data</div>
         <p className="text-body text-muted/70">
-          No candle history available for this symbol and timeframe.
+          Belum ada candle untuk symbol dan timeframe ini.
         </p>
       </div>
     );
@@ -80,15 +81,18 @@ export default function CoverageVisualizer({ completeness, loading }: CoverageVi
 
   const totalSpanMs = Math.max(to_ms - from_ms, 1);
 
-  // Helper for badge color based on coverage %
+  // The rest of the app already speaks coverage in one palette (CoverageRibbon,
+  // DataHealthPanel): cyan is covered, rose is a hole that could be filled,
+  // amber is degraded-but-not-wrong. Green is an outcome and has no business
+  // here — a full range is not a profit (DESIGN.md § Colors).
   const getBadgeClass = (pct: number) => {
-    if (pct >= 98) return "bg-pos/10 text-pos border-pos/30";
+    if (pct >= 98) return "bg-cyan/10 text-cyan border-cyan/30";
     if (pct >= 85) return "bg-warn/10 text-warn border-warn/30";
     return "bg-neg/10 text-neg border-neg/30";
   };
 
   return (
-    <div className="glass p-5 rounded-xl border border-panel-border space-y-4">
+    <div className="glass p-5 space-y-4">
       {/* Header Info */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2.5">
@@ -98,8 +102,8 @@ export default function CoverageVisualizer({ completeness, loading }: CoverageVi
               {timeframe}
             </span>
           </div>
-          <span className="text-body text-muted font-mono">
-            ({total_bars.toLocaleString()} bars)
+          <span className="text-body text-muted font-mono num">
+            ({total_bars.toLocaleString()} bar)
           </span>
         </div>
 
@@ -113,13 +117,13 @@ export default function CoverageVisualizer({ completeness, loading }: CoverageVi
             <span
               className={`w-2 h-2 rounded-full ${
                 coverage_percent >= 98
-                  ? "bg-pos"
+                  ? "bg-cyan"
                   : coverage_percent >= 85
                   ? "bg-warn"
                   : "bg-neg"
               }`}
             />
-            <span>{coverage_percent.toFixed(2)}% Covered</span>
+            <span className="num">{coverage_percent.toFixed(2)}% tercover</span>
           </div>
         </div>
       </div>
@@ -153,7 +157,7 @@ export default function CoverageVisualizer({ completeness, loading }: CoverageVi
             );
           })}
 
-          {/* Render Covered Ranges (emerald blocks) */}
+          {/* Render Covered Ranges */}
           {covered_ranges.map((range, idx) => {
             const leftPct = Math.max(0, ((range.from_ms - from_ms) / totalSpanMs) * 100);
             const widthPct = Math.max(0.15, ((range.to_ms - range.from_ms) / totalSpanMs) * 100);
@@ -162,7 +166,7 @@ export default function CoverageVisualizer({ completeness, loading }: CoverageVi
               <div
                 key={`cov-${idx}-${range.from_ms}`}
                 style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
-                className="absolute top-0 bottom-0 bg-pos/80 hover:bg-pos transition-colors cursor-pointer z-20"
+                className="absolute top-0 bottom-0 bg-cyan/80 hover:bg-cyan transition-colors cursor-pointer z-20"
                 onMouseEnter={() =>
                   setHoveredInfo({
                     type: "covered",
@@ -182,11 +186,11 @@ export default function CoverageVisualizer({ completeness, loading }: CoverageVi
             <div className="flex items-center gap-2 text-ink bg-bg/90 px-2.5 py-0.5 rounded border border-panel-border">
               <span
                 className={`w-2 h-2 rounded-full ${
-                  hoveredInfo.type === "covered" ? "bg-pos" : "bg-neg"
+                  hoveredInfo.type === "covered" ? "bg-cyan" : "bg-neg"
                 }`}
               />
               <span className="font-semibold uppercase text-label">
-                {hoveredInfo.type === "covered" ? "Covered Segment" : "Data Gap"}
+                {hoveredInfo.type === "covered" ? "segmen tercover" : "gap data"}
               </span>
               <span className="text-muted">•</span>
               <span>
@@ -198,8 +202,8 @@ export default function CoverageVisualizer({ completeness, loading }: CoverageVi
               </span>
             </div>
           ) : (
-            <span className="text-muted/60 text-meta italic">
-              Hover over timeline blocks to inspect range details
+            <span className="text-muted/60 text-meta">
+              Arahkan kursor ke blok timeline untuk lihat rentangnya
             </span>
           )}
         </div>
@@ -209,12 +213,12 @@ export default function CoverageVisualizer({ completeness, loading }: CoverageVi
       <div className="pt-2 border-t border-panel-border/50 flex flex-wrap items-center justify-between gap-3 text-body text-muted">
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-1.5">
-            <span className="w-3 h-3 rounded-sm bg-pos/80 border border-pos/50 inline-block" />
-            <span>Covered Data</span>
+            <span className="w-3 h-3 rounded-sm bg-cyan/80 border border-cyan/50 inline-block" />
+            <span>data tercover</span>
           </div>
           <div className="flex items-center gap-1.5">
             <span className="w-3 h-3 rounded-sm bg-neg/80 border border-neg/50 inline-block" />
-            <span>Gap Range</span>
+            <span>rentang gap</span>
           </div>
         </div>
 

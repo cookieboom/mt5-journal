@@ -20,7 +20,7 @@ export default function DiskStatsCard({ overview, loading }: DiskStatsCardProps)
     return (
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {[1, 2, 3, 4].map((i) => (
-          <div key={i} className="glass p-4 rounded-xl border border-panel-border animate-pulse">
+          <div key={i} className="glass p-4 animate-pulse">
             <div className="h-4 bg-white/10 rounded w-1/2 mb-3"></div>
             <div className="h-7 bg-white/10 rounded w-3/4 mb-2"></div>
             <div className="h-3 bg-white/5 rounded w-2/3"></div>
@@ -43,10 +43,10 @@ export default function DiskStatsCard({ overview, loading }: DiskStatsCardProps)
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
       {/* 1. Database File Size */}
-      <div className="glass p-4 rounded-xl border border-panel-border flex flex-col justify-between">
+      <div className="glass p-4 flex flex-col justify-between">
         <div>
           <div className="flex items-center justify-between text-muted text-label uppercase font-medium mb-1">
-            <span>Database Size</span>
+            <span>Ukuran database</span>
             <svg
               className="w-4 h-4 text-cyan"
               fill="none"
@@ -66,20 +66,22 @@ export default function DiskStatsCard({ overview, loading }: DiskStatsCardProps)
         <div className="mt-3 pt-2 border-t border-panel-border/50 text-label">
           {wal_size_bytes > 0 ? (
             <span className="inline-flex items-center gap-1 text-cyan font-mono bg-cyan/10 px-2 py-0.5 rounded border border-cyan/20">
-              <span className="w-1.5 h-1.5 rounded-full bg-cyan animate-pulse" />
+              {/* A size on disk is not in flight; only a spinner or a skeleton
+                  may move (DESIGN.md § Motion, The Only-Now Rule). */}
+              <span className="w-1.5 h-1.5 rounded-full bg-cyan" />
               WAL: +{formatBytes(wal_size_bytes)}
             </span>
           ) : (
-            <span className="text-muted">WAL Inactive (0 B)</span>
+            <span className="text-muted">WAL tidak aktif (0 B)</span>
           )}
         </div>
       </div>
 
       {/* 2. Total M1 Bars */}
-      <div className="glass p-4 rounded-xl border border-panel-border flex flex-col justify-between">
+      <div className="glass p-4 flex flex-col justify-between">
         <div>
           <div className="flex items-center justify-between text-muted text-label uppercase font-medium mb-1">
-            <span>Total M1 Bars</span>
+            <span>Total bar M1</span>
             <svg
               className="w-4 h-4 text-violet"
               fill="none"
@@ -99,15 +101,15 @@ export default function DiskStatsCard({ overview, loading }: DiskStatsCardProps)
           </div>
         </div>
         <div className="mt-3 pt-2 border-t border-panel-border/50 text-label text-muted">
-          {symbols.length} symbol{symbols.length === 1 ? "" : "s"} tracked
+          {symbols.length} symbol terlacak
         </div>
       </div>
 
       {/* 3. Reconstructed Trades */}
-      <div className="glass p-4 rounded-xl border border-panel-border flex flex-col justify-between">
+      <div className="glass p-4 flex flex-col justify-between">
         <div>
           <div className="flex items-center justify-between text-muted text-label uppercase font-medium mb-1">
-            <span>Reconstructed Trades</span>
+            <span>Trade direkonstruksi</span>
             <svg
               className="w-4 h-4 text-pos"
               fill="none"
@@ -127,15 +129,15 @@ export default function DiskStatsCard({ overview, loading }: DiskStatsCardProps)
           </div>
         </div>
         <div className="mt-3 pt-2 border-t border-panel-border/50 text-label text-muted">
-          Deals & positions aggregated
+          deal & posisi digabung
         </div>
       </div>
 
       {/* 4. Cache Size & File Count */}
-      <div className="glass p-4 rounded-xl border border-panel-border flex flex-col justify-between">
+      <div className="glass p-4 flex flex-col justify-between">
         <div>
           <div className="flex items-center justify-between text-muted text-label uppercase font-medium mb-1">
-            <span>PNG & Weekly Cache</span>
+            <span>Cache PNG & weekly</span>
             <svg
               className="w-4 h-4 text-cyan"
               fill="none"
@@ -155,7 +157,7 @@ export default function DiskStatsCard({ overview, loading }: DiskStatsCardProps)
           </div>
         </div>
         <div className="mt-3 pt-2 border-t border-panel-border/50 text-label text-muted font-mono">
-          {cache_files_count.toLocaleString()} file{cache_files_count === 1 ? "" : "s"}
+          {cache_files_count.toLocaleString()} file
         </div>
       </div>
     </div>

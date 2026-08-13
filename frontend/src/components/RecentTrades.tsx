@@ -9,6 +9,10 @@ export default function RecentTrades({
   if (rows.length === 0)
     return <div className="text-muted text-body py-6">Belum ada trade tertutup.</div>;
   return (
+    // The last of the seven tables to get its own scroller: a timestamp plus a
+    // money figure is narrow until it is not, and the dashboard is a phone
+    // surface. Overflow belongs to the panel, never to the page.
+    <div className="overflow-x-auto">
     <table className="w-full border-collapse text-body">
       <thead>
         <tr className="text-muted text-left">
@@ -25,5 +29,6 @@ export default function RecentTrades({
         ))}
       </tbody>
     </table>
+    </div>
   );
 }

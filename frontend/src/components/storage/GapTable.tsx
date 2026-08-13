@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { fetchBackfill, fillAllGaps, type CandleCompleteness, type GapItem } from "../../lib/storageApi";
+import { wib } from "../../lib/format";
 
 export interface GapTableProps {
   completeness?: CandleCompleteness | null;
@@ -7,10 +8,12 @@ export interface GapTableProps {
   onRefresh?: () => void;
 }
 
+// Every other surface reads WIB (PRODUCT.md: storage stays UTC, display is
+// WIB and says so). A gap printed in UTC here could not be compared against the
+// chart it came from without the reader doing the +7 in their head.
 function formatDate(ms: number): string {
-  if (!ms || ms <= 0) return "N/A";
-  const d = new Date(ms);
-  return d.toISOString().replace("T", " ").slice(0, 19) + " UTC";
+  if (!ms || ms <= 0) return "—";
+  return wib(ms);
 }
 
 export default function GapTable({ completeness, loading, onRefresh }: GapTableProps) {
@@ -30,11 +33,11 @@ export default function GapTable({ completeness, loading, onRefresh }: GapTableP
     try {
       const res = await fillAllGaps(completeness.symbol, completeness.timeframe);
       if (!res.ok || !res.data) {
-        throw new Error(res.error ?? "Failed to initiate fill all gaps request");
+        throw new Error(res.error ?? "Gagal mengantrikan isi semua gap");
       }
       setFeedback({
         type: "success",
-        message: `Successfully queued ${res.data.requests_count} backfill request(s) for all gaps in ${completeness.symbol} (${completeness.timeframe}).`,
+        message: `${res.data.requests_count} permintaan backfill diantrikan untuk semua gap di ${completeness.symbol} (${completeness.timeframe}).`,
       });
       if (onRefresh) {
         onRefresh();
@@ -42,7 +45,7 @@ export default function GapTable({ completeness, loading, onRefresh }: GapTableP
     } catch (err: any) {
       setFeedback({
         type: "error",
-        message: err?.message || "Failed to fill all gaps.",
+        message: err?.message || "Gagal mengisi semua gap.",
       });
     } finally {
       setIsFillingAll(false);
@@ -64,13 +67,13 @@ export default function GapTable({ completeness, loading, onRefresh }: GapTableP
         gap.to_ms
       );
       if (!res.ok || !res.data) {
-        throw new Error(res.error ?? "Failed to queue gap backfill request");
+        throw new Error(res.error ?? "Gagal mengantrikan backfill gap");
       }
       setFeedback({
         type: "success",
-        message: `Queued backfill request #${res.data.request_id} for gap (${gap.duration_hours.toFixed(
+        message: `Backfill #${res.data.request_id} diantrikan untuk gap ${gap.duration_hours.toFixed(
           1
-        )} hrs) from ${formatDate(gap.from_ms)}.`,
+        )} jam sejak ${formatDate(gap.from_ms)}.`,
       });
       if (onRefresh) {
         onRefresh();
@@ -78,7 +81,7 @@ export default function GapTable({ completeness, loading, onRefresh }: GapTableP
     } catch (err: any) {
       setFeedback({
         type: "error",
-        message: err?.message || "Failed to fill gap.",
+        message: err?.message || "Gagal mengisi gap.",
       });
     } finally {
       setLoadingGapKey(null);
@@ -88,7 +91,7 @@ export default function GapTable({ completeness, loading, onRefresh }: GapTableP
   const gaps = completeness?.gaps ?? [];
 
   return (
-    <div className="glass p-5 rounded-xl border border-panel-border space-y-4">
+    <div className="glass p-5 space-y-4">
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2.5">
@@ -101,10 +104,10 @@ export default function GapTable({ completeness, loading, onRefresh }: GapTableP
                 d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
               />
             </svg>
-            <span>Detected Gaps</span>
+            <span>Gap terdeteksi</span>
           </h3>
-          <span className="px-2 py-0.5 rounded-full text-body font-mono font-semibold bg-neg/10 text-neg border border-neg/20">
-            {gaps.length} {gaps.length === 1 ? "gap" : "gaps"}
+          <span className="px-2 py-0.5 rounded-full text-body font-mono font-semibold bg-neg/10 text-neg border border-neg/20 num">
+            {gaps.length} gap
           </span>
         </div>
 
@@ -112,7 +115,10 @@ export default function GapTable({ completeness, loading, onRefresh }: GapTableP
           type="button"
           onClick={handleFillAllGaps}
           disabled={loading || isFillingAll || gaps.length === 0}
-          className="py-1.5 px-3 rounded-lg bg-neg/20 hover:bg-neg/30 text-neg ring-1 ring-neg/40 text-body font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
+          // Filling a hole is the same act as the per-row button below it and
+          // as DataHealthPanel's backfill — cyan. Rose is for the hole, not for
+          // the control that closes it.
+          className="py-1.5 px-3 rounded-lg bg-cyan/20 hover:bg-cyan/30 text-cyan ring-1 ring-cyan/40 text-body font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
         >
           {isFillingAll ? (
             <>
@@ -124,14 +130,14 @@ export default function GapTable({ completeness, loading, onRefresh }: GapTableP
                   d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
                 />
               </svg>
-              <span>Queueing All...</span>
+              <span>Mengantrikan…</span>
             </>
           ) : (
             <>
               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
               </svg>
-              <span>Fill All Gaps</span>
+              <span>Isi semua gap</span>
             </>
           )}
         </button>
@@ -140,9 +146,12 @@ export default function GapTable({ completeness, loading, onRefresh }: GapTableP
       {/* Feedback Banner */}
       {feedback && (
         <div
-          className={`p-3.5 rounded-xl border flex items-start justify-between gap-3 text-body ${
+          // Green means a profitable outcome, never "it worked" (DESIGN.md
+          // § Colors). A queued backfill is neither, so it reports on plain
+          // glass; rose stays, because a failed queue really is wrong.
+          className={`p-3.5 rounded-lg border flex items-start justify-between gap-3 text-body ${
             feedback.type === "success"
-              ? "bg-pos/10 border-pos/30 text-pos"
+              ? "bg-white/5 border-panel-border text-ink"
               : "bg-neg/10 border-neg/30 text-neg"
           }`}
         >
@@ -162,7 +171,7 @@ export default function GapTable({ completeness, loading, onRefresh }: GapTableP
             onClick={() => setFeedback(null)}
             className="text-muted hover:text-ink text-body px-1.5 py-0.5 rounded"
           >
-            Dismiss
+            Tutup
           </button>
         </div>
       )}
@@ -175,15 +184,15 @@ export default function GapTable({ completeness, loading, onRefresh }: GapTableP
           ))}
         </div>
       ) : gaps.length === 0 ? (
-        <div className="p-6 rounded-xl bg-pos/10 border border-pos/20 text-center space-y-2">
-          <div className="flex items-center justify-center gap-2 text-pos font-semibold text-body">
+        <div className="p-6 rounded-lg bg-white/5 border border-panel-border text-center space-y-2">
+          <div className="flex items-center justify-center gap-2 text-ink font-semibold text-body">
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
-            <span>No Gaps Detected</span>
+            <span>Tak ada gap</span>
           </div>
           <p className="text-body text-muted">
-            Candle coverage for {completeness?.symbol || "symbol"} ({completeness?.timeframe || "M1"}) is completely continuous!
+            Coverage candle {completeness?.symbol || "symbol"} ({completeness?.timeframe || "M1"}) kontinu.
           </p>
         </div>
       ) : (
@@ -191,10 +200,10 @@ export default function GapTable({ completeness, loading, onRefresh }: GapTableP
           <table className="w-full text-left text-body border-collapse">
             <thead>
               <tr className="border-b border-panel-border/80 text-muted font-medium">
-                <th className="py-2.5 px-3">Start Time</th>
-                <th className="py-2.5 px-3">End Time</th>
-                <th className="py-2.5 px-3">Duration</th>
-                <th className="py-2.5 px-3 text-right">Action</th>
+                <th className="py-2.5 px-3">Mulai</th>
+                <th className="py-2.5 px-3">Selesai</th>
+                <th className="py-2.5 px-3">Durasi</th>
+                <th className="py-2.5 px-3 text-right">Aksi</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-panel-border/40">
@@ -210,10 +219,10 @@ export default function GapTable({ completeness, loading, onRefresh }: GapTableP
                     <td className="py-2.5 px-3 font-mono text-ink">
                       {formatDate(gap.to_ms)}
                     </td>
-                    <td className="py-2.5 px-3 font-mono text-warn">
+                    <td className="py-2.5 px-3 font-mono text-warn num">
                       {gap.duration_hours >= 24
-                        ? `${(gap.duration_hours / 24).toFixed(1)} days`
-                        : `${gap.duration_hours.toFixed(1)} hrs`}
+                        ? `${(gap.duration_hours / 24).toFixed(1)} hari`
+                        : `${gap.duration_hours.toFixed(1)} jam`}
                     </td>
                     <td className="py-2.5 px-3 text-right">
                       <button
@@ -232,10 +241,10 @@ export default function GapTable({ completeness, loading, onRefresh }: GapTableP
                                 d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
                               />
                             </svg>
-                            <span>Queuing...</span>
+                            <span>Mengantrikan…</span>
                           </>
                         ) : (
-                          <span>Fill Gap</span>
+                          <span>Isi gap</span>
                         )}
                       </button>
                     </td>

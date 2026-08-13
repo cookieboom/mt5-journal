@@ -407,6 +407,15 @@ the system's single mechanism for "this is active/selected/accented", used
 identically on buttons, pills, chips, and the active nav item. Icons are text
 glyphs (`⌖ ╱ ─ ▭ T ⚙ ▶`) at the control's own font size, not an icon library.
 
+**One recorded exception: `components/storage/*` and `pages/StoragePage.tsx`
+draw ~35 inline outline SVGs** (24×24, `stroke-width: 2`, `currentColor`) rather
+than glyphs. They are authored paths in the file, not a dependency, and a
+database, a trash can and a warning triangle have no glyph the reader would
+recognise at 16px. Kept deliberately at the 2026-08-13 polish pass, and bounded:
+that subtree may keep them, nothing else may grow them, and no icon library gets
+installed. Everything else about those files — colour, radius, motion, copy —
+follows the system with no exception.
+
 ## Components
 
 ### Buttons
