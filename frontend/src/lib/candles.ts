@@ -3,6 +3,7 @@
 // real prices only (skips null = unknown and 0.0 = none set).
 import type { Candle, CandlesResponse, LivePosition } from "./types";
 import { palette } from "./theme";
+import { wib } from "./format";
 
 export type Timeframe = "M1" | "M5" | "M15" | "H1" | "H4" | "D1";
 export const TIMEFRAMES: Timeframe[] = ["M1", "M5", "M15", "H1", "H4", "D1"];
@@ -94,6 +95,20 @@ export function barCloseCountdown(nowMs: number, tf: Timeframe): string {
   const hh = Math.floor(s / 3600);
   return hh > 0 ? `${hh}:${p(Math.floor((s % 3600) / 60))}:${p(s % 60)}`
                 : `${p(Math.floor(s / 60))}:${p(s % 60)}`;
+}
+
+// One label for one time-axis tick, in WIB (server = UTC, +7h; display only).
+// `tickMarkType` is lightweight-charts' own classification of the tick:
+// 0 Year, 1 Month, 2 DayOfMonth, 3 Time, 4 TimeWithSeconds. The library spaces
+// ticks for a SHORT label, so printing the full "YYYY-MM-DD HH:MM" on every one
+// made them overprint each other on M1/M5 — the date belongs only on the ticks
+// that actually start a new day. `hideDate` is competitive replay: the trainee
+// must not be able to read which period they are looking at, so no tick ever
+// carries a date, whatever its type.
+export function axisTickLabel(msc: number, tickMarkType: number, hideDate = false): string {
+  const [date, time] = wib(msc, 0).replace(" WIB", "").split(" ");
+  if (hideDate) return time;
+  return tickMarkType >= 3 ? time : date;
 }
 
 export const LINE_COLORS = { sl: palette.neg, tp: palette.pos, entry: palette.muted };

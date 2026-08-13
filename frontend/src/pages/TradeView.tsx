@@ -156,7 +156,7 @@ export default function TradeView() {
             <div className="glass h-full flex items-center justify-center text-muted text-body">
               {chart.status === "gaveup"
                 ? <span>Belum ada data ter-cache — jalankan <code>journal live</code>.</span>
-                : <span>⌛ Memuat data {t.symbol} {tf}…</span>}
+                : <span>Memuat data {t.symbol} {tf}…</span>}
             </div>
           )}
         </div>

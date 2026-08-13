@@ -9,7 +9,7 @@ import {
 } from "lightweight-charts";
 import {
   toSeconds, isNowVisible, LINE_COLORS, liveLines, barCloseCountdown, timeframeMs,
-  type Sym, type Timeframe,
+  axisTickLabel, type Sym, type Timeframe,
 } from "../lib/candles";
 import type { ChartSettings } from "../lib/chartPrefs";
 import type { Candle, HoverBar, LiveData, PlannedOrder } from "../lib/types";
@@ -232,17 +232,18 @@ const CandleChart = forwardRef<ChartHandle, {
         borderColor: theme.border,
         timeVisible: true,
         secondsVisible: false,
-        // Axis labels in WIB (server=UTC, +7h; display only).
-        tickMarkFormatter: (t: number) => {
-          const dt = wib((t as number) * 1000, 0).replace(" WIB", "");
-          return props.hideDate ? dt.split(" ")[1] || dt : dt;
-        },
+        // Axis labels in WIB (server=UTC, +7h; display only). The date rides
+        // only on the ticks that start a day — see `axisTickLabel`.
+        tickMarkFormatter: (t: number, tickMarkType: number) =>
+          axisTickLabel((t as number) * 1000, tickMarkType, props.hideDate),
       },
-      localization: { 
+      localization: {
+        // The crosshair label has room the axis does not, so it keeps the full
+        // stamp — minus the date when competitive replay is hiding the period.
         timeFormatter: (t: number) => {
           const dt = wib((t as number) * 1000, 0);
-          return props.hideDate ? dt.split(" ")[1] + " WIB" || dt : dt;
-        } 
+          return props.hideDate ? `${dt.split(" ")[1]} WIB` : dt;
+        },
       },
     });
     const s = addSeriesFor(c, props.settings);

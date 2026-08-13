@@ -495,7 +495,7 @@ export default function Chart() {
           ) : (
             <div className="glass h-full flex items-center justify-center text-muted text-body">
               {data.status === "loading" || data.status === "polling" ? (
-                <span>⌛ Memuat data {symbol} {tf}…</span>
+                <span>Memuat data {symbol} {tf}…</span>
               ) : data.status === "gaveup" ? (
                 <div className="text-center">
                   <div>Belum ada data ter-cache untuk rentang ini.</div>
@@ -510,7 +510,7 @@ export default function Chart() {
 
           {/* Non-blocking banners while bars are already shown */}
           {hasBars && (data.status === "loading" || data.status === "polling") && (
-            <div className="glass absolute top-2 left-2 px-2 py-1 text-meta text-muted">⌛ memuat data…</div>
+            <div className="glass absolute top-2 left-2 px-2 py-1 text-meta text-muted">memuat data…</div>
           )}
           {hasBars && data.status === "gaveup" && (
             <div className="glass absolute top-2 left-2 px-2 py-1 text-meta text-muted flex items-center gap-2">

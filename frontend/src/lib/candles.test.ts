@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   timeframeMs, toSeconds, initialWindow, olderWindow, mergeCandles,
   isNowVisible, liveLines, LINE_COLORS, capCandles, backfillWindow, barCloseCountdown,
+  axisTickLabel,
 } from "./candles";
 import type { Candle } from "./types";
 import type { LivePosition } from "./types";
@@ -122,5 +123,30 @@ describe("barCloseCountdown", () => {
     const h4 = bucket - (bucket % (240 * 60_000));
     expect(barCloseCountdown(h4 + 60_000, "H4")).toBe("3:59:00");
     expect(barCloseCountdown(h4 + 239 * 60_000, "H4")).toBe("01:00");
+  });
+});
+
+describe("axisTickLabel", () => {
+  // 2026-08-14 02:30 UTC = 09:30 WIB the same day.
+  const t = Date.UTC(2026, 7, 14, 2, 30);
+
+  it("prints time only on a Time tick, date only on a day/month/year tick", () => {
+    expect(axisTickLabel(t, 3)).toBe("09:30");          // TickMarkType.Time
+    expect(axisTickLabel(t, 4)).toBe("09:30");          // TimeWithSeconds
+    expect(axisTickLabel(t, 2)).toBe("2026-08-14");     // DayOfMonth
+    expect(axisTickLabel(t, 1)).toBe("2026-08-14");     // Month
+    expect(axisTickLabel(t, 0)).toBe("2026-08-14");     // Year
+  });
+
+  it("never leaks the date under competitive hideDate, whatever the tick type", () => {
+    for (const type of [0, 1, 2, 3, 4]) {
+      expect(axisTickLabel(t, type, true)).toBe("09:30");
+    }
+  });
+
+  it("reads WIB, so a late-UTC tick already belongs to the next day", () => {
+    const evening = Date.UTC(2026, 7, 14, 20, 0);       // 03:00 WIB on the 15th
+    expect(axisTickLabel(evening, 3)).toBe("03:00");
+    expect(axisTickLabel(evening, 2)).toBe("2026-08-15");
   });
 });
