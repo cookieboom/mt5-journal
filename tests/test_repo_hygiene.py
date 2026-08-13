@@ -118,6 +118,12 @@ def test_live_account_identifiers_absent() -> None:
     except sqlite3.OperationalError as exc:  # e.g. WAL with no readable -shm
         pytest.skip(f"cannot open {db} read-only: {exc}")
     try:
+        # A worktree gets a schema-only DB the moment anything opens the store,
+        # so "the file exists" is not "there is an account to compare against".
+        # Skip on empty, but keep the assert below for a populated DB — that is
+        # the alarm that fires if the query itself ever stops finding anything.
+        if con.execute("SELECT count(*) FROM accounts").fetchone()[0] == 0:
+            pytest.skip(f"{db} has no accounts row — nothing to compare against")
         secrets: set[str] = set()
         for row in con.execute("SELECT login, broker, server FROM accounts"):
             secrets.update(str(v) for v in row if v not in (None, "", 0))
