@@ -108,6 +108,23 @@ No name, logo, or public identity — the product is never shown to anyone but
 its user. Voice throughout the interface is measured and unflattering: state
 the number and its `n`, do not celebrate, do not encourage, do not advise.
 
+**The interface is written in Indonesian, with an English technical spine.**
+This is a real convention already carried by the whole SPA, not a preference to
+be re-litigated per surface:
+
+- Prose, buttons, empty states, and error messages are Indonesian, lowercase
+  and terse: `Memuat…`, `Gagal memuat`, `Batal`, `Tambah`, `Ke sekarang`,
+  `tak ada posisi`, `basi · 214s`. Refusals lead with `Ditolak: <reason>`.
+- Navigation labels and page titles stay English: Dashboard, Live, Chart,
+  Trades, Report, Weekly, Commands, Storage, Lab.
+- MT5 and trading vocabulary is never translated: trade, entry, exit, SL, TP,
+  lot, R, win rate, expectancy, backfill, replay, live.
+- CLI command names appear verbatim in code font inside Indonesian sentences
+  (`jalankan <code>journal live</code>`).
+
+Both languages stay lowercase and unexcited; Indonesian does not license
+friendlier copy than English would.
+
 ## Evidence on Hand
 
 Real, and the only real source: the live SQLite store at `data/journal.db`
