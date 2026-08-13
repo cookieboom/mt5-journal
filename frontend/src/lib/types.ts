@@ -22,6 +22,12 @@ export interface Report {
   n_with_mae: number;
   n_with_mae_r: number; avg_mae_r: number | null;
   n_with_mfe_r: number; avg_mfe_r: number | null;
+  // Sequence block: close-time order, never §9-gated (facts, not averages).
+  // max_drawdown is POSITIVE money; 0 = never drew down, null = nothing to read.
+  n_sequenced: number;
+  max_drawdown: number | null;
+  max_win_streak: number;
+  max_loss_streak: number;
   by_session: Bucket[];
   by_source: Bucket[];
   by_symbol: Bucket[];

@@ -35,15 +35,15 @@ def _seed_account(conn, currency="USC"):
 def _seed_trade(
     conn, position_id, *, status="closed", net_profit=0.0, r_multiple=None,
     mae=None, mae_r=None, mfe_r=None, symbol="XAUUSDc",
-    open_time_msc=1, magic=None,
+    open_time_msc=1, magic=None, close_time_msc=None,
 ):
     conn.execute(
         "INSERT INTO trades (account_login, position_id, symbol, symbol_base, "
-        "direction, status, open_time_msc, volume, open_price, net_profit, "
-        "r_multiple, mae, mae_r, mfe_r, magic, deal_count, rebuilt_at) "
-        "VALUES (?, ?, ?, ?, 'buy', ?, ?, 0.1, 4000.0, ?, ?, ?, ?, ?, ?, 2, 1)",
+        "direction, status, open_time_msc, close_time_msc, volume, open_price, "
+        "net_profit, r_multiple, mae, mae_r, mfe_r, magic, deal_count, rebuilt_at) "
+        "VALUES (?, ?, ?, ?, 'buy', ?, ?, ?, 0.1, 4000.0, ?, ?, ?, ?, ?, ?, 2, 1)",
         (_LOGIN, position_id, symbol, symbol[:-1], status, open_time_msc,
-         net_profit, r_multiple, mae, mae_r, mfe_r, magic),
+         close_time_msc, net_profit, r_multiple, mae, mae_r, mfe_r, magic),
     )
     conn.commit()
 
@@ -382,6 +382,94 @@ def test_by_symbol_empty_account_is_empty_tuple(conn):
     assert build_report(conn).by_symbol == ()
 
 
+# ------------------------------------------------------- drawdown and streaks
+
+
+def test_drawdown_and_streaks_read_the_sequence_in_close_time_order(conn):
+    # Inserted deliberately out of order: the sequence these three statistics
+    # read is the order the account LIVED, which is close time, not rowid.
+    _seed_account(conn)
+    _seed_trade(conn, 3, net_profit=-40.0, close_time_msc=3000)
+    _seed_trade(conn, 1, net_profit=100.0, close_time_msc=1000)
+    _seed_trade(conn, 2, net_profit=-30.0, close_time_msc=2000)
+    _seed_trade(conn, 4, net_profit=10.0, close_time_msc=4000)
+
+    r = build_report(conn)
+    # cumulative: 100, 70, 30, 40 -> peak 100, trough 30
+    assert r.n_sequenced == 4
+    assert abs(r.max_drawdown - 70.0) < _TOL
+    assert r.max_loss_streak == 2
+    assert r.max_win_streak == 1
+
+
+def test_drawdown_is_zero_when_the_curve_only_rises(conn):
+    _seed_account(conn)
+    for pid, net in [(1, 5.0), (2, 5.0), (3, 5.0)]:
+        _seed_trade(conn, pid, net_profit=net, close_time_msc=pid * 1000)
+
+    r = build_report(conn)
+    assert r.max_drawdown == 0.0        # never drew down, not "unknown"
+    assert r.max_win_streak == 3
+    assert r.max_loss_streak == 0
+
+
+def test_drawdown_measures_the_deepest_trough_not_the_last_one(conn):
+    _seed_account(conn)
+    # cumulative: 10, -40, 60, 35 -> deepest decline is 50 (10 -> -40),
+    # the later 60 -> 35 dip is only 25.
+    for pid, net in [(1, 10.0), (2, -50.0), (3, 100.0), (4, -25.0)]:
+        _seed_trade(conn, pid, net_profit=net, close_time_msc=pid * 1000)
+
+    r = build_report(conn)
+    assert abs(r.max_drawdown - 50.0) < _TOL
+
+
+def test_breakeven_breaks_both_streaks_with_the_same_tolerance(conn):
+    _seed_account(conn)
+    # win, win, breakeven-within-tolerance, win  ->  longest win streak is 2
+    for pid, net in [(1, 5.0), (2, 5.0), (3, 1e-12), (4, 5.0)]:
+        _seed_trade(conn, pid, net_profit=net, close_time_msc=pid * 1000)
+
+    r = build_report(conn)
+    assert r.n_breakeven == 1
+    assert r.max_win_streak == 2
+    assert r.max_loss_streak == 0
+
+
+def test_trade_without_a_close_time_cannot_be_placed_in_the_sequence(conn):
+    # rule 4: NULL close_time_msc is UNKNOWN, not "at the start of time".
+    # It must not silently take a position in the streak/drawdown sequence.
+    _seed_account(conn)
+    _seed_trade(conn, 1, net_profit=-10.0, close_time_msc=1000)
+    _seed_trade(conn, 2, net_profit=-10.0, close_time_msc=None)
+    _seed_trade(conn, 3, net_profit=-10.0, close_time_msc=2000)
+
+    r = build_report(conn)
+    assert r.n_closed == 3      # money stats still see all three
+    assert r.n_sequenced == 2   # the sequence honestly sees two
+    assert r.max_loss_streak == 2
+    assert abs(r.max_drawdown - 20.0) < _TOL
+
+
+def test_open_trades_never_enter_the_sequence(conn):
+    _seed_account(conn)
+    _seed_trade(conn, 1, net_profit=10.0, close_time_msc=1000)
+    _seed_trade(conn, 2, status="open", net_profit=-999.0, close_time_msc=2000)
+
+    r = build_report(conn)
+    assert r.n_sequenced == 1
+    assert r.max_drawdown == 0.0
+
+
+def test_empty_account_has_no_drawdown_rather_than_zero(conn):
+    _seed_account(conn)
+    r = build_report(conn)
+    assert r.n_sequenced == 0
+    assert r.max_drawdown is None   # unknown, not "never drew down" (rule 4)
+    assert r.max_win_streak == 0
+    assert r.max_loss_streak == 0
+
+
 # --------------------------------------------------------------- integration
 
 
@@ -412,3 +500,8 @@ def test_report_against_real_fixture_does_not_crash(conn):
     assert sum(b.n for b in r.by_symbol) == 68
     assert set(b.label for b in r.by_symbol) <= {"XAUUSD", "BTCUSD", "EURUSD"}
     assert all(not b.label.endswith("c") for b in r.by_symbol)
+    # every closed trade in this fixture has a close time, so the sequence
+    # statistics see the whole population — no silent subset.
+    assert r.n_sequenced == 68
+    assert r.max_drawdown is not None and r.max_drawdown > 0
+    assert r.max_loss_streak >= 1

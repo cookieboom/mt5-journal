@@ -880,7 +880,9 @@ def report(db: str = typer.Option(_DEFAULT_DB, help="SQLite DB path.")) -> None:
     do not: sl_initial is recoverable for only 6/68 trades so far (docs §7),
     and MAE/MFE needs candle coverage on top of that. Every number carries
     its n; anything computed over n<20 shows why it's withheld instead of a
-    misleadingly precise figure (docs §9).
+    misleadingly precise figure (docs §9). The sequence block (max drawdown,
+    longest streaks) is the one section §9 does NOT gate: it reports what
+    happened, not an estimate of what tends to happen — see `sequence_stats`.
     """
     from .analytics.report import build_report
 
@@ -905,6 +907,13 @@ def report(db: str = typer.Option(_DEFAULT_DB, help="SQLite DB path.")) -> None:
     typer.echo(f"  avg loss:     {_fmt(r.avg_loss, r.currency, sign=True)}")
     typer.echo(f"  profit factor: {_fmt(r.profit_factor)}")
     typer.echo(f"  expectancy:   {_fmt(r.expectancy, r.currency, sign=True)}")
+    typer.echo()
+    typer.echo(
+        f"-- sequence (close-time order, n={r.n_sequenced} of {r.n_closed} closed) --"
+    )
+    typer.echo(f"  max drawdown: {_fmt(r.max_drawdown, r.currency)}  (realized, peak→trough)")
+    typer.echo(f"  longest win streak:  {r.max_win_streak}")
+    typer.echo(f"  longest loss streak: {r.max_loss_streak}")
     typer.echo()
     typer.echo("-- R-multiple (§9: needs n≥20) --")
     typer.echo(f"  avg R:        {_gated(r.n_with_r, r.avg_r)}")

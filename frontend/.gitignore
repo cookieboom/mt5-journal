@@ -1,4 +1,7 @@
-node_modules/
+# No trailing slash: building inside a git worktree needs `node_modules`
+# symlinked in from the main checkout, and `node_modules/` does not match a
+# symlink — one `git add -A` away from committing it.
+node_modules
 dist/
 vite.config.js
 vite.config.d.ts

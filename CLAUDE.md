@@ -26,8 +26,10 @@ Single user, local-only, macOS (Apple Silicon M4).
 - ~140 deals ≈ 65 trades. Every statistic must show `n`; buckets with `n < 20`
   are suppressed or greyed (docs §8). **Exception: replay/training summaries
   (`store/training_store._summary`) are ungated** — a session is a handful of
-  trades, so the floor blanked every rate permanently. `n` still ships with
-  every metric.
+  trades, so the floor blanked every rate permanently. **Second exception: the
+  sequence block in `analytics/report.py` (max drawdown, longest win/loss
+  streak)** — they report what happened, not an average of it, so gating them
+  would hide history. `n` still ships with every metric (`n_sequenced` there).
 
 ## Hard rules
 

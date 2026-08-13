@@ -75,6 +75,19 @@ class ReportResult:
     n_with_mfe_r: int
     avg_mfe_r: float | None      # None unless n_with_mfe_r >= _MIN_N
 
+    # Sequence statistics — read the closed trades in the order the account
+    # LIVED them (close time), not the order they sit in the table. Deliberately
+    # NOT gated by §9: none of them is an average. A drawdown is the deepest
+    # trough that actually happened and a streak is a run that actually
+    # happened; withholding a fact under n<20 would be hiding history, not
+    # withholding a shaky estimate. `n_sequenced` ships with them so the
+    # population is never in doubt.
+    n_sequenced: int             # closed trades with a KNOWN close time
+    max_drawdown: float | None   # money, POSITIVE; 0.0 = never drew down,
+                                  # None = nothing to measure (n_sequenced == 0)
+    max_win_streak: int          # longest run of consecutive wins
+    max_loss_streak: int         # longest run of consecutive losses
+
     # M5.1 behaviour breakdowns. Each is the FULL set of buckets in a fixed
     # order, always present even when empty, so the rendered table shape never
     # shifts: by_session in SESSION_ORDER; by_source as (EA, Discretionary).
@@ -120,6 +133,55 @@ def bucket_stat(label: str, rows: list[sqlite3.Row]) -> BucketStat:
     )
 
 
+def sequence_stats(rows: list[sqlite3.Row]) -> tuple[int, float | None, int, int]:
+    """`(n_sequenced, max_drawdown, max_win_streak, max_loss_streak)` over the
+    closed trades that can be placed in time, in close-time order.
+
+    A trade with a NULL `close_time_msc` is dropped, not sorted to the front:
+    rule 4 says NULL is UNKNOWN, and an unknown close time placed at position
+    zero would invent an order the account never had — silently, and worst for
+    exactly the statistics that only mean something in sequence. The money
+    stats above still count it; `n_sequenced` is what says how many trades
+    these three actually read.
+
+    Drawdown is the realized-P&L curve's deepest peak-to-trough decline, in
+    account currency, returned POSITIVE. The peak starts at 0.0 — the curve
+    begins where the account began — so an opening loss is a real drawdown and
+    not a free ride to the first high. This is NOT equity drawdown: floating
+    P&L on positions still open never enters it, because `trades` only knows
+    what closed.
+
+    A breakeven trade (within `_TOL`, rule 5) ends both runs and starts
+    neither. It is not a win and not a loss; letting it extend either run would
+    report a streak the account did not have.
+    """
+    seq = sorted(
+        (r for r in rows if r["close_time_msc"] is not None),
+        key=lambda r: r["close_time_msc"],
+    )
+    if not seq:
+        return 0, None, 0, 0
+
+    cum = peak = 0.0
+    max_dd = 0.0
+    wins = losses = max_wins = max_losses = 0
+    for r in seq:
+        net = r["net_profit"]
+        cum += net
+        peak = max(peak, cum)
+        max_dd = max(max_dd, peak - cum)
+
+        if net > _TOL:
+            wins, losses = wins + 1, 0
+        elif net < -_TOL:
+            wins, losses = 0, losses + 1
+        else:
+            wins = losses = 0
+        max_wins, max_losses = max(max_wins, wins), max(max_losses, losses)
+
+    return len(seq), max_dd, max_wins, max_losses
+
+
 def build_report(conn: sqlite3.Connection) -> ReportResult:
     """Pure DB read, no client — mirrors `verify`/`rebuild`. Resolves the
     account login internally (matches `rebuild`/`render_trade`/`sync_candles`'s
@@ -135,8 +197,8 @@ def build_report(conn: sqlite3.Connection) -> ReportResult:
     ).fetchone()
 
     rows = conn.execute(
-        "SELECT net_profit, r_multiple, mae, mae_r, mfe_r, open_time_msc, magic, "
-        "symbol_base "
+        "SELECT net_profit, r_multiple, mae, mae_r, mfe_r, open_time_msc, "
+        "close_time_msc, magic, symbol_base "
         "FROM trades WHERE account_login = ? AND status = 'closed'",
         (login,),
     ).fetchall()
@@ -177,6 +239,8 @@ def build_report(conn: sqlite3.Connection) -> ReportResult:
     mfe_r_values = [r["mfe_r"] for r in rows if r["mfe_r"] is not None]
     n_with_mfe_r = len(mfe_r_values)
     avg_mfe_r = (sum(mfe_r_values) / n_with_mfe_r) if n_with_mfe_r >= _MIN_N else None
+
+    n_sequenced, max_drawdown, max_win_streak, max_loss_streak = sequence_stats(rows)
 
     # Session breakdown — every bucket in SESSION_ORDER, present even when empty.
     # Server clock is UTC (docs §7), so session_of reads the hour with no offset.
@@ -228,6 +292,10 @@ def build_report(conn: sqlite3.Connection) -> ReportResult:
         avg_mae_r=avg_mae_r,
         n_with_mfe_r=n_with_mfe_r,
         avg_mfe_r=avg_mfe_r,
+        n_sequenced=n_sequenced,
+        max_drawdown=max_drawdown,
+        max_win_streak=max_win_streak,
+        max_loss_streak=max_loss_streak,
         by_session=by_session,
         by_source=by_source,
         by_symbol=by_symbol,

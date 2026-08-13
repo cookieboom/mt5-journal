@@ -38,6 +38,31 @@ home each, and a second copy is a future lie. Point, never duplicate.
 
 **Last updated:** 2026-08-13
 
+**2026-08-13 — `journal report` finally answers "how bad did it get"
+(`analytics.report.sequence_stats`).** Every statistic in the report until now
+was an aggregate over an unordered bag of trades: win rate, expectancy, profit
+factor, the three breakdowns. None of them can see a run. An account with a
+1.08 profit factor and a 12-trade losing streak reads identically to one that
+alternated — and the streak is the thing that actually ends accounts. Three
+numbers now come off the closed trades in CLOSE-TIME order: `max_drawdown`
+(realized peak→trough, positive money, peak starting at 0.0 so an opening loss
+counts), `max_win_streak`, `max_loss_streak`, plus `n_sequenced` beside them.
+
+Two decisions worth keeping. A trade with a NULL `close_time_msc` is DROPPED
+from the sequence rather than sorted to the front (rule 4: unknown is not
+"first"), which is why `n_sequenced` ships as its own count instead of reusing
+`n_closed`. And the block is deliberately NOT §9-gated: a drawdown that
+happened is not an estimate that might be noisy, and suppressing it under n<20
+would hide history rather than withhold a shaky average. CLAUDE.md's §9 line
+now names this as its second standing exception.
+
+Gates: `uv run pytest` **830 passed, 1 skipped** (+7 here, +1 in `test_api.py`
+pinning the payload the SPA types mirror), `npm --prefix frontend test` 346
+passed, `tsc -b && vite build` clean. On a 62 MB snapshot of the live store
+`journal rebuild` **OK, 129 trades** and `journal report` reads max drawdown
+63.48 USC, longest win streak 5, longest loss streak 12 — cross-checked against
+an independent cumulative-sum pass over the same rows.
+
 **2026-08-13 — the stale-daemon guard now compares CODE, not clocks
 (`live_heartbeat.code_fingerprint`, migration 012).** The two entries below
 taught `status` to ask whether the daemon and the bundle are current, and both

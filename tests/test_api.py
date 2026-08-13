@@ -291,6 +291,11 @@ def test_report_payload_composes_report_and_series(conn):
     assert p["report"]["n_closed"] == 2
     # §9 gate: only 2 R-known trades → avg_r withheld as null, never 0
     assert p["report"]["avg_r"] is None
+    # the sequence block crosses to the client too (frontend/src/lib/types.ts)
+    # and is NOT §9-gated: 250 then -80 is a real 80 drawdown at n=2.
+    assert p["report"]["n_sequenced"] == 2
+    assert p["report"]["max_drawdown"] == 80.0
+    assert p["report"]["max_loss_streak"] == 1
     # series carries the raw per-trade chart source; nulls preserved (rule 4)
     by_pos = {s["position_id"]: s for s in p["series"]}
     assert by_pos[1]["mfe_r"] == 2.1
