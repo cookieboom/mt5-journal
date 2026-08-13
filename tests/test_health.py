@@ -10,6 +10,7 @@ backed up today is a status command that gets `|| true`'d.
 
 from __future__ import annotations
 
+import json
 import os
 
 import pytest
@@ -389,6 +390,81 @@ def test_newest_source_points_at_a_real_python_file():
     """No monkeypatch: the real scan must find this package's own sources."""
     name, mtime = health.newest_source()
     assert name.endswith(".py") and mtime > 0
+
+
+# --------------------------------------------------- live: which code, not when
+
+
+def _beating(conn, now_s, *, fingerprint):
+    conn.execute(
+        "INSERT INTO live_heartbeat (id, beat_msc, started_msc, code_fingerprint) "
+        "VALUES (1, ?, ?, ?)",
+        (int(now_s * 1000) - 3_000, int(now_s * 1000) - 6 * 3600 * 1000, fingerprint),
+    )
+    conn.commit()
+
+
+def test_code_fingerprint_lists_this_package_only():
+    fp = json.loads(health.code_fingerprint())
+    assert "store/health.py" in fp
+    assert all(k.endswith(".py") and not k.startswith("/") for k in fp)
+    assert all(len(v) == 12 for v in fp.values())
+
+
+def test_changed_modules_is_empty_against_an_untouched_tree():
+    assert health.changed_modules(health.code_fingerprint()) == []
+
+
+def test_changed_modules_names_a_file_whose_content_moved():
+    fp = json.loads(health.code_fingerprint())
+    fp["store/health.py"] = "0" * 12
+    assert health.changed_modules(json.dumps(fp)) == ["store/health.py"]
+
+
+def test_changed_modules_counts_a_vanished_file_as_changed():
+    fp = json.loads(health.code_fingerprint())
+    fp["store/no_such_module.py"] = "0" * 12
+    assert "store/no_such_module.py" in health.changed_modules(json.dumps(fp))
+
+
+def test_live_warns_when_a_module_the_daemon_loaded_changed_on_disk(db, monkeypatch):
+    """The signal that replaces the mtime scan: WHICH file the daemon loaded and
+    whether its bytes still match, not whether some unrelated file is newer."""
+    conn, path = db
+    now_s = 1_000_000.0
+    fp = json.loads(health.code_fingerprint())
+    fp["ingest/live.py"] = "0" * 12
+    _beating(conn, now_s, fingerprint=json.dumps(fp))
+
+    c = _by_name(health.checks(conn, path, now=now_s))["live"]
+    assert c.state == "warn"
+    assert "ingest/live.py" in c.detail and "OLD code" in c.detail
+    assert c.fix and "live" in c.fix
+
+
+def test_live_ignores_a_newer_file_the_daemon_never_loaded(db, monkeypatch):
+    """The false positive this replaces: editing any `.py` under the package —
+    a web view, an analytics module — accused a daemon that never imports it."""
+    conn, path = db
+    now_s = 1_000_000.0
+    _beating(conn, now_s, fingerprint=health.code_fingerprint())
+    monkeypatch.setattr(health, "newest_source",
+                        lambda: ("web/views.py", now_s - 60))
+
+    assert _by_name(health.checks(conn, path, now=now_s))["live"].state == "ok"
+
+
+def test_live_falls_back_to_mtimes_when_the_daemon_left_no_fingerprint(db, monkeypatch):
+    """A daemon started before this column existed still gets the old, coarser
+    answer — silence would read as "current"."""
+    conn, path = db
+    now_s = 1_000_000.0
+    _beating(conn, now_s, fingerprint=None)
+    monkeypatch.setattr(health, "newest_source",
+                        lambda: ("ingest/live.py", now_s - 3600))
+
+    c = _by_name(health.checks(conn, path, now=now_s))["live"]
+    assert c.state == "warn" and "ingest/live.py" in c.detail
 
 
 # ------------------------------------------------------------------ frontend

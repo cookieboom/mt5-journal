@@ -25,7 +25,10 @@ Three states, and the difference between the last two is the whole design:
 
 from __future__ import annotations
 
+import hashlib
+import json
 import sqlite3
+import sys
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -58,6 +61,61 @@ def newest_source(pkg: Path | None = None) -> tuple[str, float]:
         return ("", 0.0)
     newest = max(files, key=lambda p: p.stat().st_mtime)
     return (str(newest.relative_to(pkg or _PKG)), newest.stat().st_mtime)
+
+
+def _sha(p: Path) -> str | None:
+    try:
+        return hashlib.sha256(p.read_bytes()).hexdigest()[:12]
+    except OSError:
+        return None
+
+
+def code_fingerprint() -> str:
+    """The code THIS process is running: JSON `{module path: sha256[:12]}` over
+    every `journal.*` module already imported.
+
+    `newest_source` above answers "is anything on disk newer than the daemon",
+    and both of its errors come from the same place — an mtime is not the code.
+    It fired on any `.py` under the package, including the ones the live loop
+    never imports, so a warning that means "restart me" arrived after editing a
+    web view; and a `git checkout` rewriting mtimes let genuinely old code read
+    as new. Content answers both, and names the file that actually moved.
+
+    Only imported modules are listed, and that is the honest set: a module the
+    daemon has not loaded yet will be read fresh off disk when it first needs
+    it, so an edit to it is not old code running. The gap is the module it
+    imports lazily AFTER this ran — edited later, it stays unlisted and unseen.
+    """
+    out: dict[str, str] = {}
+    for mod in list(sys.modules.values()):
+        f = getattr(mod, "__file__", None)
+        if not f:
+            continue
+        p = Path(f).resolve()
+        try:
+            rel = p.relative_to(_PKG)
+        except ValueError:
+            continue                      # not ours: stdlib, site-packages
+        sha = _sha(p)
+        if sha:
+            out[str(rel)] = sha
+    return json.dumps(out, sort_keys=True)
+
+
+def changed_modules(fingerprint: str) -> list[str]:
+    """Which files in `fingerprint` no longer match the bytes on disk.
+
+    A file that has since been deleted counts as changed — it cannot be proven
+    to match. Unparseable JSON yields nothing: an unreadable stamp is an unknown
+    daemon, and unknown is never an accusation (`NULL means unknown`, rule 4).
+    """
+    try:
+        recorded = json.loads(fingerprint)
+    except (TypeError, ValueError):
+        return []
+    if not isinstance(recorded, dict):
+        return []
+    return [rel for rel, sha in sorted(recorded.items()) if _sha(_PKG / rel) != sha]
 
 
 @dataclass(frozen=True)
@@ -189,7 +247,7 @@ def _live(conn: sqlite3.Connection, now: float) -> Check:
     `sync` and `rebuild` by hand. A command queued with nothing running to send
     it is: the human believes an SL is in flight and it is sitting in a table.
     """
-    from .live_store import read_heartbeat, read_started
+    from .live_store import read_code_fingerprint, read_heartbeat, read_started
 
     beat = read_heartbeat(conn)
     (pending,) = conn.execute(
@@ -213,12 +271,26 @@ def _live(conn: sqlite3.Connection, now: float) -> Check:
                      "journal live")
 
     # Alive, but is it running the code on disk? A restart is the last step of
-    # nearly every change to the live loop, it is the one step no test can
-    # perform, and until now nothing said it had been skipped.
+    # nearly every change to the live loop, and it is the one step no test can
+    # perform. Ask the daemon's own fingerprint first: it names the modules it
+    # loaded, so an edit to a module it never imports says nothing.
     started = read_started(conn)
-    if started is not None:
+    started_s = None if started is None else started / 1000.0
+    up = "" if started_s is None else f", up {_age(now - started_s)}"
+    fingerprint = read_code_fingerprint(conn)
+    if fingerprint:
+        changed = changed_modules(fingerprint)
+        if changed:
+            more = f" (+{len(changed) - 1} more)" if len(changed) > 1 else ""
+            return Check("live", "warn",
+                         f"heartbeat {_age(age)} ago{up}, but {changed[0]}{more} "
+                         "changed since it loaded — it is running OLD code"
+                         + queued,
+                         "restart `journal live`")
+    elif started_s is not None:
+        # A daemon from before the fingerprint column: mtimes are all it left,
+        # and silence would read as "current".
         name, src_mtime = newest_source()
-        started_s = started / 1000.0
         if src_mtime > started_s:
             return Check("live", "warn",
                          f"heartbeat {_age(age)} ago, but the daemon has been up "

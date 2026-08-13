@@ -38,6 +38,36 @@ home each, and a second copy is a future lie. Point, never duplicate.
 
 **Last updated:** 2026-08-13
 
+**2026-08-13 — the stale-daemon guard now compares CODE, not clocks
+(`live_heartbeat.code_fingerprint`, migration 012).** The two entries below
+taught `status` to ask whether the daemon and the bundle are current, and both
+answered it with mtimes. For the daemon that answer was wrong in both
+directions and the false positive arrived within the day: `status` against the
+live store said *`store/health.py` changed 4m ago — it is running OLD code*
+about a daemon that never imports `store/health.py`. Editing anything under
+`src/journal/` — a web view, a lab feature, a docstring — accused a daemon that
+was in fact current, and a warning that fires on every edit is a warning you
+have already learned to ignore. The other direction is quieter and worse: a
+`git checkout` rewrites mtimes, so genuinely old code read as new.
+
+An mtime is not the code. `health.code_fingerprint()` hashes what the process
+actually imported — walk `sys.modules`, keep the files under `src/journal/`,
+`{relative path: sha256[:12]}` as JSON — and `live_loop` hands it to
+`mark_started` beside `started_msc`. `health.changed_modules()` re-hashes
+exactly those paths and `_live` names the first that moved (`+N more` for the
+rest). Only imported modules are listed and that is the honest set: a module
+the daemon has not loaded yet gets read fresh off disk when it first needs it,
+so editing it is not old code running. The one remaining gap is a module
+imported lazily *after* startup and edited later — unlisted, unseen. A daemon
+that left no fingerprint (started before this column) still gets the old mtime
+answer, because silence would read as "current".
+
+Gates: `uv run pytest` **823 passed, 1 skipped in 39.94 s** (+10), and on a
+62 MB snapshot of the live store `journal status` migrates to 12 and answers
+clean, `journal rebuild` **OK, 129 trades**. On that snapshot the check takes
+the fallback path and names `ingest/live.py` — correct: the daemon running
+right now predates the column, and that file is exactly what changed.
+
 **2026-08-13 — `journal status` now asks the bundle's age too (`health._dist`).**
 The previous entry taught `status` that a running daemon can be running old
 code. The served frontend has exactly the same failure and it already had a

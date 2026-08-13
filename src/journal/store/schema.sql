@@ -459,7 +459,12 @@ CREATE TABLE IF NOT EXISTS live_heartbeat (
     beat_msc    INTEGER NOT NULL,
     -- When the running daemon loaded its code. NULL = it started before this
     -- column existed. `journal status` compares it to the newest source file.
-    started_msc INTEGER
+    started_msc INTEGER,
+    -- WHICH code it loaded: JSON {module path: sha256[:12]} over the `journal.*`
+    -- modules the process had imported. `journal status` re-hashes those files
+    -- and names the ones that moved; a timestamp could only be compared against
+    -- mtimes, which every unrelated edit disturbs. NULL = older daemon.
+    code_fingerprint TEXT
 );
 
 -- Demand-driven watch registry. Web upserts (with a TTL); `journal live` reads

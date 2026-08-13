@@ -28,6 +28,23 @@ def test_beat_overwrites_single_row(conn):
     assert conn.execute("SELECT COUNT(*) c FROM live_heartbeat").fetchone()["c"] == 1
 
 
+def test_mark_started_keeps_the_fingerprint_beside_the_start(conn):
+    ls.mark_started(conn, 1_700_000_000_000, '{"ingest/live.py": "abc123abc123"}')
+    assert ls.read_started(conn) == 1_700_000_000_000
+    assert ls.read_code_fingerprint(conn) == '{"ingest/live.py": "abc123abc123"}'
+
+
+def test_read_code_fingerprint_none_when_the_daemon_never_said(conn):
+    ls.beat(conn, 1_700_000_000_000)
+    assert ls.read_code_fingerprint(conn) is None
+
+
+def test_a_restart_replaces_the_previous_fingerprint(conn):
+    ls.mark_started(conn, 1_700_000_000_000, '{"a.py": "1"}')
+    ls.mark_started(conn, 1_700_000_060_000, '{"a.py": "2"}')
+    assert ls.read_code_fingerprint(conn) == '{"a.py": "2"}'
+
+
 def test_active_watches_empty(conn):
     assert ls.active_watches(conn, 1_700_000_000_000) == []
 

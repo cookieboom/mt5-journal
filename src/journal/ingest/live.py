@@ -96,7 +96,7 @@ from ..execute import (
     recover_interrupted,
     reject,
 )
-from ..store import backup, live_store
+from ..store import backup, health, live_store
 from ..store.candle_queue import claim_next_request, requeue_orphaned
 from ..store.db import now_ms
 from .candle_fill import fulfill_request
@@ -524,7 +524,7 @@ def live_loop(
     not about the bridge, and it is here because this is the only process that
     runs all day — see that function.
     """
-    live_store.mark_started(conn, now_ms())
+    live_store.mark_started(conn, now_ms(), health.code_fingerprint())
     recovered = recover_interrupted(conn, login)
     if recovered:
         log.info("live: recovered %d interrupted command(s) at startup", recovered)

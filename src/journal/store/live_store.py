@@ -22,19 +22,27 @@ def beat(conn: sqlite3.Connection, now_msc: int) -> None:
     conn.commit()
 
 
-def mark_started(conn: sqlite3.Connection, now_msc: int) -> None:
-    """Record when THIS process loaded its code. Called once, at loop start.
+def mark_started(conn: sqlite3.Connection, now_msc: int,
+                 code_fingerprint: str | None = None) -> None:
+    """Record when — and which code — THIS process loaded. Once, at loop start.
 
     A heartbeat says the daemon is alive; it cannot say it is current. Every
     change to the live loop ships with "restart `journal live`", and nothing on
-    the machine could see that the restart never happened — see
-    `health.newest_source`.
+    the machine could see that the restart never happened.
+
+    `code_fingerprint` is `health.code_fingerprint()`: the modules this process
+    actually imported, hashed. The timestamp alone could only be compared
+    against file mtimes, which every unrelated edit disturbs — see
+    `health.changed_modules`. It stays optional so this module keeps its promise
+    (pure DB, no hashing, no scanning).
     """
     conn.execute(
-        "INSERT INTO live_heartbeat (id, beat_msc, started_msc) VALUES (1, ?, ?) "
+        "INSERT INTO live_heartbeat (id, beat_msc, started_msc, code_fingerprint) "
+        "VALUES (1, ?, ?, ?) "
         "ON CONFLICT(id) DO UPDATE SET beat_msc = excluded.beat_msc, "
-        "started_msc = excluded.started_msc",
-        (now_msc, now_msc),
+        "started_msc = excluded.started_msc, "
+        "code_fingerprint = excluded.code_fingerprint",
+        (now_msc, now_msc, code_fingerprint),
     )
     conn.commit()
 
@@ -48,6 +56,14 @@ def read_started(conn: sqlite3.Connection) -> int | None:
     """When the running daemon started, or None if it never said."""
     row = conn.execute("SELECT started_msc FROM live_heartbeat WHERE id = 1").fetchone()
     return None if row is None or row["started_msc"] is None else int(row["started_msc"])
+
+
+def read_code_fingerprint(conn: sqlite3.Connection) -> str | None:
+    """What the running daemon said it had loaded, or None if it never said."""
+    row = conn.execute(
+        "SELECT code_fingerprint FROM live_heartbeat WHERE id = 1"
+    ).fetchone()
+    return None if row is None else row["code_fingerprint"]
 
 
 def upsert_watch(conn: sqlite3.Connection, symbol: str, timeframe: str,
