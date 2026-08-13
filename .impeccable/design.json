@@ -1,0 +1,277 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-08-13T00:00:00Z",
+  "title": "Design System: mt5-journal",
+  "extensions": {
+    "colorMeta": {
+      "bg": {
+        "role": "neutral",
+        "displayName": "Dusk Ink",
+        "canonical": "oklch(14% 0.035 288)",
+        "tonalRamp": ["oklch(15% 0.035 288)", "oklch(24% 0.035 288)", "oklch(35% 0.033 288)", "oklch(46% 0.030 288)", "oklch(57% 0.026 288)", "oklch(68% 0.020 288)", "oklch(82% 0.014 288)", "oklch(95% 0.008 288)"]
+      },
+      "bg-glow": {
+        "role": "neutral",
+        "displayName": "Dusk Glow",
+        "canonical": "oklch(24% 0.085 292)",
+        "tonalRamp": ["oklch(15% 0.070 292)", "oklch(24% 0.085 292)", "oklch(35% 0.090 292)", "oklch(46% 0.090 292)", "oklch(57% 0.080 292)", "oklch(68% 0.062 292)", "oklch(82% 0.040 292)", "oklch(95% 0.016 292)"]
+      },
+      "panel": {
+        "role": "neutral",
+        "displayName": "Panel Glass",
+        "canonical": "rgba(255,255,255,0.045)",
+        "tonalRamp": ["rgba(255,255,255,0.02)", "rgba(255,255,255,0.045)", "rgba(255,255,255,0.06)", "rgba(255,255,255,0.08)", "rgba(255,255,255,0.12)", "rgba(255,255,255,0.18)", "rgba(255,255,255,0.28)", "rgba(255,255,255,0.45)"]
+      },
+      "panel-border": {
+        "role": "neutral",
+        "displayName": "Panel Hairline",
+        "canonical": "rgba(255,255,255,0.09)",
+        "tonalRamp": ["rgba(255,255,255,0.05)", "rgba(255,255,255,0.09)", "rgba(255,255,255,0.14)", "rgba(255,255,255,0.20)", "rgba(255,255,255,0.28)", "rgba(255,255,255,0.38)", "rgba(255,255,255,0.55)", "rgba(255,255,255,0.75)"]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Paper Ink",
+        "canonical": "oklch(92% 0.030 292)",
+        "tonalRamp": ["oklch(15% 0.030 292)", "oklch(26% 0.030 292)", "oklch(37% 0.030 292)", "oklch(48% 0.030 292)", "oklch(60% 0.030 292)", "oklch(72% 0.030 292)", "oklch(84% 0.030 292)", "oklch(95% 0.020 292)"]
+      },
+      "muted": {
+        "role": "neutral",
+        "displayName": "Dusk Muted",
+        "canonical": "oklch(67% 0.055 292)",
+        "tonalRamp": ["oklch(15% 0.045 292)", "oklch(26% 0.050 292)", "oklch(37% 0.055 292)", "oklch(48% 0.055 292)", "oklch(59% 0.055 292)", "oklch(70% 0.050 292)", "oklch(83% 0.035 292)", "oklch(95% 0.015 292)"]
+      },
+      "violet": {
+        "role": "primary",
+        "displayName": "Trace Violet",
+        "canonical": "oklch(74% 0.145 300)",
+        "tonalRamp": ["oklch(20% 0.090 300)", "oklch(30% 0.120 300)", "oklch(41% 0.150 300)", "oklch(52% 0.165 300)", "oklch(63% 0.160 300)", "oklch(74% 0.145 300)", "oklch(85% 0.095 300)", "oklch(95% 0.040 300)"]
+      },
+      "cyan": {
+        "role": "primary",
+        "displayName": "Signal Cyan",
+        "canonical": "oklch(79% 0.130 209)",
+        "tonalRamp": ["oklch(20% 0.055 209)", "oklch(31% 0.075 209)", "oklch(42% 0.095 209)", "oklch(53% 0.110 209)", "oklch(65% 0.125 209)", "oklch(79% 0.130 209)", "oklch(88% 0.085 209)", "oklch(96% 0.035 209)"]
+      },
+      "pos": {
+        "role": "secondary",
+        "displayName": "Ledger Green",
+        "canonical": "oklch(78% 0.150 163)",
+        "tonalRamp": ["oklch(20% 0.060 163)", "oklch(31% 0.085 163)", "oklch(42% 0.110 163)", "oklch(53% 0.130 163)", "oklch(65% 0.145 163)", "oklch(78% 0.150 163)", "oklch(88% 0.095 163)", "oklch(96% 0.038 163)"]
+      },
+      "neg": {
+        "role": "secondary",
+        "displayName": "Ledger Rose",
+        "canonical": "oklch(72% 0.170 12)",
+        "tonalRamp": ["oklch(20% 0.080 12)", "oklch(31% 0.110 12)", "oklch(42% 0.140 12)", "oklch(53% 0.165 12)", "oklch(62% 0.175 12)", "oklch(72% 0.170 12)", "oklch(85% 0.105 12)", "oklch(95% 0.040 12)"]
+      },
+      "exit-amber": {
+        "role": "tertiary",
+        "displayName": "Exit Amber",
+        "canonical": "oklch(75% 0.160 66)",
+        "tonalRamp": ["oklch(20% 0.070 66)", "oklch(31% 0.095 66)", "oklch(42% 0.120 66)", "oklch(53% 0.140 66)", "oklch(64% 0.155 66)", "oklch(75% 0.160 66)", "oklch(87% 0.100 66)", "oklch(96% 0.040 66)"]
+      },
+      "mark-amber": {
+        "role": "tertiary",
+        "displayName": "Mark Amber",
+        "canonical": "oklch(83% 0.150 80)",
+        "tonalRamp": ["oklch(22% 0.065 80)", "oklch(33% 0.090 80)", "oklch(44% 0.115 80)", "oklch(55% 0.135 80)", "oklch(68% 0.150 80)", "oklch(83% 0.150 80)", "oklch(90% 0.095 80)", "oklch(96% 0.038 80)"]
+      },
+      "mark-sky": {
+        "role": "tertiary",
+        "displayName": "Mark Sky",
+        "canonical": "oklch(84% 0.085 227)",
+        "tonalRamp": ["oklch(22% 0.045 227)", "oklch(33% 0.058 227)", "oklch(45% 0.070 227)", "oklch(56% 0.080 227)", "oklch(70% 0.085 227)", "oklch(84% 0.085 227)", "oklch(91% 0.055 227)", "oklch(97% 0.022 227)"]
+      },
+      "mark-chalk": {
+        "role": "tertiary",
+        "displayName": "Mark Chalk",
+        "canonical": "oklch(93% 0.012 290)",
+        "tonalRamp": ["oklch(18% 0.012 290)", "oklch(29% 0.012 290)", "oklch(40% 0.012 290)", "oklch(52% 0.012 290)", "oklch(64% 0.012 290)", "oklch(76% 0.012 290)", "oklch(88% 0.012 290)", "oklch(97% 0.008 290)"]
+      },
+      "closed-slate": {
+        "role": "neutral",
+        "displayName": "Closed Slate",
+        "canonical": "oklch(33% 0.025 296)",
+        "tonalRamp": ["oklch(16% 0.020 296)", "oklch(25% 0.023 296)", "oklch(33% 0.025 296)", "oklch(44% 0.025 296)", "oklch(56% 0.023 296)", "oklch(68% 0.020 296)", "oklch(82% 0.014 296)", "oklch(95% 0.008 296)"]
+      },
+      "chart-light-bg": {
+        "role": "neutral",
+        "displayName": "Daylight Paper",
+        "canonical": "oklch(100% 0 0)",
+        "tonalRamp": ["oklch(20% 0 0)", "oklch(32% 0 0)", "oklch(44% 0 0)", "oklch(56% 0 0)", "oklch(68% 0 0)", "oklch(80% 0 0)", "oklch(92% 0 0)", "oklch(100% 0 0)"]
+      },
+      "chart-light-ink": {
+        "role": "neutral",
+        "displayName": "Daylight Slate",
+        "canonical": "oklch(41% 0.040 258)",
+        "tonalRamp": ["oklch(18% 0.035 258)", "oklch(29% 0.040 258)", "oklch(41% 0.040 258)", "oklch(52% 0.040 258)", "oklch(64% 0.035 258)", "oklch(76% 0.028 258)", "oklch(88% 0.018 258)", "oklch(96% 0.008 258)"]
+      },
+      "chart-light-pos": {
+        "role": "secondary",
+        "displayName": "Daylight Green",
+        "canonical": "oklch(58% 0.130 163)",
+        "tonalRamp": ["oklch(20% 0.060 163)", "oklch(30% 0.085 163)", "oklch(41% 0.110 163)", "oklch(58% 0.130 163)", "oklch(69% 0.130 163)", "oklch(80% 0.115 163)", "oklch(89% 0.075 163)", "oklch(96% 0.030 163)"]
+      },
+      "chart-light-neg": {
+        "role": "secondary",
+        "displayName": "Daylight Rose",
+        "canonical": "oklch(55% 0.200 15)",
+        "tonalRamp": ["oklch(20% 0.090 15)", "oklch(31% 0.125 15)", "oklch(43% 0.165 15)", "oklch(55% 0.200 15)", "oklch(66% 0.180 15)", "oklch(78% 0.135 15)", "oklch(89% 0.075 15)", "oklch(96% 0.028 15)"]
+      }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "KPI values only. The largest element on any page is always a number, set tabular." },
+      "headline": { "displayName": "Headline", "purpose": "The page title, once per route." },
+      "title": { "displayName": "Title", "purpose": "Panel headings, usually followed by an 11px muted method line." },
+      "body": { "displayName": "Body", "purpose": "Table cells, values, prose. 13px reading size, 12px dense-table size." },
+      "label": { "displayName": "Label", "purpose": "Uppercase letterspaced captions and eyebrows. Always muted, always the smallest thing in the panel." },
+      "numeral": { "displayName": "Numeral", "purpose": "Any figure, via the .num class. Tabular, solid, full opacity, never gradient." },
+      "mono": { "displayName": "Mono", "purpose": "Symbols, identifiers, and CLI command names quoted inside sentences." }
+    },
+    "shadows": [
+      { "name": "live-glow", "value": "0 0 8px #22d3ee", "purpose": "The cyan liveness dot, and nothing else. The system's only light-emitting element." },
+      { "name": "floating-layer", "value": "0 12px 32px rgba(0,0,0,0.45)", "purpose": "Modals, drawers, and the chart tool palette — layers that float over the page or canvas." },
+      { "name": "scrim", "value": "background: rgba(0,0,0,0.6)", "purpose": "Full-page backdrop behind a modal." }
+    ],
+    "motion": [
+      { "name": "state-color", "value": "150ms ease", "purpose": "Default colour transition on hover/active for controls (transition-colors)." },
+      { "name": "press", "value": "80ms ease-out", "purpose": "Press feedback on controls: a 1px translate or a fill step on :active." },
+      { "name": "pulse", "value": "2s cubic-bezier(0.4,0,0.6,1) infinite", "purpose": "Pending or in-flight states (queued command, awaiting daemon)." },
+      { "name": "spin", "value": "1s linear infinite", "purpose": "Fetch-in-progress indicator only." }
+    ],
+    "breakpoints": [
+      { "name": "md", "value": "768px" },
+      { "name": "lg", "value": "1024px" }
+    ],
+    "surfaces": [
+      { "name": "page-ground", "value": "radial-gradient(130% 120% at 100% -10%, #1a1740 0%, #0b0a1a 52%) fixed", "purpose": "The fixed dusk ground behind everything. Never scrolls with content." },
+      { "name": "glass", "value": "background: rgba(255,255,255,0.045); border: 1px solid rgba(255,255,255,0.09); border-radius: 14px; backdrop-filter: blur(8px);", "purpose": "Every resting surface in the system." }
+    ]
+  },
+  "components": [
+    {
+      "name": "Glass Panel",
+      "kind": "card",
+      "refersTo": "card-glass",
+      "description": "The universal surface: 13px semibold title, optional 11px muted method line, then content.",
+      "html": "<div class=\"ds-panel\"><h2 class=\"ds-panel-title\">Kurva R kumulatif</h2><div class=\"ds-panel-method\">pertumbuhan R dari waktu ke waktu</div><div class=\"ds-panel-body\">n=42 · +8.4R</div></div>",
+      "css": ".ds-panel { background: rgba(255,255,255,0.045); border: 1px solid rgba(255,255,255,0.09); border-radius: 14px; backdrop-filter: blur(8px); padding: 16px; color: #e8e6ff; font-family: Inter, system-ui, sans-serif; max-width: 320px; } .ds-panel-title { font-size: 13px; font-weight: 600; margin: 0; } .ds-panel-method { font-size: 11px; color: #9a97c4; margin-top: 2px; } .ds-panel-body { font-size: 12px; font-variant-numeric: tabular-nums; margin-top: 12px; }"
+    },
+    {
+      "name": "KPI Card",
+      "kind": "card",
+      "refersTo": "kpi-card",
+      "description": "9.5px uppercase caption, 23px tabular value toned by outcome, 10.5px muted sample size.",
+      "html": "<div class=\"ds-kpi\"><div class=\"ds-kpi-label\">Net R</div><div class=\"ds-kpi-value ds-kpi-pos\">+8.42R</div><div class=\"ds-kpi-sub\">n=42</div></div>",
+      "css": ".ds-kpi { background: rgba(255,255,255,0.045); border: 1px solid rgba(255,255,255,0.09); border-radius: 14px; backdrop-filter: blur(8px); padding: 14px; font-family: Inter, system-ui, sans-serif; width: 168px; } .ds-kpi-label { font-size: 9.5px; letter-spacing: 0.09em; text-transform: uppercase; color: #9a97c4; } .ds-kpi-value { font-size: 23px; font-weight: 700; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; margin-top: 4px; color: #e8e6ff; } .ds-kpi-pos { color: #34d399; } .ds-kpi-neg { color: #fb7185; } .ds-kpi-sub { font-size: 10.5px; color: #9a97c4; margin-top: 2px; }"
+    },
+    {
+      "name": "Status Pill",
+      "kind": "chip",
+      "refersTo": "pill-now",
+      "description": "Signature element. A 6px dot plus a terse machine-readable state; cyan for now (glowing dot), rose for wrong, muted for absent.",
+      "html": "<span class=\"ds-pill ds-pill-now\"><span class=\"ds-pill-dot\"></span>live · 3s</span> <span class=\"ds-pill ds-pill-wrong\"><span class=\"ds-pill-dot\"></span>basi · 214s</span> <span class=\"ds-pill ds-pill-absent\">tak ada posisi</span>",
+      "css": ".ds-pill { display: inline-flex; align-items: center; gap: 6px; font-family: Inter, system-ui, sans-serif; font-size: 11px; padding: 4px 10px; border-radius: 9999px; font-variant-numeric: tabular-nums; } .ds-pill-dot { width: 6px; height: 6px; border-radius: 9999px; background: currentColor; } .ds-pill-now { color: #22d3ee; background: rgba(34,211,238,0.10); box-shadow: inset 0 0 0 1px rgba(34,211,238,0.25); } .ds-pill-now .ds-pill-dot { box-shadow: 0 0 8px #22d3ee; } .ds-pill-wrong { color: #fb7185; background: rgba(251,113,133,0.10); box-shadow: inset 0 0 0 1px rgba(251,113,133,0.25); } .ds-pill-absent { color: #9a97c4; background: rgba(255,255,255,0.05); }"
+    },
+    {
+      "name": "Glass Button",
+      "kind": "button",
+      "refersTo": "button-glass",
+      "description": "The workhorse control: glass slab, muted text, brightens to ink on hover, presses 1px down.",
+      "html": "<button class=\"ds-btn-glass\">Ke sekarang</button>",
+      "css": ".ds-btn-glass { background: rgba(255,255,255,0.045); border: 1px solid rgba(255,255,255,0.09); border-radius: 14px; backdrop-filter: blur(8px); color: #9a97c4; font-family: Inter, system-ui, sans-serif; font-size: 12px; padding: 4px 10px; cursor: pointer; transition: color 150ms ease, background 150ms ease, transform 80ms ease-out; } .ds-btn-glass:hover { color: #e8e6ff; background: rgba(255,255,255,0.07); } .ds-btn-glass:active { transform: translateY(1px); } .ds-btn-glass:focus-visible { outline: none; box-shadow: 0 0 0 2px rgba(34,211,238,0.55); } .ds-btn-glass:disabled { opacity: 0.4; cursor: default; }"
+    },
+    {
+      "name": "Commit Button",
+      "kind": "button",
+      "refersTo": "button-commit",
+      "description": "Cyan tint-plus-ring. The button that queues a real command against the account.",
+      "html": "<button class=\"ds-btn-commit\">Konfirmasi &amp; kirim</button>",
+      "css": ".ds-btn-commit { background: rgba(34,211,238,0.20); box-shadow: inset 0 0 0 1px rgba(34,211,238,0.45); color: #e8e6ff; font-family: Inter, system-ui, sans-serif; font-size: 12px; font-weight: 600; padding: 6px 12px; border: none; border-radius: 4px; cursor: pointer; transition: background 150ms ease, transform 80ms ease-out; } .ds-btn-commit:hover { background: rgba(34,211,238,0.28); } .ds-btn-commit:active { transform: translateY(1px); } .ds-btn-commit:focus-visible { outline: none; box-shadow: inset 0 0 0 1px rgba(34,211,238,0.45), 0 0 0 2px rgba(34,211,238,0.55); } .ds-btn-commit:disabled { opacity: 0.4; cursor: default; }"
+    },
+    {
+      "name": "Segmented Timeframe Switch",
+      "kind": "custom",
+      "refersTo": "button-glass",
+      "description": "One glass slab holding several buttons; the selected member takes a 25% violet fill.",
+      "html": "<div class=\"ds-seg\"><button class=\"ds-seg-btn\">M1</button><button class=\"ds-seg-btn ds-seg-on\">M15</button><button class=\"ds-seg-btn\">H1</button><button class=\"ds-seg-btn\">D1</button></div>",
+      "css": ".ds-seg { display: inline-flex; overflow: hidden; background: rgba(255,255,255,0.045); border: 1px solid rgba(255,255,255,0.09); border-radius: 14px; backdrop-filter: blur(8px); font-family: Inter, system-ui, sans-serif; font-size: 12px; } .ds-seg-btn { background: none; border: none; color: #9a97c4; padding: 4px 10px; cursor: pointer; transition: color 150ms ease, background 150ms ease; } .ds-seg-btn:hover { color: #e8e6ff; } .ds-seg-btn:focus-visible { outline: none; box-shadow: inset 0 0 0 2px rgba(34,211,238,0.55); } .ds-seg-on { background: rgba(167,139,250,0.25); color: #e8e6ff; }"
+    },
+    {
+      "name": "Tag Chips",
+      "kind": "chip",
+      "refersTo": "chip-mine",
+      "description": "Violet chip = a fact the user asserted (removable); white-tint chip = a fact rebuild derived (inert). The colour pair is the whole distinction.",
+      "html": "<span class=\"ds-chip-mine\">revenge-trade<button class=\"ds-chip-x\" aria-label=\"hapus\">×</button></span> <span class=\"ds-chip-derived\">auto:gap-entry</span>",
+      "css": ".ds-chip-mine { display: inline-flex; align-items: center; gap: 4px; background: rgba(167,139,250,0.15); color: #a78bfa; font-family: Inter, system-ui, sans-serif; font-size: 11px; padding: 2px 8px; border-radius: 4px; } .ds-chip-x { background: none; border: none; color: #9a97c4; cursor: pointer; padding: 0; font-size: 12px; line-height: 1; transition: color 150ms ease; } .ds-chip-x:hover { color: #fb7185; } .ds-chip-derived { display: inline-flex; background: rgba(255,255,255,0.06); color: #9a97c4; font-family: Inter, system-ui, sans-serif; font-size: 11px; padding: 2px 8px; border-radius: 4px; }"
+    },
+    {
+      "name": "Text Field",
+      "kind": "input",
+      "refersTo": "input-field",
+      "description": "Borderless 5% white fill; the cyan focus ring is the only state change.",
+      "html": "<input class=\"ds-input\" placeholder=\"tag manual, mis. revenge-trade\" />",
+      "css": ".ds-input { background: rgba(255,255,255,0.05); border: none; border-radius: 4px; color: #e8e6ff; font-family: Inter, system-ui, sans-serif; font-size: 12px; padding: 4px 8px; width: 220px; transition: background 150ms ease; } .ds-input::placeholder { color: #9a97c4; } .ds-input:focus { outline: none; background: rgba(255,255,255,0.08); box-shadow: 0 0 0 2px rgba(34,211,238,0.55); }"
+    },
+    {
+      "name": "Navigation Rail Item",
+      "kind": "nav",
+      "refersTo": "nav-item",
+      "description": "186px rail. Active item is the only place white text and a violet→cyan gradient appear.",
+      "html": "<nav class=\"ds-rail\"><a class=\"ds-nav ds-nav-on\">Dashboard</a><a class=\"ds-nav\">Live</a><a class=\"ds-nav\">Chart</a><a class=\"ds-nav\">Trades</a></nav>",
+      "css": ".ds-rail { display: flex; flex-direction: column; gap: 4px; width: 186px; padding: 16px; border-right: 1px solid rgba(255,255,255,0.09); font-family: Inter, system-ui, sans-serif; } .ds-nav { font-size: 13px; color: #9a97c4; padding: 8px 12px; border-radius: 8px; cursor: pointer; transition: color 150ms ease, background 150ms ease; } .ds-nav:hover { color: #e8e6ff; } .ds-nav:focus-visible { outline: none; box-shadow: 0 0 0 2px rgba(34,211,238,0.55); } .ds-nav-on { color: #ffffff; background: linear-gradient(to right, rgba(167,139,250,0.25), rgba(34,211,238,0.05)); box-shadow: inset 0 0 0 1px rgba(167,139,250,0.35); }"
+    },
+    {
+      "name": "Chart Tool Palette",
+      "kind": "custom",
+      "refersTo": "button-glass",
+      "description": "Vertical glass column floating at the chart pane's left edge; glyph icons, violet fill on the selected tool.",
+      "html": "<div class=\"ds-palette\"><button class=\"ds-tool ds-tool-on\" aria-label=\"kursor\">⌖</button><button class=\"ds-tool\" aria-label=\"trendline\">╱</button><button class=\"ds-tool\" aria-label=\"garis horizontal\">─</button><button class=\"ds-tool\" aria-label=\"kotak\">▭</button><button class=\"ds-tool\" aria-label=\"teks\">T</button></div>",
+      "css": ".ds-palette { display: inline-flex; flex-direction: column; gap: 4px; padding: 4px; background: rgba(255,255,255,0.045); border: 1px solid rgba(255,255,255,0.09); border-radius: 14px; backdrop-filter: blur(8px); box-shadow: 0 12px 32px rgba(0,0,0,0.45); font-family: Inter, system-ui, sans-serif; font-size: 13px; } .ds-tool { width: 28px; height: 28px; line-height: 1; background: none; border: none; border-radius: 8px; color: #9a97c4; cursor: pointer; transition: color 150ms ease, background 150ms ease; } .ds-tool:hover { color: #e8e6ff; } .ds-tool:focus-visible { outline: none; box-shadow: inset 0 0 0 2px rgba(34,211,238,0.55); } .ds-tool-on { background: rgba(167,139,250,0.25); color: #e8e6ff; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Night Desk",
+    "overview": "One trader, one lit desk, one dark room. The page has no daylight in it: a violet dusk falls from the top-right corner of the viewport and everything else is a translucent panel floating on that dusk, edged by a single hairline of light. The interface is the desk lamp, not the work. What glows is data — a live price, a covered range, an R-multiple in tabular numerals — and everything that is not data sits back at 60% brightness until it is touched.\n\nThe density is deliberately high and the type is deliberately small. This is a single-window instrument beside a running MT5 terminal, not a page to be admired across a room. Labels shrink to 9.5px so the numbers can own the contrast; panels carry 14–16px of padding, not 32px; the gap between cards is 12–14px. Nothing is sized to fill space. When a surface has nothing to say, it says so in muted text rather than growing an illustration.\n\nThe system is unsentimental by construction. There is no celebratory colour, no success state that behaves differently from a failure state, no motion that rewards. Green and rose are outcomes, not moods. What the interface does express is liveness and ownership: cyan is the pulse of now, violet is the trace of the person using it. Everything else is glass.",
+    "keyCharacteristics": [
+      "Violet dusk radial ground, fixed, never scrolling with content",
+      "Translucent panels at 4.5% white with a 9% white hairline and an 8px backdrop blur",
+      "Tabular numerals on every figure; the number never moves as it updates",
+      "Type ceiling of 23px; label floor of 9.5px uppercase at 0.09em",
+      "Cyan reserved for now, violet reserved for the user's own marks",
+      "High density: 186px nav rail, 20–24px page padding, 12–14px card gutters"
+    ],
+    "rules": [
+      { "name": "The Now-and-You Rule", "body": "Cyan means now; violet means you. A cyan element that does not change with time is a bug, and a violet element that reports a market fact is a bug. Outcomes are green/rose only.", "section": "colors" },
+      { "name": "The One Glow Rule", "body": "The cyan live dot (box-shadow: 0 0 8px #22d3ee) is the only light-emitting element in the interface. Its rarity is what makes it read as a heartbeat. Do not glow a second thing.", "section": "colors" },
+      { "name": "The Honest Absence Rule", "body": "Missing data is coloured, not hidden: rose for a hole that could be filled, slate for a market closure that never had bars. Never render a continuous chart across either.", "section": "colors" },
+      { "name": "The Tabular Rule", "body": "Every figure carries font-variant-numeric: tabular-nums via .num. A number that shifts its own column while polling is unreadable.", "section": "typography" },
+      { "name": "The Solid Numeral Rule", "body": "Numerals are never gradient, never semi-transparent, never given a text shadow. Contrast belongs to data.", "section": "typography" },
+      { "name": "The n-Beside-It Rule", "body": "A statistic is set with its sample size adjacent in muted 11px (n=42, 12W · 7L · 3BE). The pairing is typographic, not optional: never style an n so small or so faint that the figure reads as unqualified.", "section": "typography" },
+      { "name": "The One Window Rule", "body": "Every route must be complete and readable at 1440×900 with no horizontal scroll. If a panel only works on a wide monitor, it is the panel that is wrong.", "section": "layout" },
+      { "name": "The Rail-Optional Rule", "body": "The 186px rail is chrome, not content. Nothing may be reachable only through it; below 768px it is gone and every route must still stand on its own heading.", "section": "layout" },
+      { "name": "The Flat-At-Rest Rule", "body": "A surface that sits in the page flow has no shadow. Only a layer that floats over the page or over the chart canvas may cast one.", "section": "elevation" },
+      { "name": "The Hairline Rule", "body": "Separation is a 1px panel-border line, never a heavier stroke and never a solid divider colour. If two panels need more separation than a hairline, they need more space instead.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do reserve cyan for values that change with time and violet for the user's own marks (The Now-and-You Rule).",
+      "Do set every figure in tabular numerals via .num, at full opacity, in a solid colour.",
+      "Do place the sample size beside every statistic in muted 11px, and colour a suppressed low-n bucket muted rather than hiding it.",
+      "Do build depth from translucency, one hairline, and blur — and reserve real shadow for layers that float over the page or the chart.",
+      "Do tint-plus-ring for any active state (fill 15–25%, ring 25–45% of the same hue), so accents stay consistent across buttons, chips, pills, and nav.",
+      "Do state absence in colour and words: rose for a fillable hole, slate for a market closure, muted for \"nothing is running\".",
+      "Do keep every route complete at 1440×900 in one window, and legible in one column below 768px.",
+      "Do give new controls a :focus-visible cyan ring and an :active press state; controls should feel operated, not merely recoloured."
+    ],
+    "donts": [
+      "Don't add a second glowing element. One heartbeat, one glow.",
+      "Don't use green or rose for anything but outcome — no green \"saved\", no rose \"required field\" that is not actually wrong.",
+      "Don't introduce a display typeface, an icon library, or a decorative gradient. The dusk ground is the only atmospheric gradient; the nav-active gradient is the only functional one.",
+      "Don't dress the interface as broker terminal chrome: no bevels, no gradient tab strips, no dense grey toolbars, no icon soup.",
+      "Don't drift toward a generic SaaS dashboard: no rounded-2xl white cards, no blue-600 primary buttons, no cheerful empty-state illustrations.",
+      "Don't drift toward AI-startup dark mode either: no animated aurora, no glowing gradient borders, no glassmorphism used as spectacle. The glass here is 4.5% white and one hairline — that is the whole trick, and it stays quiet.",
+      "Don't grow padding or type to fill a wide screen. Density is the point.",
+      "Don't hard-code a colour that a future light palette would have to hunt for; reach for a token."
+    ]
+  }
+}
