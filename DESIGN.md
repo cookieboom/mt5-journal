@@ -336,6 +336,40 @@ a layer that floats *over* the page or over the chart canvas may cast one.
 heavier stroke and never a solid divider colour. If two panels need more separation
 than a hairline, they need more space instead.
 
+## Motion
+
+The interface is almost entirely still. There is no entrance animation, no scroll
+reveal, no hover lift, and no motion that marks a win differently from a loss —
+the same unsentimentality that governs colour governs movement. Motion is a
+sentence with one meaning: **something is happening right now.**
+
+Three things move, and nothing else may:
+
+- **Spinners** (`animate-spin`) while a bridge or backfill call is in flight. Every
+  one sits beside a label that already names the work; the wheel is the second
+  channel, never the only one.
+- **Skeletons** (`animate-pulse`) before the numbers exist, so an empty panel is
+  never mistaken for a loaded one with nothing in it.
+- **The sheet** (`animate-sheet-in`, 240ms, `cubic-bezier(0.16, 1, 0.3, 1)`) sliding
+  in from the right edge. It is the only element in the system that is somewhere
+  else before it exists, so it is the only one that gets to travel. Entrance only.
+
+State changes are colour, not movement: `transition-colors` on hover and selection,
+and a 1px `translateY` press on buttons with no transition at all. Nothing in the
+system animates a layout property.
+
+### Named Rules
+
+**The Only-Now Rule.** If an element moves, something must be in flight *at that
+moment*. A rose bar that pulses because the number is bad is decoration — rose
+already means "look", and the pulse adds nothing a second glance would not.
+
+**The Reduced-Motion Rule.** `prefers-reduced-motion: reduce` stops every loop
+globally in `index.css`, but the *meaning* survives without the movement: a stopped
+spinner drops to 50% so it does not read as hung, and a stopped skeleton drops to
+55% so it still reads as provisional. Killing an animation is not enough — whatever
+that animation was saying has to be said another way.
+
 ## Shapes
 
 Four radii, each with a job: **4px** for inline controls, chips, and text inputs;

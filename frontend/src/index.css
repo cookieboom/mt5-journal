@@ -30,6 +30,34 @@ body {
   transform: translateY(1px);
 }
 
+/* Motion here only ever means "something is happening right now": a spinner
+   while a bridge call is in flight, a skeleton before the numbers exist, the
+   sheet arriving from the edge it will leave by. Nothing celebrates, nothing
+   reveals on scroll (DESIGN.md § Overview: "no motion that rewards").
+
+   When the OS asks for less motion, that meaning still has to survive without
+   movement — so the loops stop, but the elements stay visibly provisional
+   instead of freezing into something that looks finished. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  /* A stopped wheel reads as hung. Every spinner in this app sits beside a
+     button label that already names the work ("Queuing…"), so drop the icon to
+     half weight and let the label carry it. */
+  .animate-spin { opacity: 0.5; }
+
+  /* A skeleton that stops breathing must not read as a loaded-but-empty panel.
+     Hold it below panel brightness so it still looks like a placeholder. */
+  .animate-pulse { opacity: 0.55; }
+}
+
 /* data numerals: solid, high-contrast, tabular (never gradient) */
 .num { font-variant-numeric: tabular-nums; }
 

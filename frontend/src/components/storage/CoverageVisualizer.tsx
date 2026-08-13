@@ -116,7 +116,7 @@ export default function CoverageVisualizer({ completeness, loading }: CoverageVi
                   ? "bg-pos"
                   : coverage_percent >= 85
                   ? "bg-warn"
-                  : "bg-neg animate-pulse"
+                  : "bg-neg"
               }`}
             />
             <span>{coverage_percent.toFixed(2)}% Covered</span>
