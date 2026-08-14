@@ -4,6 +4,7 @@
 import type { Candle, CandlesResponse, LivePosition } from "./types";
 import { palette } from "./theme";
 import { wib } from "./format";
+import { positionTitle } from "./sltpDrag";
 
 export type Timeframe = "M1" | "M5" | "M15" | "H1" | "H4" | "D1";
 export const TIMEFRAMES: Timeframe[] = ["M1", "M5", "M15", "H1", "H4", "D1"];
@@ -119,12 +120,13 @@ export function liveLines(
   pos: LivePosition,
 ): { kind: LiveLineKind; price: number; color: string; title: string }[] {
   const out: { kind: LiveLineKind; price: number; color: string; title: string }[] = [];
-  const add = (kind: LiveLineKind, v: number | null, color: string, title: string) => {
-    if (v !== null && v !== undefined && Math.abs(v) > 1e-9) out.push({ kind, price: v, color, title });
+  const add = (kind: LiveLineKind, v: number | null, color: string) => {
+    if (v !== null && v !== undefined && Math.abs(v) > 1e-9)
+      out.push({ kind, price: v, color, title: positionTitle(kind, v, pos.open_price) });
   };
-  add("entry", pos.open_price, LINE_COLORS.entry, `entry #${pos.position_id}`);
-  add("sl", pos.sl, LINE_COLORS.sl, `SL #${pos.position_id}`);
-  add("tp", pos.tp, LINE_COLORS.tp, `TP #${pos.position_id}`);
+  add("entry", pos.open_price, LINE_COLORS.entry);
+  add("sl", pos.sl, LINE_COLORS.sl);
+  add("tp", pos.tp, LINE_COLORS.tp);
   return out;
 }
 

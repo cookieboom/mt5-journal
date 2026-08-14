@@ -34,26 +34,44 @@ export function resolveDragTarget(pos: DraggablePosition, price: number): "sl" |
   return above ? "sl" : "tp";
 }
 
+// Every distance printed on a price line uses this — planned, committed and
+// ghost alike, so a number never changes shape as a drag commits or a plan
+// turns into a position.
+// ponytail: fixed 2 decimals as asked; a 5-digit-quote symbol (EURUSDc) reads
+// 0.00 here — switch to the symbol's digits if that becomes a real workflow.
+const distance = (a: number, b: number): string => Math.abs(a - b).toFixed(2);
+
+// Title of a position's own entry/SL/TP line. No position id: the chart
+// already says which position it is, and the number worth reading is how far
+// the stop sits from entry. Unsigned — the side is obvious from where the line
+// sits. Bare label when entry is unknown (rule 4: never imply a distance
+// from a price we don't have).
+export function positionTitle(
+  kind: LineKind, price: number, entryPrice: number | null,
+): string {
+  if (kind === "entry") return "entry";
+  const label = kind === "sl" ? "SL" : "TP";
+  if (entryPrice === null || Math.abs(entryPrice) < 1e-9) return label;
+  return `${label} ${distance(price, entryPrice)}`;
+}
+
 // Title of a committed planned SL/TP line. Carries the distance to the price
 // the chart is showing now, so the human reads the exact gap off the line the
-// moment a drag ends instead of subtracting two axis labels by eye. Unsigned —
-// the side is already obvious from where the line sits. 5 decimals, matching
-// ghostTitle below, so the number does not change shape when the drag commits.
+// moment a drag ends instead of subtracting two axis labels by eye.
 export function plannedTitle(
   kind: "sl" | "tp", price: number, currentPrice: number | null,
 ): string {
   const label = kind === "sl" ? "SL rencana" : "TP rencana";
   if (currentPrice === null) return label;
-  return `${label} ${Math.abs(price - currentPrice).toFixed(5)}`;
+  return `${label} ${distance(price, currentPrice)}`;
 }
 
-// Ghost-line title while dragging: signed distance from entry, 5 decimals
-// (matches lib/format.ts::price()'s full-precision philosophy — never round
-// away a price digit). Falls back to the bare price if entry is unknown.
+// Ghost-line title while dragging: signed distance from entry. Falls back to
+// the bare price if entry is unknown — that one is a price, not a distance, so
+// it keeps full precision (lib/format.ts::price()'s philosophy).
 export function ghostTitle(kind: "sl" | "tp", entryPrice: number | null, price: number): string {
   const label = kind.toUpperCase();
   if (entryPrice === null) return `${label} → ${price.toFixed(5)}`;
-  const distance = price - entryPrice;
-  const sign = distance >= 0 ? "+" : "";
-  return `${label} → ${sign}${distance.toFixed(5)}`;
+  const sign = price - entryPrice >= 0 ? "+" : "-";
+  return `${label} → ${sign}${distance(price, entryPrice)}`;
 }

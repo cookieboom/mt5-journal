@@ -23,7 +23,7 @@ import {
 import CoverageShadeOverlay from "./CoverageShadeOverlay";
 import { classifyGaps } from "../lib/coverage";
 import {
-  resolveDragTarget, ghostTitle, plannedTitle, HIT_THRESHOLD_PX, PLANNED_ID, type DraggablePosition, type LineKind,
+  resolveDragTarget, ghostTitle, plannedTitle, positionTitle, HIT_THRESHOLD_PX, PLANNED_ID, type DraggablePosition, type LineKind,
 } from "../lib/sltpDrag";
 import DrawingOverlay from "./DrawingOverlay";
 import DrawingPalette from "./DrawingPalette";
@@ -649,9 +649,12 @@ const CandleChart = forwardRef<ChartHandle, {
     const drawPositions = () => {
       if (props.draggablePositions !== undefined) {
         for (const pos of props.draggablePositions) {
-          addLine(pos.id, "entry", pos.entry_price, LINE_COLORS.entry, `entry #${pos.id}`, pos.direction, pos.entry_price);
-          addLine(pos.id, "sl", pos.sl, LINE_COLORS.sl, `SL #${pos.id}`, pos.direction, pos.entry_price);
-          addLine(pos.id, "tp", pos.tp, LINE_COLORS.tp, `TP #${pos.id}`, pos.direction, pos.entry_price);
+          addLine(pos.id, "entry", pos.entry_price, LINE_COLORS.entry,
+                  positionTitle("entry", pos.entry_price ?? 0, pos.entry_price), pos.direction, pos.entry_price);
+          addLine(pos.id, "sl", pos.sl, LINE_COLORS.sl,
+                  positionTitle("sl", pos.sl, pos.entry_price), pos.direction, pos.entry_price);
+          addLine(pos.id, "tp", pos.tp, LINE_COLORS.tp,
+                  positionTitle("tp", pos.tp, pos.entry_price), pos.direction, pos.entry_price);
         }
         return;
       }

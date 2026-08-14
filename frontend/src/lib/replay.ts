@@ -3,6 +3,7 @@
 // authoritative (domain/replay_eval). Rule 4: 0 = none set, null = unknown.
 import { LINE_COLORS, type Sym, type Timeframe } from "./candles";
 import type { Candle, PriceLineSpec } from "./types";
+import { positionTitle, type LineKind } from "./sltpDrag";
 
 export interface TrainingSession {
   id: number;
@@ -119,14 +120,15 @@ export function clipToCursor(candles: Candle[], cursorMsc: number): Candle[] {
 // lib/candles.ts::liveLines: skips 0 (none set) and null (unknown).
 export function replayLines(positions: TrainingPosition[]): PriceLineSpec[] {
   const out: PriceLineSpec[] = [];
-  const add = (v: number | null, color: string, title: string) => {
-    if (v !== null && v !== undefined && Math.abs(v) > 1e-9) out.push({ price: v, color, title });
-  };
   for (const p of positions) {
     if (p.status === "closed") continue;
-    add(p.entry_price, LINE_COLORS.entry, `entry #${p.id}`);
-    add(p.sl, LINE_COLORS.sl, `SL #${p.id}`);
-    add(p.tp, LINE_COLORS.tp, `TP #${p.id}`);
+    const add = (kind: LineKind, v: number | null, color: string) => {
+      if (v !== null && v !== undefined && Math.abs(v) > 1e-9)
+        out.push({ price: v, color, title: positionTitle(kind, v, p.entry_price) });
+    };
+    add("entry", p.entry_price, LINE_COLORS.entry);
+    add("sl", p.sl, LINE_COLORS.sl);
+    add("tp", p.tp, LINE_COLORS.tp);
   }
   return out;
 }

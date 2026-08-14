@@ -563,15 +563,15 @@ describe("planned-order lines", () => {
   it("titles the planned SL and TP with their distance to the current price", () => {
     const plannedOrder: PlannedOrder = { entry: 4035, sl: 4030, tp: 4045, direction: "buy" };
     const { priceLines } = renderChart({ plannedOrder });
-    expect(priceLines.find((l) => l.price === 4030)!.title).toBe("SL rencana 5.00000");
-    expect(priceLines.find((l) => l.price === 4045)!.title).toBe("TP rencana 10.00000");
+    expect(priceLines.find((l) => l.price === 4030)!.title).toBe("SL rencana 5.00");
+    expect(priceLines.find((l) => l.price === 4045)!.title).toBe("TP rencana 10.00");
   });
 
   it("drops the planned SL/TP once a LIVE position is open on this symbol", () => {
     const plannedOrder: PlannedOrder = { entry: 105, sl: 100, tp: 110, direction: "buy" };
     const { priceLines } = renderChart({ plannedOrder, live: liveDataFor(liveBuyPos) });
     expect(priceLines.map((l) => l.title))
-      .toEqual(["entry #9", "SL #9", "TP #9", "harga"]);
+      .toEqual(["entry", "SL 5.00", "TP 5.00", "harga"]);
   });
 
   // Live position lines are scoped to the chart's symbol, so a position on
@@ -581,14 +581,14 @@ describe("planned-order lines", () => {
     const elsewhere = { ...liveBuyPos, symbol: "BTCUSDc", symbol_base: "BTCUSD" };
     const { priceLines } = renderChart({ plannedOrder, live: liveDataFor(elsewhere) });
     expect(priceLines.map((l) => l.title))
-      .toEqual(["harga", "SL rencana 5.00000", "TP rencana 5.00000"]);
+      .toEqual(["harga", "SL rencana 5.00", "TP rencana 5.00"]);
   });
 
   it("keeps the planned SL/TP while the replay position list is still empty", () => {
     const plannedOrder: PlannedOrder = { entry: 105, sl: 100, tp: 110, direction: "buy" };
     const { priceLines } = renderChart({ plannedOrder, draggablePositions: [] });
     expect(priceLines.map((l) => l.title))
-      .toEqual(["harga", "SL rencana 5.00000", "TP rencana 5.00000"]);
+      .toEqual(["harga", "SL rencana 5.00", "TP rencana 5.00"]);
   });
 
   it("drops the planned SL/TP once a REPLAY position is open", () => {
@@ -598,7 +598,7 @@ describe("planned-order lines", () => {
     ];
     const { priceLines } = renderChart({ plannedOrder, draggablePositions });
     expect(priceLines.map((l) => l.title))
-      .toEqual(["entry #7", "SL #7", "TP #7", "harga"]);
+      .toEqual(["entry", "SL 5.00", "TP 5.00", "harga"]);
   });
 });
 
