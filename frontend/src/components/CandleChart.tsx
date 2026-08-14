@@ -139,6 +139,11 @@ const CandleChart = forwardRef<ChartHandle, {
   }[]>([]);
   const ghostLine = useRef<IPriceLine | null>(null);
   const [, bumpProjection] = useReducer((c: number) => c + 1, 0);
+  // Pane size changes are invisible to React (autoSize:true), but a fit applied
+  // to a pane that has not been laid out yet does not survive the resize that
+  // follows. Counted separately from bumpProjection so the auto-fit re-runs on
+  // a resize only, never on the visible-range changes a pan emits.
+  const [sizeTick, bumpSize] = useReducer((c: number) => c + 1, 0);
 
   // Bar-close countdown (live only). It rides the planned-order entry line —
   // which sits exactly at the last close by construction (Chart.tsx derives it
@@ -298,7 +303,7 @@ const CandleChart = forwardRef<ChartHandle, {
   useEffect(() => {
     const node = el.current;
     if (!node || typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(() => bumpProjection());
+    const ro = new ResizeObserver(() => { bumpSize(); bumpProjection(); });
     ro.observe(node);
     bumpProjection();   // el.current is now set: re-render so gesture listeners attach
     return () => ro.disconnect();
@@ -536,37 +541,58 @@ const CandleChart = forwardRef<ChartHandle, {
     }
   }, [props.markers, props.settings.chartType]);
 
-  const lastFittedTrade = useRef<{ startMs: number; endMs: number; fullyFitted: boolean } | null>(null);
+  const lastFittedTrade = useRef<{ startMs: number; endMs: number } | null>(null);
+  // Set by the first pan/zoom gesture on the pane. Until then the auto-fit owns
+  // the viewport; after it, the user does and the fit never moves it again.
+  const userMovedView = useRef(false);
 
-  // Smart fit auto-focus
+  useEffect(() => {
+    const node = el.current;
+    if (!node) return;
+    const grab = () => { userMovedView.current = true; };
+    node.addEventListener("pointerdown", grab);
+    node.addEventListener("wheel", grab, { passive: true });
+    return () => {
+      node.removeEventListener("pointerdown", grab);
+      node.removeEventListener("wheel", grab);
+    };
+  }, []);
+
+  // Smart fit auto-focus. Re-asserted on EVERY data change, not once: the
+  // viewer anchors its first fetch at the entry and forward-loads past the exit
+  // afterwards, and lightweight-charts keeps the pane pinned to the right edge
+  // of the data — so those late bars scroll the trade off screen. Fitting once
+  // and latching left the reader panning back to find their own trade.
+  // A pan/zoom (userMovedView) hands the viewport over for good, so a pan's own
+  // loadOlder can't yank it back; a different trade takes it back.
   useEffect(() => {
     if (!chart.current || !series.current || !props.fitToRange || props.candles.length === 0) return;
     const { startMs, endMs } = props.fitToRange;
 
     const prev = lastFittedTrade.current;
-    if (prev && prev.startMs === startMs && prev.endMs === endMs && prev.fullyFitted) {
-      return;
-    }
+    const sameTrade = prev !== null && prev.startMs === startMs && prev.endMs === endMs;
+    if (!sameTrade) userMovedView.current = false;
+    else if (userMovedView.current) return;
 
     // Find the logical index (array index) of the start and end bars
     let startIndex = props.candles.findIndex(c => c.time_msc >= startMs);
     if (startIndex === -1) startIndex = props.candles.length - 1;
 
     let endIndex = props.candles.findIndex(c => c.time_msc >= endMs);
-    const fullyFitted = endIndex !== -1;
     if (endIndex === -1) endIndex = props.candles.length - 1;
 
-    // Pad context: 10 bars before entry, 5 bars after exit
+    // Defensive guard for malformed range data (e.g. startMs > endMs)
+    if (startIndex > endIndex) return;
+
+    // Pad context symmetrically so the trade sits in the middle of the pane,
+    // not hard against the right edge.
     const paddedStart = Math.max(0, startIndex - 10);
-    let paddedEnd = Math.min(props.candles.length - 1, endIndex + 5);
+    let paddedEnd = Math.min(props.candles.length - 1, endIndex + 10);
 
     // Enforce 100 bars max zoom-out limit to prevent unreadable thin candles
     if (paddedEnd - paddedStart > 100) {
       paddedEnd = paddedStart + 100;
     }
-
-    // Defensive guard for malformed range data (e.g. startMs > endMs)
-    if (paddedStart > paddedEnd) return;
 
     // Apply logical range
     chart.current.timeScale().setVisibleLogicalRange({
@@ -574,8 +600,13 @@ const CandleChart = forwardRef<ChartHandle, {
       to: paddedEnd,
     });
 
-    lastFittedTrade.current = { startMs, endMs, fullyFitted };
-  }, [props.fitToRange, props.candles.length, props.settings.chartType]);
+    lastFittedTrade.current = { startMs, endMs };
+    // Keyed on the candle ARRAY, not its length: every setData snaps the pane
+    // back to the right edge of the data, and the fill-poll cycle re-merges the
+    // same bars into a fresh array several times after the window is complete.
+    // Keyed on length, those identical-length re-merges scrolled the trade away
+    // with no re-fit behind them.
+  }, [props.fitToRange, props.candles, props.settings.chartType, sizeTick]);
 
   // SL/TP/entry overlay lines. Three mutually-exclusive sources, in priority
   // order: (1) draggablePositions (replay, or any caller building its own

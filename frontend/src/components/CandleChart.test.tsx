@@ -10,6 +10,11 @@ import type { LiveData, LivePosition } from "../lib/types";
 
 let capturedMarkers: SeriesMarker<Time>[] | null = null;
 let capturedLogicalRange: { from: number; to: number } | null = null;
+// Every setVisibleLogicalRange call, in order. The auto-fit has to re-assert
+// itself when late bars arrive (the range is by logical index, and appending
+// bars scrolls the pane to the new right edge), so "did it fit again?" is a
+// question about the number of calls, not about the last value.
+let capturedLogicalRanges: { from: number; to: number }[] = [];
 let capturedPriceLines: { price: number; color: string; title: string; axisLabelVisible?: boolean }[] = [];
 let capturedSeriesOptions: Record<string, unknown> = {};
 // The series instance itself, so a test can monkeypatch priceToCoordinate
@@ -57,6 +62,7 @@ vi.mock("lightweight-charts", async () => {
       const origSetVisibleLogicalRange = ts.setVisibleLogicalRange;
       ts.setVisibleLogicalRange = (range: any) => {
         capturedLogicalRange = range;
+        capturedLogicalRanges.push(range);
         return origSetVisibleLogicalRange ? origSetVisibleLogicalRange.apply(ts, [range]) : null;
       };
       // jsdom gives the chart pane zero layout width, so the real
@@ -93,6 +99,7 @@ const DEFAULT_SETTINGS: ChartSettings = {
 beforeEach(() => {
   capturedMarkers = null;
   capturedLogicalRange = null;
+  capturedLogicalRanges = [];
   capturedPriceLines = [];
   capturedSeriesOptions = {};
   capturedSeries = null;
@@ -169,8 +176,8 @@ it("applies fitToRange to visible logical range when fitToRange prop is provided
   // index for startMs (1_300_000) is 5
   // index for endMs (1_600_000) is 10
   // paddedStart = max(0, 5 - 10) = 0
-  // paddedEnd = min(19, 10 + 5) = 15
-  expect(capturedLogicalRange).toEqual({ from: 0, to: 15 });
+  // paddedEnd = min(19, 10 + 10) = 19
+  expect(capturedLogicalRange).toEqual({ from: 0, to: 19 });
 });
 
 it("enforces max 100 bars limit when fitToRange spans > 100 bars", () => {
@@ -225,6 +232,74 @@ it("handles startMs/endMs beyond candle range gracefully", () => {
   );
 
   expect(capturedLogicalRange).toEqual({ from: 9, to: 19 });
+});
+
+// The trade viewer anchors its first fetch at the entry and only later forward-
+// loads past the exit, so bars keep arriving after the trade is already fully
+// in range. lightweight-charts keeps the pane pinned to the right edge of the
+// data, so those late bars scroll the trade off screen — reported as "I open a
+// trade and have to pan the chart back to find it". The fit must re-assert
+// itself on every data change, not once.
+it("re-fits after late bars arrive, so the trade cannot scroll off screen", () => {
+  const fitToRange = { startMs: 1_300_000, endMs: 1_600_000 };
+  const props = {
+    symbol: "XAUUSDc", tf: "M1", settings: DEFAULT_SETTINGS,
+    onHover: () => {}, onNowVisibleChange: () => {}, onRequestOlder: () => {},
+    live: null, nowVisible: true, fitToRange,
+  } as unknown as ComponentProps<typeof CandleChart>;
+
+  const { rerender } = render(
+    <CandleChart {...props} candles={mockCandles} lastBarMs={2_140_000} />,
+  );
+  expect(capturedLogicalRanges).toHaveLength(1);
+
+  // The fill-poll cycle re-merges the same bars into a fresh array: same
+  // length, new identity, and a setData that snaps the pane to the right edge.
+  rerender(<CandleChart {...props} candles={[...mockCandles]} lastBarMs={2_140_000} />);
+  expect(capturedLogicalRanges).toHaveLength(2);
+
+  // 10 more bars appended behind the exit (the forward load landing).
+  const later: Candle[] = [
+    ...mockCandles,
+    ...Array.from({ length: 10 }, (_, i) => ({
+      time_msc: 2_140_000 + (i + 1) * 60_000, o: 100, h: 105, l: 95, c: 102, v: 10,
+    })),
+  ];
+  rerender(<CandleChart {...props} candles={later} lastBarMs={2_740_000} />);
+
+  expect(capturedLogicalRanges.length).toBeGreaterThan(1);
+  // Same trade — the point is that the range was applied again instead of the
+  // pane being left wherever the appended bars pushed it.
+  expect(capturedLogicalRange).toEqual({ from: 0, to: 20 });
+});
+
+// ...but only until the user pans or zooms. Re-asserting the fit after that
+// would yank the pane back every time a pan's own loadOlder lands.
+it("stops re-fitting once the user pans the chart", () => {
+  const fitToRange = { startMs: 1_300_000, endMs: 1_600_000 };
+  const props = {
+    symbol: "XAUUSDc", tf: "M1", settings: DEFAULT_SETTINGS,
+    onHover: () => {}, onNowVisibleChange: () => {}, onRequestOlder: () => {},
+    live: null, nowVisible: true, fitToRange,
+  } as unknown as ComponentProps<typeof CandleChart>;
+
+  const { container, rerender } = render(
+    <CandleChart {...props} candles={mockCandles} lastBarMs={2_140_000} />,
+  );
+  const before = capturedLogicalRanges.length;
+
+  // the chart pane itself (the div the chart is created into)
+  fireEvent.pointerDown(container.firstElementChild!.firstElementChild!, { clientX: 10, clientY: 10 });
+
+  const later: Candle[] = [
+    ...Array.from({ length: 10 }, (_, i) => ({
+      time_msc: 1_000_000 - (10 - i) * 60_000, o: 100, h: 105, l: 95, c: 102, v: 10,
+    })),
+    ...mockCandles,
+  ];
+  rerender(<CandleChart {...props} candles={later} lastBarMs={2_140_000} />);
+
+  expect(capturedLogicalRanges).toHaveLength(before);
 });
 
 it("handles malformed fitToRange (startMs > endMs) safely without setting logical range", () => {
