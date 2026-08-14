@@ -194,10 +194,7 @@ const CandleChart = forwardRef<ChartHandle, {
       const py = s.priceToCoordinate(meta.line.options().price);
       if (py === null) continue;
       const dist = Math.abs((py as number) - y);
-      // `<=` on the tie: lines are recorded in draw order and the planned order
-      // draws last, so a plan sitting exactly on an open position's stop stays
-      // the one the drag grabs — the level the human is still editing.
-      if (dist <= HIT_THRESHOLD_PX && dist <= bestDist) {
+      if (dist <= HIT_THRESHOLD_PX && dist < bestDist) {
         bestDist = dist;
         best = {
           positionId: meta.positionId, kind: meta.kind, price: meta.line.options().price,
@@ -682,13 +679,17 @@ const CandleChart = forwardRef<ChartHandle, {
       }
     };
     drawPositions();
+    // Whether the chart is now showing a position at all — any of the three
+    // sources above, live or replay. Read off the lines themselves rather than
+    // re-testing each source's conditions, so a fourth source can never drift
+    // out of step with this.
+    const hasPositionLines = priceLines.current.length > 0;
 
     // The planned order draws LAST, on top of whatever else the chart is
     // showing: it is not a position yet, so it belongs to none of the sources
-    // above. Order matters the moment the plan is filled at the levels it named
-    // — the position's own lines then sit at the same prices, and
-    // lightweight-charts paints axis labels in creation order, so drawing the
-    // plan first buried it under "SL #<ticket>" and the plan read as gone.
+    // above. Order matters because a plan and a position can share a price, and
+    // lightweight-charts paints axis labels in creation order — drawn first, the
+    // plan's label would be buried under the position's.
     // `direction` is null until the human's stop picks a side; an entry-line
     // drag then resolves to "sl" by default, which is exactly the gesture that
     // decides it.
@@ -703,10 +704,16 @@ const CandleChart = forwardRef<ChartHandle, {
       // otherwise) with it. So keep this line's label and drop the series' own:
       // same one badge on the scale, and the title paints.
       addLine(PLANNED_ID, "entry", p.entry, LINE_COLORS.entry, entryTitle, dir, p.entry);
-      // p.entry IS the price the chart is showing now (Chart.tsx derives it from
-      // the last shown close), so it doubles as the reference for the distance.
-      if (p.sl !== null) addLine(PLANNED_ID, "sl", p.sl, LINE_COLORS.sl, plannedTitle("sl", p.sl, p.entry), dir, p.entry);
-      if (p.tp !== null) addLine(PLANNED_ID, "tp", p.tp, LINE_COLORS.tp, plannedTitle("tp", p.tp, p.entry), dir, p.entry);
+      // The planned stops stop drawing the moment a position is on the chart:
+      // the plan has been acted on, and the levels that now govern real money
+      // are the position's own. The entry line above is exempt — it is not a
+      // plan but where price is right now, and it carries the countdown.
+      // p.entry IS that price (Chart.tsx derives it from the last shown close),
+      // so it doubles as the reference for the distance in the titles.
+      if (!hasPositionLines) {
+        if (p.sl !== null) addLine(PLANNED_ID, "sl", p.sl, LINE_COLORS.sl, plannedTitle("sl", p.sl, p.entry), dir, p.entry);
+        if (p.tp !== null) addLine(PLANNED_ID, "tp", p.tp, LINE_COLORS.tp, plannedTitle("tp", p.tp, p.entry), dir, p.entry);
+      }
     }
   }, [props.live, props.nowVisible, props.symbol, props.settings.liveOverlay,
       props.settings.chartType, props.overlayLines, props.draggablePositions, props.plannedOrder]);
