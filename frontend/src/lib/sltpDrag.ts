@@ -34,6 +34,19 @@ export function resolveDragTarget(pos: DraggablePosition, price: number): "sl" |
   return above ? "sl" : "tp";
 }
 
+// Title of a committed planned SL/TP line. Carries the distance to the price
+// the chart is showing now, so the human reads the exact gap off the line the
+// moment a drag ends instead of subtracting two axis labels by eye. Unsigned —
+// the side is already obvious from where the line sits. 5 decimals, matching
+// ghostTitle below, so the number does not change shape when the drag commits.
+export function plannedTitle(
+  kind: "sl" | "tp", price: number, currentPrice: number | null,
+): string {
+  const label = kind === "sl" ? "SL rencana" : "TP rencana";
+  if (currentPrice === null) return label;
+  return `${label} ${Math.abs(price - currentPrice).toFixed(5)}`;
+}
+
 // Ghost-line title while dragging: signed distance from entry, 5 decimals
 // (matches lib/format.ts::price()'s full-precision philosophy — never round
 // away a price digit). Falls back to the bare price if entry is unknown.

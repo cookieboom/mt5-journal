@@ -552,6 +552,51 @@ describe("planned-order lines", () => {
     expect(priceLines.map((l) => l.price).sort((a, b) => a - b))
       .toEqual([3990, 4000, 4030, 4035]);
   });
+
+  // The planned SL/TP say the distance to the price the chart is showing now,
+  // so the gap is readable straight off the line the moment a drag commits.
+  it("titles the planned SL and TP with their distance to the current price", () => {
+    const plannedOrder: PlannedOrder = { entry: 4035, sl: 4030, tp: 4045, direction: "buy" };
+    const { priceLines } = renderChart({ plannedOrder });
+    expect(priceLines.find((l) => l.price === 4030)!.title).toBe("SL rencana 5.00000");
+    expect(priceLines.find((l) => l.price === 4045)!.title).toBe("TP rencana 10.00000");
+  });
+
+  // An open position at the very levels the plan named puts its own lines at the
+  // same prices. lightweight-charts paints axis labels in creation order, so the
+  // planned lines must be created LAST or the position's labels bury them and the
+  // plan reads as gone the instant it is filled.
+  it("keeps the planned lines on top of an open LIVE position's own lines", () => {
+    const plannedOrder: PlannedOrder = { entry: 105, sl: 100, tp: 110, direction: "buy" };
+    const { priceLines } = renderChart({ plannedOrder, live: liveDataFor(liveBuyPos) });
+    expect(priceLines).toHaveLength(6);
+    expect(priceLines.slice(-3).map((l) => l.title))
+      .toEqual(["harga", "SL rencana 5.00000", "TP rencana 5.00000"]);
+  });
+
+  it("keeps the planned lines on top of an open REPLAY position's own lines", () => {
+    const plannedOrder: PlannedOrder = { entry: 105, sl: 100, tp: 110, direction: "buy" };
+    const draggablePositions: DraggablePosition[] = [
+      { id: 7, direction: "buy", entry_price: 105, sl: 100, tp: 110 },
+    ];
+    const { priceLines } = renderChart({ plannedOrder, draggablePositions });
+    expect(priceLines).toHaveLength(6);
+    expect(priceLines.slice(-3).map((l) => l.title))
+      .toEqual(["harga", "SL rencana 5.00000", "TP rencana 5.00000"]);
+  });
+
+  // Drawn last must not mean grabbed last: with a position line at the same
+  // price, the drag still belongs to the plan the human is still editing.
+  it("gives a coincident-price drag to the planned line, not the position's", () => {
+    const onSlTpChange = vi.fn();
+    const plannedOrder: PlannedOrder = { entry: 105, sl: 100, tp: null, direction: "buy" };
+    const draggablePositions: DraggablePosition[] = [
+      { id: 7, direction: "buy", entry_price: 105, sl: 100, tp: 0 },
+    ];
+    const { dragLineTo } = renderChart({ plannedOrder, draggablePositions, onSlTpChange });
+    dragLineTo(100, 102);
+    expect(onSlTpChange).toHaveBeenCalledWith(PLANNED_ID, { sl: 102 });
+  });
 });
 
 describe("drawing gesture", () => {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { resolveDragTarget, ghostTitle, HIT_THRESHOLD_PX, type DraggablePosition } from "./sltpDrag";
+import { resolveDragTarget, ghostTitle, plannedTitle, HIT_THRESHOLD_PX, type DraggablePosition } from "./sltpDrag";
 
 const buyPos: DraggablePosition = { id: 1, direction: "buy", entry_price: 100, sl: 0, tp: 0 };
 const sellPos: DraggablePosition = { id: 2, direction: "sell", entry_price: 100, sl: 0, tp: 0 };
@@ -32,6 +32,18 @@ describe("ghostTitle", () => {
   });
   it("falls back to bare price when entry is unknown", () => {
     expect(ghostTitle("sl", null, 95)).toBe("SL → 95.00000");
+  });
+});
+
+describe("plannedTitle", () => {
+  it("carries the unsigned distance to the current price for sl", () => {
+    expect(plannedTitle("sl", 4030, 4035)).toBe("SL rencana 5.00000");
+  });
+  it("carries the unsigned distance to the current price for tp", () => {
+    expect(plannedTitle("tp", 4045.5, 4035)).toBe("TP rencana 10.50000");
+  });
+  it("says the label alone when the current price is unknown", () => {
+    expect(plannedTitle("sl", 4030, null)).toBe("SL rencana");
   });
 });
 

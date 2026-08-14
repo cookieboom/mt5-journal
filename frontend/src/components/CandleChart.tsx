@@ -23,7 +23,7 @@ import {
 import CoverageShadeOverlay from "./CoverageShadeOverlay";
 import { classifyGaps } from "../lib/coverage";
 import {
-  resolveDragTarget, ghostTitle, HIT_THRESHOLD_PX, PLANNED_ID, type DraggablePosition, type LineKind,
+  resolveDragTarget, ghostTitle, plannedTitle, HIT_THRESHOLD_PX, PLANNED_ID, type DraggablePosition, type LineKind,
 } from "../lib/sltpDrag";
 import DrawingOverlay from "./DrawingOverlay";
 import DrawingPalette from "./DrawingPalette";
@@ -194,7 +194,10 @@ const CandleChart = forwardRef<ChartHandle, {
       const py = s.priceToCoordinate(meta.line.options().price);
       if (py === null) continue;
       const dist = Math.abs((py as number) - y);
-      if (dist <= HIT_THRESHOLD_PX && dist < bestDist) {
+      // `<=` on the tie: lines are recorded in draw order and the planned order
+      // draws last, so a plan sitting exactly on an open position's stop stays
+      // the one the drag grabs — the level the human is still editing.
+      if (dist <= HIT_THRESHOLD_PX && dist <= bestDist) {
         bestDist = dist;
         best = {
           positionId: meta.positionId, kind: meta.kind, price: meta.line.options().price,
@@ -644,11 +647,51 @@ const CandleChart = forwardRef<ChartHandle, {
       linesMeta.current.push({ line, positionId, kind, direction, entryPrice });
     };
 
-    // A planned order draws on top of whatever else the chart is showing: it is
-    // not a position yet, so it belongs to none of the branches below, and each
-    // of those returns early. `direction` is null until the human's stop picks a
-    // side; an entry-line drag then resolves to "sl" by default, which is
-    // exactly the gesture that decides it.
+    // Position lines first — the three sources below are mutually exclusive and
+    // each returns early, so this stays a function rather than growing a flag.
+    const drawPositions = () => {
+      if (props.draggablePositions !== undefined) {
+        for (const pos of props.draggablePositions) {
+          addLine(pos.id, "entry", pos.entry_price, LINE_COLORS.entry, `entry #${pos.id}`, pos.direction, pos.entry_price);
+          addLine(pos.id, "sl", pos.sl, LINE_COLORS.sl, `SL #${pos.id}`, pos.direction, pos.entry_price);
+          addLine(pos.id, "tp", pos.tp, LINE_COLORS.tp, `TP #${pos.id}`, pos.direction, pos.entry_price);
+        }
+        return;
+      }
+
+      // Replay (or any caller) supplies explicit lines → draw exactly those.
+      const explicit = props.overlayLines;
+      if (explicit !== undefined) {
+        for (const line of explicit) {
+          priceLines.current.push(s.createPriceLine({
+            price: line.price, color: line.color, lineWidth: 1,
+            lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: line.title,
+          }));
+        }
+        return;
+      }
+
+      // Live SL/TP/entry overlay — only when the current symbol has open positions
+      // AND "now" is in view (horizontal lines have no time).
+      if (!props.settings.liveOverlay || !props.nowVisible || !props.live || props.live.live.empty) return;
+      const mine = props.live.live.positions.filter((p) => p.symbol === props.symbol);
+      for (const pos of mine) {
+        for (const line of liveLines(pos)) {
+          addLine(pos.position_id, line.kind, line.price, line.color, line.title, pos.direction, pos.open_price);
+        }
+      }
+    };
+    drawPositions();
+
+    // The planned order draws LAST, on top of whatever else the chart is
+    // showing: it is not a position yet, so it belongs to none of the sources
+    // above. Order matters the moment the plan is filled at the levels it named
+    // — the position's own lines then sit at the same prices, and
+    // lightweight-charts paints axis labels in creation order, so drawing the
+    // plan first buried it under "SL #<ticket>" and the plan read as gone.
+    // `direction` is null until the human's stop picks a side; an entry-line
+    // drag then resolves to "sl" by default, which is exactly the gesture that
+    // decides it.
     if (props.plannedOrder) {
       const p = props.plannedOrder;
       const dir = p.direction ?? "buy";
@@ -660,39 +703,10 @@ const CandleChart = forwardRef<ChartHandle, {
       // otherwise) with it. So keep this line's label and drop the series' own:
       // same one badge on the scale, and the title paints.
       addLine(PLANNED_ID, "entry", p.entry, LINE_COLORS.entry, entryTitle, dir, p.entry);
-      addLine(PLANNED_ID, "sl", p.sl, LINE_COLORS.sl, "SL rencana", dir, p.entry);
-      addLine(PLANNED_ID, "tp", p.tp, LINE_COLORS.tp, "TP rencana", dir, p.entry);
-    }
-
-    if (props.draggablePositions !== undefined) {
-      for (const pos of props.draggablePositions) {
-        addLine(pos.id, "entry", pos.entry_price, LINE_COLORS.entry, `entry #${pos.id}`, pos.direction, pos.entry_price);
-        addLine(pos.id, "sl", pos.sl, LINE_COLORS.sl, `SL #${pos.id}`, pos.direction, pos.entry_price);
-        addLine(pos.id, "tp", pos.tp, LINE_COLORS.tp, `TP #${pos.id}`, pos.direction, pos.entry_price);
-      }
-      return;
-    }
-
-    // Replay (or any caller) supplies explicit lines → draw exactly those.
-    const explicit = props.overlayLines;
-    if (explicit !== undefined) {
-      for (const line of explicit) {
-        priceLines.current.push(s.createPriceLine({
-          price: line.price, color: line.color, lineWidth: 1,
-          lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: line.title,
-        }));
-      }
-      return;
-    }
-
-    // Live SL/TP/entry overlay — only when the current symbol has open positions
-    // AND "now" is in view (horizontal lines have no time).
-    if (!props.settings.liveOverlay || !props.nowVisible || !props.live || props.live.live.empty) return;
-    const mine = props.live.live.positions.filter((p) => p.symbol === props.symbol);
-    for (const pos of mine) {
-      for (const line of liveLines(pos)) {
-        addLine(pos.position_id, line.kind, line.price, line.color, line.title, pos.direction, pos.open_price);
-      }
+      // p.entry IS the price the chart is showing now (Chart.tsx derives it from
+      // the last shown close), so it doubles as the reference for the distance.
+      if (p.sl !== null) addLine(PLANNED_ID, "sl", p.sl, LINE_COLORS.sl, plannedTitle("sl", p.sl, p.entry), dir, p.entry);
+      if (p.tp !== null) addLine(PLANNED_ID, "tp", p.tp, LINE_COLORS.tp, plannedTitle("tp", p.tp, p.entry), dir, p.entry);
     }
   }, [props.live, props.nowVisible, props.symbol, props.settings.liveOverlay,
       props.settings.chartType, props.overlayLines, props.draggablePositions, props.plannedOrder]);
