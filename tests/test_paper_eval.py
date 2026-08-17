@@ -89,3 +89,93 @@ def test_account_state_reports_unknown_rather_than_guessing_a_missing_quote():
     assert st.floating is None
     assert st.equity is None
     assert st.margin_level is None
+
+
+def test_a_pending_market_order_fills_at_the_ask_for_a_buy():
+    p = pos(status="pending", entry_price=None, entry_msc=None)
+    events = pe.step_tick([p], q(), now_msc=1_700_000_001_000)
+    assert [(e.kind, e.price) for e in events] == [("fill", 4030.5)]
+    assert p.status == "open" and p.entry_price == 4030.5
+
+
+def test_a_buy_limit_triggers_only_once_the_ask_reaches_it():
+    p = pos(status="pending", order_kind="limit", request_price=4025.0,
+            entry_price=None, entry_msc=None)
+    assert pe.step_tick([p], q(bid=4029.5, ask=4030.0), 1) == []
+    assert p.status == "pending"
+    events = pe.step_tick([p], q(bid=4024.0, ask=4024.5), 2)
+    # Filled at the observed ask, NOT at the 4025 that was asked for.
+    assert [(e.kind, e.price) for e in events] == [("fill", 4024.5)]
+
+
+def test_a_buy_stop_triggers_once_the_ask_rises_through_it():
+    p = pos(status="pending", order_kind="stop", request_price=4035.0,
+            entry_price=None, entry_msc=None)
+    assert pe.step_tick([p], q(bid=4030.0, ask=4030.5), 1) == []
+    events = pe.step_tick([p], q(bid=4035.5, ask=4036.0), 2)
+    assert [(e.kind, e.price) for e in events] == [("fill", 4036.0)]
+
+
+def test_a_sell_limit_triggers_once_the_bid_rises_to_it():
+    p = pos(direction="sell", status="pending", order_kind="limit",
+            request_price=4035.0, entry_price=None, entry_msc=None)
+    assert pe.step_tick([p], q(bid=4030.0, ask=4030.5), 1) == []
+    events = pe.step_tick([p], q(bid=4036.0, ask=4036.5), 2)
+    assert [(e.kind, e.price) for e in events] == [("fill", 4036.0)]
+
+
+def test_a_sell_stop_triggers_once_the_bid_falls_through_it():
+    p = pos(direction="sell", status="pending", order_kind="stop",
+            request_price=4025.0, entry_price=None, entry_msc=None)
+    assert pe.step_tick([p], q(bid=4030.0, ask=4030.5), 1) == []
+    events = pe.step_tick([p], q(bid=4024.0, ask=4024.5), 2)
+    assert [(e.kind, e.price) for e in events] == [("fill", 4024.0)]
+
+
+def test_a_pending_order_expires_unfilled_and_never_fills_late():
+    p = pos(status="pending", order_kind="limit", request_price=4025.0,
+            entry_price=None, entry_msc=None, expires_msc=1_000)
+    events = pe.step_tick([p], q(bid=4024.0, ask=4024.5), now_msc=1_001)
+    assert [(e.kind, e.price) for e in events] == [("expire", None)]
+    assert p.status == "expired"
+
+
+def test_a_buys_stop_fires_when_the_bid_reaches_it_and_exits_at_the_level():
+    p = pos(sl=4025.0)
+    events = pe.step_tick([p], q(bid=4024.0, ask=4024.5), 2)
+    assert [(e.kind, e.price, e.reason) for e in events] == [("exit", 4025.0, "sl")]
+    assert p.status == "closed"
+
+
+def test_a_buys_target_fires_when_the_bid_reaches_it():
+    p = pos(tp=4040.0)
+    events = pe.step_tick([p], q(bid=4041.0, ask=4041.5), 2)
+    assert [(e.kind, e.price, e.reason) for e in events] == [("exit", 4040.0, "tp")]
+
+
+def test_a_sells_levels_are_measured_against_the_ask():
+    p = pos(direction="sell", entry_price=4030.0, sl=4035.0, tp=4025.0)
+    assert pe.step_tick([p], q(bid=4034.0, ask=4034.5), 2) == []   # neither yet
+    events = pe.step_tick([p], q(bid=4035.5, ask=4036.0), 3)
+    assert [(e.kind, e.price, e.reason) for e in events] == [("exit", 4035.0, "sl")]
+
+
+def test_the_stop_fills_first_when_one_tick_reaches_both_levels():
+    # A tick cannot reveal the order in which the two were touched, so the
+    # pessimistic reading is the only honest one.
+    p = pos(sl=4025.0, tp=4040.0)
+    events = pe.step_tick([p], q(bid=4020.0, ask=4041.0), 2)
+    assert [(e.kind, e.price, e.reason) for e in events] == [("exit", 4025.0, "sl")]
+
+
+def test_a_position_on_another_symbol_is_left_alone():
+    p = pos(sl=4025.0, symbol="BTCUSDc")
+    assert pe.step_tick([p], q(bid=4000.0, ask=4000.5, symbol="XAUUSDc"), 2) == []
+    assert p.status == "open"
+
+
+def test_an_order_that_fills_can_be_stopped_out_on_the_same_tick():
+    # A gap through the stop must not be a free ride: the entry bar can kill you.
+    p = pos(status="pending", entry_price=None, entry_msc=None, sl=4029.0)
+    events = pe.step_tick([p], q(bid=4028.0, ask=4030.5), 2)
+    assert [(e.kind, e.reason) for e in events] == [("fill", None), ("exit", "sl")]

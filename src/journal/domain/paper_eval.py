@@ -159,3 +159,75 @@ def account_state(positions: list[PaperPos], quotes: dict[str, Quote],
     return AccountState(equity=equity, margin=margin,
                         free_margin=equity - margin, margin_level=level,
                         floating=floating)
+
+
+def _triggered(pos: PaperPos, quote: Quote) -> bool:
+    """Whether a pending order's condition is met by this tick, measured on the
+    side it would actually enter on. A market order is always triggered."""
+    if pos.order_kind == "market":
+        return True
+    if pos.request_price is None:
+        return False
+    price = entry_side(pos.direction, quote)
+    if pos.direction == "buy":
+        # A buy limit waits for the ask to come DOWN to it; a buy stop for the
+        # ask to rise THROUGH it.
+        return price <= pos.request_price + _TOL if pos.order_kind == "limit" \
+            else price >= pos.request_price - _TOL
+    return price >= pos.request_price - _TOL if pos.order_kind == "limit" \
+        else price <= pos.request_price + _TOL
+
+
+def _exit(pos: PaperPos, price: float, time_msc: int, reason: str) -> Event:
+    pos.status = "closed"
+    return Event(pos.id, "exit", price, time_msc, reason)
+
+
+def step_tick(positions: list[PaperPos], quote: Quote,
+              now_msc: int) -> list[Event]:
+    """Advance every position on `quote.symbol` by one tick. Mutates `positions`
+    in place and returns this tick's events in position order.
+
+    Order per position, and the order matters:
+      1. expire a pending order whose `expires_msc` has passed — an expired order
+         must never fill late;
+      2. fill a triggered pending order at the current quote;
+      3. resolve SL/TP against the exit side, stop-first when both are reached.
+
+    A position filled at (2) is evaluated at (3) on the SAME tick: a gap through
+    the stop can end the trade on the tick it started, and pretending otherwise
+    would hand out a free ride the market never gave.
+    """
+    events: list[Event] = []
+    for p in positions:
+        if p.symbol != quote.symbol:
+            continue
+        if p.status not in ("pending", "open"):
+            continue
+
+        if p.status == "pending":
+            if p.expires_msc is not None and now_msc > p.expires_msc:
+                p.status = "expired"
+                events.append(Event(p.id, "expire", None, now_msc, None))
+                continue
+            if not _triggered(p, quote):
+                continue
+            p.status = "open"
+            p.entry_price = entry_side(p.direction, quote)
+            p.entry_msc = quote.time_msc
+            events.append(Event(p.id, "fill", p.entry_price, quote.time_msc, None))
+
+        price = exit_side(p.direction, quote)
+        if p.direction == "buy":
+            sl_hit = p.sl > _TOL and price <= p.sl + _TOL
+            tp_hit = p.tp > _TOL and price >= p.tp - _TOL
+        else:
+            sl_hit = p.sl > _TOL and price >= p.sl - _TOL
+            tp_hit = p.tp > _TOL and price <= p.tp + _TOL
+
+        if sl_hit:                       # stop-first when both are reached
+            events.append(_exit(p, p.sl, quote.time_msc, "sl"))
+        elif tp_hit:
+            events.append(_exit(p, p.tp, quote.time_msc, "tp"))
+
+    return events
