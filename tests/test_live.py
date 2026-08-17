@@ -23,10 +23,11 @@ import pytest
 from journal.adapter.base import Position, TradeResult, TradeRetcode
 from journal.adapter.fake import FakeMT5Client
 from journal.execute import claim_next, enqueue, get_command
+from journal.ingest import live
 from journal.ingest.candles import CandlesReport
 from journal.ingest.deals import SyncReport
 from journal.ingest.live import live_cycle, live_loop
-from journal.store import live_store
+from journal.store import live_store, paper_store
 from journal.store.db import connect, now_ms
 
 _LOGIN = 1_000_001  # placeholder, never the real login (rule 10)
@@ -57,15 +58,24 @@ class FakeLiveClient(FakeMT5Client):
     `live_loop` never runs off the end). Inherits `script_results`/`order_check`/
     `order_send`/`sent`/`checked` from the base fake."""
 
-    def __init__(self, batches=()):
+    def __init__(self, batches=(), positions=None, tick=None, tick_raises=None):
         super().__init__()
-        self._batches = batches
+        self._batches = batches if positions is None else (positions,)
         self._i = 0
+        self._tick = tick
+        self._tick_raises = tick_raises
+        self.tick_calls: list[str] = []
 
     def positions_get(self):
         batch = self._batches[min(self._i, len(self._batches) - 1)]
         self._i += 1
         return batch
+
+    def symbol_info_tick(self, symbol):
+        self.tick_calls.append(symbol)
+        if self._tick_raises is not None:
+            raise self._tick_raises
+        return self._tick
 
 
 def _pos(
@@ -1096,3 +1106,143 @@ def test_the_volume_is_not_recomputed_at_send_time(conn):
     _execute_one_command(client, conn, 7)
 
     assert abs(client.sent[0].volume - 0.10) < 1e-9
+
+
+# ---------------------------------------------------------------- paper step
+
+
+def _tick(*, bid, ask, time_msc=1_000):
+    from journal.adapter.base import Tick
+    return Tick(time=time_msc // 1000, time_msc=time_msc, bid=bid, ask=ask)
+
+
+def _seed_specs(conn):
+    # OR REPLACE: the `conn` fixture already seeded a bare XAUUSDc row (symbol is
+    # the PK) with no tick_size/tick_value — this overwrites it with the full spec.
+    conn.execute(
+        "INSERT OR REPLACE INTO symbol_specs (symbol, symbol_base, digits, point, tick_size, "
+        "tick_value, contract_size, currency_profit, fetched_at, volume_min, "
+        "volume_max, volume_step, stops_level, freeze_level, trade_mode, "
+        "filling_mode) VALUES ('XAUUSDc', 'XAUUSD', 3, 0.001, 0.001, 0.1, 1.0, "
+        "'USD', 1, 0.01, 100.0, 0.01, 0, 0, 4, 1)"
+    )
+    conn.commit()
+
+
+def test_the_paper_step_makes_no_bridge_call_when_nothing_is_open(conn):
+    # The cost of a feature nobody is using must be zero, not small.
+    client = FakeLiveClient(positions=[])
+    live.paper_step(client, conn, now_msc=1_000)
+    assert client.tick_calls == []
+
+
+def test_the_paper_step_fills_a_pending_order_and_stores_the_quote(conn):
+    account = paper_store.create_account(conn, name="T", initial_balance=1_000_000.0,
+                                         leverage=500, stopout_pct=20.0)
+    pid = paper_store.insert_position(
+        conn, account_id=account, symbol="XAUUSDc", symbol_base="XAUUSD",
+        direction="buy", order_kind="market", request_price=None, volume=0.10,
+        sl=0.0, tp=0.0, status="pending", entry_price=None, entry_msc=None,
+        expires_msc=None,
+    )
+    client = FakeLiveClient(positions=[], tick=_tick(bid=4030.0, ask=4030.5))
+
+    live.paper_step(client, conn, now_msc=1_000)
+
+    row = paper_store.get_position(conn, pid)
+    assert row["status"] == "open"
+    assert row["entry_price"] == pytest.approx(4030.5)
+    assert live_store.read_quote(conn, "XAUUSDc")["bid"] == pytest.approx(4030.0)
+
+
+def test_a_stop_hit_credits_the_realized_balance_and_records_r(conn):
+    account = paper_store.create_account(conn, name="T", initial_balance=1_000_000.0,
+                                         leverage=500, stopout_pct=20.0)
+    _seed_specs(conn)      # XAUUSDc: tick_size .001, tick_value .1, contract 1.0
+    pid = paper_store.insert_position(
+        conn, account_id=account, symbol="XAUUSDc", symbol_base="XAUUSD",
+        direction="buy", order_kind="market", request_price=None, volume=0.10,
+        sl=4025.0, tp=0.0, status="open", entry_price=4030.0, entry_msc=500,
+        expires_msc=None,
+    )
+    conn.execute("UPDATE paper_positions SET sl_initial = 4025.0 WHERE id = ?", (pid,))
+    conn.commit()
+    client = FakeLiveClient(positions=[], tick=_tick(bid=4024.0, ask=4024.5))
+
+    live.paper_step(client, conn, now_msc=2_000)
+
+    row = paper_store.get_position(conn, pid)
+    assert row["status"] == "closed" and row["exit_reason"] == "sl"
+    # 5 USD adverse * 0.10 lot @ tick_size .001/tick_value .1 = 50 USC lost
+    # (net_profit_usc("buy", 4030, 4025, 0.10, 0.001, 0.1) == -50.0, the same
+    # formula tests/test_replay_eval.py already asserts for these exact specs).
+    # R is exactly -1 at the initial stop, independent of volume/specs.
+    assert row["net_profit"] == pytest.approx(-50.0)
+    assert row["r_multiple"] == pytest.approx(-1.0)
+    assert paper_store.get_account(conn, account)["balance"] == pytest.approx(999_950.0)
+
+
+def test_a_raising_bridge_does_not_kill_the_paper_step(conn):
+    paper_store.create_account(conn, name="T", initial_balance=1_000.0,
+                               leverage=500, stopout_pct=20.0)
+    account = paper_store.list_accounts(conn)[0]["id"]
+    paper_store.insert_position(
+        conn, account_id=account, symbol="XAUUSDc", symbol_base="XAUUSD",
+        direction="buy", order_kind="market", request_price=None, volume=0.10,
+        sl=0.0, tp=0.0, status="open", entry_price=4030.0, entry_msc=1,
+        expires_msc=None,
+    )
+    client = FakeLiveClient(positions=[], tick_raises=RuntimeError("bridge gone"))
+    # Losing the loop loses unrecoverable live SL history. Play money never wins
+    # that trade-off.
+    assert live.paper_step(client, conn, now_msc=1_000) == 0
+
+
+def test_a_closed_paper_position_is_never_resolved_twice(conn):
+    # The Task 5 hazard: mark_close does not guard the row's current status, so
+    # a repeated cycle (or a restart hitting the same still-open-looking state)
+    # must not hand an already-closed position back to mark_close/add_balance —
+    # that would silently re-overwrite the exit and double-credit the balance.
+    account = paper_store.create_account(conn, name="T", initial_balance=1_000_000.0,
+                                         leverage=500, stopout_pct=20.0)
+    _seed_specs(conn)
+    pid = paper_store.insert_position(
+        conn, account_id=account, symbol="XAUUSDc", symbol_base="XAUUSD",
+        direction="buy", order_kind="market", request_price=None, volume=0.10,
+        sl=4025.0, tp=0.0, status="open", entry_price=4030.0, entry_msc=500,
+        expires_msc=None,
+    )
+    conn.execute("UPDATE paper_positions SET sl_initial = 4025.0 WHERE id = ?", (pid,))
+    conn.commit()
+    client = FakeLiveClient(positions=[], tick=_tick(bid=4024.0, ask=4024.5))
+
+    first = live.paper_step(client, conn, now_msc=2_000)
+    row_after_first = paper_store.get_position(conn, pid)
+    balance_after_first = paper_store.get_account(conn, account)["balance"]
+    assert first == 1
+    assert row_after_first["status"] == "closed"
+
+    # Same tick, another cycle (e.g. the daemon looping, or a restart replaying
+    # the same DB state): the closed row must be structurally invisible to
+    # paper_step now, so it resolves nothing and touches nothing a second time.
+    second = live.paper_step(client, conn, now_msc=3_000)
+    row_after_second = paper_store.get_position(conn, pid)
+
+    assert second == 0
+    assert row_after_second["exit_msc"] == row_after_first["exit_msc"]
+    assert row_after_second["net_profit"] == pytest.approx(row_after_first["net_profit"])
+    assert paper_store.get_account(conn, account)["balance"] == pytest.approx(balance_after_first)
+
+
+def test_live_cycle_runs_the_paper_step_even_with_trading_off(conn):
+    account = paper_store.create_account(conn, name="T", initial_balance=1_000_000.0,
+                                         leverage=500, stopout_pct=20.0)
+    paper_store.insert_position(
+        conn, account_id=account, symbol="XAUUSDc", symbol_base="XAUUSD",
+        direction="buy", order_kind="market", request_price=None, volume=0.10,
+        sl=0.0, tp=0.0, status="pending", entry_price=None, entry_msc=None,
+        expires_msc=None,
+    )
+    client = FakeLiveClient(positions=[], tick=_tick(bid=4030.0, ask=4030.5))
+    report = live.live_cycle(client, conn, _LOGIN, trading=False)
+    assert report.paper_resolved == 1
