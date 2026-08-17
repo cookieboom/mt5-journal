@@ -175,6 +175,31 @@ def test_risk_pct_sizing_is_refused_by_the_shared_max_lot_cap(conn, account):
         _order(conn, account, volume=None, risk_pct=1.0)
 
 
+def test_risk_pct_sizes_a_successful_order_from_the_accounts_own_equity(conn, account):
+    # Same account, same default stop (sl=4025.0, a 5.5 USD / 550 USC-per-lot
+    # distance -- see the MAX_LOT test above) but a share small enough to
+    # clear the cap: 0.05% of 1_000_000 USC equity is 500 USC at risk, not
+    # 10_000. Verified directly against the already-reviewed
+    # domain.risk.volume_for_risk/floor_to_step:
+    #   >>> volume_for_risk(4030.5, 4025.0, 0.001, 0.1, 500.0)
+    #   0.9090909090909091
+    #   >>> floor_to_step(0.9090909090909091, 0.01)
+    #   0.9
+    # 0.9 lot is under commands.MAX_LOT (1.0), so check_volume lets it
+    # through and the order actually fills -- the success path a broken
+    # sizing formula (or one that stopped calling volume_for_risk/
+    # floor_to_step at all) would not otherwise be caught failing anywhere
+    # else in this file.
+    _fresh_quote(conn)
+    out = _order(conn, account, volume=None, risk_pct=0.05)
+    assert out["volume"] == pytest.approx(0.9)
+    assert out["status"] == "open"
+    assert out["direction"] == "buy"
+    assert out["symbol"] == "XAUUSDc"
+    assert out["symbol_base"] == "XAUUSD"
+    assert out["sl"] == pytest.approx(4025.0)
+
+
 def test_risk_pct_sizing_needs_a_stop_to_size_against(conn, account):
     _fresh_quote(conn)
     with pytest.raises(paper.PaperError, match="SL"):
