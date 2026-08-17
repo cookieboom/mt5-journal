@@ -379,8 +379,14 @@ def _persist_exit(conn: sqlite3.Connection, row: sqlite3.Row, ev: pe.Event,
 
 def paper_step(client: MT5Client, conn: sqlite3.Connection, *,
                now_msc: int) -> int:
-    """Advance every live paper position by one tick, and return how many were
-    resolved (filled, expired, or closed).
+    """Advance every live paper position by one tick, and return how many
+    DISTINCT positions were resolved this cycle — closed or expired. A fill
+    alone does not count: it starts a position's life, it does not conclude it.
+    Counted by position id, not by event: a pending order that fills and then
+    gaps through its stop on the SAME tick produces two events (fill, exit) for
+    one position, and must report 1, not 2 — this value surfaces to a human
+    through `LiveReport.paper_resolved` and must not lie about how many
+    positions it touched.
 
     Zero exposure means zero bridge calls: the symbol list comes from the DB
     first. A bridge failure is logged and the step returns — losing the loop
@@ -428,7 +434,7 @@ def paper_step(client: MT5Client, conn: sqlite3.Connection, *,
         if spec is not None:
             specs[symbol] = spec
 
-    resolved = 0
+    resolved_ids: set[int] = set()
     for account in paper_store.list_accounts(conn, status="active"):
         rows = {r["id"]: r for r in paper_store.list_positions(
             conn, account["id"], statuses=("pending", "open"))}
@@ -455,15 +461,16 @@ def paper_step(client: MT5Client, conn: sqlite3.Connection, *,
                 )
             elif ev.kind == "expire":
                 paper_store.update_status(conn, ev.position_id, "expired")
+                resolved_ids.add(ev.position_id)
             else:
                 # Re-read: a fill earlier in this same loop wrote the entry price
                 # this exit's money depends on. specs.get(...): None is a valid,
                 # meaningful value here (unknown spec), not a bug.
                 fresh = paper_store.get_position(conn, ev.position_id)
                 _persist_exit(conn, fresh, ev, specs.get(fresh["symbol"]))
-            resolved += 1
+                resolved_ids.add(ev.position_id)
 
-    return resolved
+    return len(resolved_ids)
 
 
 def live_cycle(

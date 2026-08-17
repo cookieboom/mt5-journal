@@ -1234,15 +1234,72 @@ def test_a_closed_paper_position_is_never_resolved_twice(conn):
     assert paper_store.get_account(conn, account)["balance"] == pytest.approx(balance_after_first)
 
 
+class _TwoSymbolClient(FakeLiveClient):
+    """One scripted tick per symbol, `None` for whichever symbol isn't in the
+    map — the shape of a bridge that answers for some symbols and not others
+    in the same round trip, not a hard failure."""
+
+    def __init__(self, ticks: dict[str, object]):
+        super().__init__(positions=[])
+        self._ticks = ticks
+
+    def symbol_info_tick(self, symbol):
+        self.tick_calls.append(symbol)
+        return self._ticks.get(symbol)
+
+
+def test_a_none_tick_for_one_symbol_does_not_block_another_symbols_position(conn):
+    # "A symbol whose tick comes back None is skipped, not fatal" — the bridge
+    # answering for BTCUSDc but not XAUUSDc in the same round trip must not
+    # stop XAUUSDc's own exposure from being evaluated.
+    conn.execute(
+        "INSERT INTO symbol_specs (symbol, symbol_base, digits, point, fetched_at, "
+        "volume_min, volume_max, volume_step, stops_level, trade_mode, filling_mode) "
+        "VALUES ('BTCUSDc','BTCUSD',2,0.01,1, 0.01,10.0,0.01,0,4,3)"
+    )
+    conn.commit()
+    account = paper_store.create_account(conn, name="T", initial_balance=1_000_000.0,
+                                         leverage=500, stopout_pct=20.0)
+    xau_pid = paper_store.insert_position(
+        conn, account_id=account, symbol="XAUUSDc", symbol_base="XAUUSD",
+        direction="buy", order_kind="market", request_price=None, volume=0.10,
+        sl=0.0, tp=0.0, status="pending", entry_price=None, entry_msc=None,
+        expires_msc=None,
+    )
+    btc_pid = paper_store.insert_position(
+        conn, account_id=account, symbol="BTCUSDc", symbol_base="BTCUSD",
+        direction="buy", order_kind="market", request_price=None, volume=0.10,
+        sl=0.0, tp=0.0, status="pending", entry_price=None, entry_msc=None,
+        expires_msc=None,
+    )
+    client = _TwoSymbolClient({"XAUUSDc": None, "BTCUSDc": _tick(bid=60000.0, ask=60005.0)})
+
+    resolved = live.paper_step(client, conn, now_msc=1_000)  # must not raise
+
+    assert sorted(client.tick_calls) == ["BTCUSDc", "XAUUSDc"]
+    xau_row = paper_store.get_position(conn, xau_pid)
+    assert xau_row["status"] == "pending"          # skipped, not evaluated
+    assert live_store.read_quote(conn, "XAUUSDc") is None   # no quote stored either
+    btc_row = paper_store.get_position(conn, btc_pid)
+    assert btc_row["status"] == "open"              # the good symbol still filled
+    assert btc_row["entry_price"] == pytest.approx(60005.0)
+    assert live_store.read_quote(conn, "BTCUSDc")["bid"] == pytest.approx(60000.0)
+    assert resolved == 0    # a fill alone isn't a "resolved" position
+
+
 def test_live_cycle_runs_the_paper_step_even_with_trading_off(conn):
     account = paper_store.create_account(conn, name="T", initial_balance=1_000_000.0,
                                          leverage=500, stopout_pct=20.0)
     paper_store.insert_position(
         conn, account_id=account, symbol="XAUUSDc", symbol_base="XAUUSD",
         direction="buy", order_kind="market", request_price=None, volume=0.10,
-        sl=0.0, tp=0.0, status="pending", entry_price=None, entry_msc=None,
+        sl=4025.0, tp=0.0, status="pending", entry_price=None, entry_msc=None,
         expires_msc=None,
     )
-    client = FakeLiveClient(positions=[], tick=_tick(bid=4030.0, ask=4030.5))
+    # Fills AND immediately hits its own stop on the SAME tick (fills at the
+    # ask 4020.5; the exit check right after uses the bid 4020.0, which is
+    # already through the 4025.0 stop) — two events, ONE position. This is
+    # `paper_resolved`'s distinguishing case: counting events would say 2.
+    client = FakeLiveClient(positions=[], tick=_tick(bid=4020.0, ask=4020.5))
     report = live.live_cycle(client, conn, _LOGIN, trading=False)
     assert report.paper_resolved == 1
