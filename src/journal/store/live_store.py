@@ -187,3 +187,27 @@ def read_forming(conn: sqlite3.Connection, symbol: str, timeframe: str) -> Candl
     return Candle(time_msc=r["time_msc"], open=r["open"], high=r["high"], low=r["low"],
                   close=r["close"], tick_volume=r["tick_volume"], spread=r["spread"],
                   real_volume=r["real_volume"])
+
+
+def upsert_quote(conn: sqlite3.Connection, symbol: str, *, bid: float, ask: float,
+                 tick_msc: int, now_msc: int) -> None:
+    """Overwrite the single latest-tick row for `symbol`. A latest-value cache,
+    like the forming bar — never an append log. `tick_msc` is the broker's tick
+    time; `now_msc` is true UTC and is what staleness is judged against."""
+    conn.execute(
+        "INSERT INTO live_quotes (symbol, bid, ask, tick_msc, updated_msc) "
+        "VALUES (?, ?, ?, ?, ?) "
+        "ON CONFLICT(symbol) DO UPDATE SET bid = excluded.bid, "
+        "ask = excluded.ask, tick_msc = excluded.tick_msc, "
+        "updated_msc = excluded.updated_msc",
+        (symbol, bid, ask, tick_msc, now_msc),
+    )
+    conn.commit()
+
+
+def read_quote(conn: sqlite3.Connection, symbol: str) -> sqlite3.Row | None:
+    """The latest stored tick for `symbol`, or None if none was ever stored.
+    None means unknown — the caller refuses, it does not substitute a price."""
+    return conn.execute(
+        "SELECT * FROM live_quotes WHERE symbol = ?", (symbol,)
+    ).fetchone()
