@@ -101,6 +101,113 @@ def test_the_header_reports_unknown_when_no_quote_has_ever_arrived(conn, account
     assert header["equity"] is None and header["margin_level"] is None
 
 
+def _order(conn, account, **kw):
+    body = dict(symbol="XAUUSDc", direction="buy", kind="market", volume=0.10,
+                sl=4025.0, tp=0.0)
+    body.update(kw)
+    return paper.place_order(conn, account, **body)
+
+
+def test_a_market_buy_fills_at_the_ask_immediately(conn, account):
+    _fresh_quote(conn)
+    out = _order(conn, account)
+    assert out["status"] == "open"
+    assert out["entry_price"] == pytest.approx(4030.5)
+    assert out["sl_initial"] == pytest.approx(4025.0)
+    assert out["symbol_base"] == "XAUUSD"
+
+
+def test_a_stale_quote_refuses_the_order_instead_of_resizing_it(conn, account):
+    live_store.upsert_quote(conn, "XAUUSDc", bid=4030.0, ask=4030.5,
+                            tick_msc=1_000, now_msc=now_ms() - 60_000)
+    with pytest.raises(paper.PaperError, match="basi"):
+        _order(conn, account)
+
+
+def test_an_order_on_a_symbol_with_no_quote_at_all_is_refused(conn, account):
+    # The implementation's message is a fresh sentence ("Belum ada harga..."),
+    # capitalised like every other PaperError in this module (Task 10's
+    # "Tidak ada akun...", "Nama akun wajib...") -- so the match string is
+    # capitalised too, not the brief's literal lowercase "belum ada harga"
+    # (case-sensitive re.search would never find it against the real message).
+    with pytest.raises(paper.PaperError, match="Belum ada harga"):
+        _order(conn, account)
+
+
+def test_a_pending_order_needs_no_quote_and_stays_pending(conn, account):
+    _fresh_quote(conn)
+    out = _order(conn, account, kind="limit", price=4025.0, sl=4020.0)
+    assert out["status"] == "pending"
+    assert out["entry_price"] is None
+    assert out["request_price"] == pytest.approx(4025.0)
+
+
+def test_volume_and_risk_pct_together_are_refused_and_so_is_neither(conn, account):
+    _fresh_quote(conn)
+    with pytest.raises(paper.PaperError, match="salah satu"):
+        _order(conn, account, volume=0.10, risk_pct=1.0)
+    with pytest.raises(paper.PaperError, match="salah satu"):
+        _order(conn, account, volume=None, risk_pct=None)
+
+
+def test_risk_pct_sizing_is_refused_by_the_shared_max_lot_cap(conn, account):
+    # 1% of 1_000_000 USC equity = 10_000 USC at risk. Entry 4030.5, stop
+    # 4025.0 is a 5.5 USD distance; XAUUSDc's specs (tick_size=0.001,
+    # tick_value=0.1) make that 5500 ticks * 0.1 USC = 550 USC of risk per
+    # 1.0-lot (the same scaling the doc's own hand-verified figure uses: 0.10
+    # lot / 5.0 distance -> 50 USC). risk.volume_for_risk therefore sizes this
+    # at 10_000 / 550 ~= 18.18 lots -- verified directly against the already-
+    # reviewed domain.risk.volume_for_risk/floor_to_step:
+    #   >>> volume_for_risk(4030.5, 4025.0, 0.001, 0.1, 10_000.0)
+    #   18.181818181818183
+    #   >>> floor_to_step(18.181818181818183, 0.01)
+    #   18.18
+    # 18.18 lots is far past commands.MAX_LOT (1.0) -- the human's hard cap
+    # that check_volume enforces on every caller, risk-derived volume
+    # included (its own docstring: "Paper trading is now a second caller").
+    # A risk budget this large on a symbol whose whole 1.0-lot cap only ever
+    # risks $5.50 (XAUUSDc, 1 lot = 1 oz) is exactly the case that cap exists
+    # to refuse, not a scenario place_order can size into 0.18 lot -- 0.18
+    # lot would risk under a dollar, two orders of magnitude short of the 1%
+    # ($100) actually requested.
+    _fresh_quote(conn)
+    with pytest.raises(paper.PaperError, match="batas keras"):
+        _order(conn, account, volume=None, risk_pct=1.0)
+
+
+def test_risk_pct_sizing_needs_a_stop_to_size_against(conn, account):
+    _fresh_quote(conn)
+    with pytest.raises(paper.PaperError, match="SL"):
+        _order(conn, account, volume=None, risk_pct=1.0, sl=0.0)
+
+
+def test_a_stop_on_the_wrong_side_is_refused_by_the_shared_validator(conn, account):
+    _fresh_quote(conn)
+    with pytest.raises(paper.PaperError, match="BAWAH"):
+        _order(conn, account, sl=4040.0)
+
+
+def test_a_volume_off_the_brokers_step_is_refused(conn, account):
+    _fresh_quote(conn)
+    with pytest.raises(paper.PaperError, match="kelipatan"):
+        _order(conn, account, volume=0.015)
+
+
+def test_an_order_larger_than_the_free_margin_is_refused(conn, account):
+    _fresh_quote(conn)
+    small = paper.create_account(conn, name="Tipis", initial_balance=100.0,
+                                 leverage=500, stopout_pct=20.0)["id"]
+    with pytest.raises(paper.PaperError, match="margin"):
+        _order(conn, small, volume=1.00)
+
+
+def test_an_archived_account_takes_no_new_orders(conn, account):
+    _fresh_quote(conn)
+    paper.archive_account(conn, account)
+    with pytest.raises(paper.PaperError, match="diarsipkan"):
+        _order(conn, account)
+
+
 def test_the_equity_curve_and_drawdown_read_closed_slices_in_exit_order(conn, account):
     for net, exit_msc in ((-200.0, 3_000), (500.0, 1_000), (-100.0, 2_000)):
         pid = paper_store.insert_position(

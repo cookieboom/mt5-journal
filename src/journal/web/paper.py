@@ -15,9 +15,14 @@ from __future__ import annotations
 import sqlite3
 
 from ..analytics.report import sequence_stats
+from ..domain import commands as cmd
 from ..domain import paper_eval as pe
+from ..domain import risk
 from ..domain.sim_stats import summary as sim_summary
+from ..domain.symbols import to_base
+from ..execute import FEED_STALE_MS
 from ..store import live_store, paper_store
+from ..store.db import now_ms
 
 CURRENCY = "USC"
 
@@ -159,3 +164,146 @@ def account_view(conn: sqlite3.Connection, account_id: int) -> dict | None:
         "max_drawdown": max_dd,
         "equity_curve": curve,
     }
+
+
+def _require_active(conn: sqlite3.Connection, account_id: int) -> sqlite3.Row:
+    account = paper_store.get_account(conn, account_id)
+    if account is None:
+        raise PaperError(f"Tidak ada akun paper {account_id}.")
+    if account["status"] != "active":
+        raise PaperError("Akun ini sudah diarsipkan — buka akun lain untuk trading.")
+    return account
+
+
+def _fresh_quote(conn: sqlite3.Connection, symbol: str,
+                 now_msc: int) -> pe.Quote:
+    """The latest tick, or a refusal. A stale reference price does not fail
+    loudly — it silently resizes the position, which is why the guard is here and
+    not only in the browser. Same threshold as a real open (`FEED_STALE_MS`)."""
+    row = live_store.read_quote(conn, symbol)
+    if row is None:
+        raise PaperError(
+            f"Belum ada harga untuk {symbol} — `journal live` belum pernah "
+            f"menyimpan tick simbol ini. Order ditolak, bukan ditebak."
+        )
+    age = now_msc - int(row["updated_msc"])
+    if age >= FEED_STALE_MS:
+        raise PaperError(
+            f"Harga {symbol} basi {age / 1000:.0f}s — `journal live` tidak "
+            f"menyuapi feed. Order ditolak."
+        )
+    return pe.Quote(symbol=symbol, bid=float(row["bid"]), ask=float(row["ask"]),
+                    time_msc=int(row["tick_msc"]))
+
+
+def _spec_row(conn: sqlite3.Connection, symbol: str) -> sqlite3.Row:
+    row = conn.execute(
+        "SELECT * FROM symbol_specs WHERE symbol = ?", (symbol,)
+    ).fetchone()
+    if row is None:
+        raise PaperError(
+            f"Spesifikasi {symbol} belum diketahui — jalankan `journal sync`."
+        )
+    return row
+
+
+def place_order(conn: sqlite3.Connection, account_id: int, *, symbol: str,
+                direction: str, kind: str = "market", volume: float | None = None,
+                risk_pct: float | None = None, price: float | None = None,
+                sl: float = 0.0, tp: float = 0.0,
+                expires_msc: int | None = None,
+                now_msc: int | None = None) -> dict:
+    """Open a market position immediately, or park a pending limit/stop order.
+
+    Sizing takes `volume` OR `risk_pct`, never both and never neither: a route
+    that picks for you is a route that sizes someone's position by guessing.
+    """
+    now = now_ms() if now_msc is None else now_msc
+    account = _require_active(conn, account_id)
+    if direction not in ("buy", "sell"):
+        raise PaperError("Arah harus 'buy' atau 'sell'.")
+    if kind not in ("market", "limit", "stop"):
+        raise PaperError("Jenis order harus 'market', 'limit', atau 'stop'.")
+    if (volume is None) == (risk_pct is None):
+        raise PaperError("Isi salah satu: volume ATAU risk_pct, tidak dua-duanya.")
+
+    quote = _fresh_quote(conn, symbol, now)
+    spec_row = _spec_row(conn, symbol)
+    specs = _specs(conn, symbol)
+    if specs is None:
+        raise PaperError(f"Spesifikasi harga {symbol} belum lengkap.")
+
+    if kind == "market":
+        reference = pe.entry_side(direction, quote)
+    else:
+        if price is None:
+            raise PaperError("Order limit/stop wajib menyebut harga pemicu.")
+        reference = float(price)
+
+    if risk_pct is not None:
+        if risk_pct <= 0:
+            raise PaperError("risk_pct harus lebih besar dari 0.")
+        if sl is None or abs(sl) < 1e-9:
+            raise PaperError(
+                "Sizing dari risiko butuh SL — tanpa jarak stop tidak ada "
+                "risiko untuk dibagi."
+            )
+        state = pe.account_state(
+            [_state(r) for r in paper_store.list_positions(
+                conn, account_id, statuses=("open",))],
+            {symbol: quote}, {symbol: specs},
+            balance=float(account["balance"]), leverage=int(account["leverage"]),
+        )
+        equity = state.equity
+        if equity is None:
+            raise PaperError(
+                "Equity akun belum bisa dihitung (harga posisi lain belum ada) "
+                "— sizing dari risiko ditolak."
+            )
+        budget = equity * risk_pct / 100.0
+        raw = risk.volume_for_risk(reference, sl, specs.tick_size,
+                                   specs.tick_value, budget)
+        volume = risk.floor_to_step(raw, spec_row["volume_step"])
+        if volume is None or volume <= 0:
+            raise PaperError(
+                "Risiko yang diminta lebih kecil dari satu step volume broker."
+            )
+
+    try:
+        cmd.check_volume("open", None, spec_row, volume)
+        cmd.check_level("sl", sl, direction, reference, spec_row)
+        cmd.check_level("tp", tp, direction, reference, spec_row)
+    except cmd.CommandError as e:
+        raise PaperError(str(e)) from e
+
+    if kind == "market":
+        need = pe.margin_usc(volume, reference, specs, int(account["leverage"]))
+        state = pe.account_state(
+            [_state(r) for r in paper_store.list_positions(
+                conn, account_id, statuses=("open",))],
+            {symbol: quote}, {symbol: specs},
+            balance=float(account["balance"]), leverage=int(account["leverage"]),
+        )
+        if need is None or state.free_margin is None:
+            raise PaperError(
+                "Margin tidak bisa dihitung untuk simbol ini — order ditolak, "
+                "bukan diasumsikan aman."
+            )
+        if need > state.free_margin:
+            raise PaperError(
+                f"Butuh margin {need:.2f} {CURRENCY}, free margin hanya "
+                f"{state.free_margin:.2f} {CURRENCY}."
+            )
+
+    status = "open" if kind == "market" else "pending"
+    pid = paper_store.insert_position(
+        conn, account_id=account_id, symbol=symbol, symbol_base=to_base(symbol),
+        direction=direction, order_kind=kind,
+        request_price=(None if kind == "market" else reference),
+        volume=float(volume), sl=float(sl or 0.0), tp=float(tp or 0.0),
+        status=status,
+        entry_price=(reference if kind == "market" else None),
+        entry_msc=(quote.time_msc if kind == "market" else None),
+        expires_msc=expires_msc,
+    )
+    return _row(paper_store.get_position(conn, pid))
