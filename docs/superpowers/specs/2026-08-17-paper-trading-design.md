@@ -217,6 +217,14 @@ real trading.
 
 ## 6. Web API — `src/journal/web/paper.py`
 
+`web/paper.py` holds the service functions; the route declarations sit inline in
+`app.py` beside the training block, which is this codebase's established shape
+(`web/training.py` + `@app.post("/api/training/...")` in `app.py`). An `APIRouter`
+would be one line in `app.py` instead of a hundred, but it would put a second
+routing convention in one folder — the same drift that produced two design systems
+in the storage subtree. `app.py` is already 999 lines and this adds to it; splitting
+it is worth doing, and is not this feature's job.
+
 ```
 GET    /api/paper/accounts                  list
 POST   /api/paper/accounts                  {name, initial_balance, leverage, stopout_pct}
@@ -254,12 +262,17 @@ cycle; it never fills late.
 ### Validation is reused, not copied
 
 `domain/commands.py` already owns order validation: `_check_volume`
-(volume_min/max/step), `_check_level` (`stops_level`, in points), and
-`_is_multiple` (which already knows that `0.03 / 0.01` is `2.9999999999999996`).
-These three become public names; `validate()` keeps calling them.
-`web/training.py::_check_direction` moves to `domain/commands.py` as
-`check_sltp_side()` and `training.py` imports it — one copy, not two, and no new
-file.
+(volume_min/max/step) and `_check_level`, which already checks the *side* of a
+level against a reference price **and** the broker's `stops_level` in points, and
+already treats `None` as "leave alone" and `0.0` as "clear" (rule 4). Both become
+public names — `check_volume`, `check_level` — and `validate()` keeps calling
+them. Paper passes the entry price for a market order and `request_price` for a
+pending one as the reference.
+
+`web/training.py::_check_direction` is deliberately **left where it is**. It
+exists to handle the case where the entry price is not yet known and only sl-vs-tp
+can be compared; paper always has a reference price, so `check_level` covers it
+and moving the training helper would be churn that buys nothing.
 
 Exactly one refusal is genuinely new: **insufficient free margin**. It lives in
 the pure evaluator, not in the route.
@@ -273,9 +286,14 @@ is yours.
 
 - `lib/paperApi.ts` (mirrors `replayApi.ts`), `hooks/usePaperAccount.ts` polling
   at 2500 ms — the same interval as `/api/live`.
-- A `REAL | PAPER` toggle in `ChartToolbar`, persisted in the `chart` blob of
-  `app_prefs` through the existing `useChartPrefs`. Reopening the page keeps the
-  last mode.
+- A `REAL`/`PAPER` toggle in `ChartToolbar`, persisted under its **own**
+  `app_prefs` key `paper` (`{mode, accountId}`) through a new
+  `get_paper_prefs`/`set_paper_prefs` pair — the shape `prefs_store` already uses
+  for chart, replay, risk and trade-PNG preferences. Not folded into the `chart`
+  blob: `ChartSettings` is versioned `version: 1` and carries a legacy-object
+  migration, so adding a field there means a version bump and a second migration
+  path, and which paper account is selected is not chart appearance anyway.
+  Reopening the page keeps the last mode.
 - With PAPER active the chart container takes an accent border and a badge.
   Colours come from `lib/theme.ts` and sizes from `lib/type.ts`; pasted hex and
   `text-[13px]` are defects, not choices.
@@ -316,7 +334,10 @@ MAE/MFE are computed at close from cached candles via `domain/excursion`, the wa
    with zero open positions instead of dividing by zero; partial-close split
    arithmetic; R still correct after the stop is moved (`sl_initial`).
 2. `tests/test_paper_store.py`: CRUD, parent/child split, archive, cascade delete.
-3. `tests/test_paper_web.py`: every route against `FakeMT5Client` — a stale quote
+3. `tests/test_paper_web.py`: the `web/paper.py` service functions called
+   directly against a seeded DB, with no HTTP layer — the same discipline
+   `tests/test_web.py` states, which is why this project carries no `TestClient`
+   dependency. A stale quote
    is refused, insufficient margin is refused, the reused volume-step and
    `stops_level` validators are actually reached, `volume` together with
    `risk_pct` is a `400` and so is neither, `reverse` leaves one closed row marked
