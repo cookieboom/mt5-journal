@@ -145,8 +145,8 @@ def load_open_context(
 
     The position is synthesised from what the human chose, in exactly the shape
     `domain/commands` reads off a real `open_positions` row — which is why the
-    open path needs no new branch inside `_check_trade_mode`, `_check_volume`,
-    or `_check_level`. Same rules, same messages, one code path.
+    open path needs no new branch inside `_check_trade_mode`, `check_volume`,
+    or `check_level`. Same rules, same messages, one code path.
     """
     spec = _spec(conn, symbol)
     if spec is None:
@@ -175,7 +175,7 @@ def _check_feed_fresh(
     `price_ref` is what the lot was derived from, so a stale one does not fail
     loudly — it silently resizes the order. 0.10 lot against a 4035 close with a
     4030 stop is 50 USC of intended risk; if the market really sits at 4060, the
-    same command stakes ~300 USC. `_check_level`'s fresh-tick re-validation in
+    same command stakes ~300 USC. `check_level`'s fresh-tick re-validation in
     `journal live` catches a stop on the wrong SIDE, never a wrong SIZE, because
     the volume is frozen at enqueue by design — so the guard has to be here.
 

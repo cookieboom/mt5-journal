@@ -467,7 +467,7 @@ def test_an_open_without_a_stop_is_refused():
 
 
 def test_an_open_with_the_stop_on_the_wrong_side_is_refused():
-    # A buy's stop above the price. `_check_level` already knows this; the test
+    # A buy's stop above the price. `check_level` already knows this; the test
     # is here to prove the open path routes through it.
     with pytest.raises(CommandError, match="BAWAH"):
         validate("open", _open(), _ospec(), sl=4040.0, volume=0.10, balance=_BALANCE)
