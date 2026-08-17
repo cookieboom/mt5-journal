@@ -231,3 +231,36 @@ def step_tick(positions: list[PaperPos], quote: Quote,
             events.append(_exit(p, p.tp, quote.time_msc, "tp"))
 
     return events
+
+
+def resolve_stopout(positions: list[PaperPos], quotes: dict[str, Quote],
+                    specs_by_symbol: dict[str, Specs], balance: float,
+                    stopout_pct: float, leverage: int,
+                    now_msc: int) -> list[Event]:
+    """Liquidate while the margin level sits below `stopout_pct`, worst loser
+    first, recomputing after each close — MT5's own order, not a guess.
+
+    Returns `[]` when there is nothing to liquidate, when the account is flat
+    (no margin, so no level), and — deliberately — whenever the account state is
+    unknown. A missing quote or spec must never liquidate anything: the one
+    number that decides this is exactly the number we do not have.
+
+    `balance` is the REALIZED balance and is not updated here. The caller
+    persists each closed slice's P&L; this function only decides who goes.
+    """
+    events: list[Event] = []
+    while True:
+        state = account_state(positions, quotes, specs_by_symbol, balance, leverage)
+        if state.margin_level is None or state.margin_level >= stopout_pct:
+            return events
+
+        open_now = [p for p in positions if p.status == "open"]
+        losses = [
+            (floating_usc(p, quotes[p.symbol], specs_by_symbol[p.symbol]), p)
+            for p in open_now
+        ]
+        if not losses:
+            return events
+        _, worst = min(losses, key=lambda pair: pair[0])
+        price = exit_side(worst.direction, quotes[worst.symbol])
+        events.append(_exit(worst, price, now_msc, "stopout"))

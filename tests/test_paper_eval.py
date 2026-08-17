@@ -179,3 +179,50 @@ def test_an_order_that_fills_can_be_stopped_out_on_the_same_tick():
     p = pos(status="pending", entry_price=None, entry_msc=None, sl=4029.0)
     events = pe.step_tick([p], q(bid=4028.0, ask=4030.5), 2)
     assert [(e.kind, e.reason) for e in events] == [("fill", None), ("exit", "sl")]
+
+
+def _stopout(positions, balance, pct=20.0, quote=None):
+    return pe.resolve_stopout(
+        positions, {"XAUUSDc": quote or q(bid=4000.0, ask=4000.5)},
+        {"XAUUSDc": XAU}, balance=balance, stopout_pct=pct, leverage=500,
+        now_msc=9_000,
+    )
+
+
+def test_no_stopout_while_the_margin_level_is_healthy():
+    assert _stopout([pos(entry_price=4030.0)], balance=1_000_000.0) == []
+
+
+def test_a_flat_account_is_never_stopped_out():
+    # No margin means no level to compare — the check is skipped, not divided by.
+    assert _stopout([], balance=1.0) == []
+
+
+def test_the_worst_loser_is_closed_first_and_the_cascade_stops_when_it_can():
+    # Two buys, both under water at bid 4000; the 4060 entry is the worse one.
+    small = pos(id=1, entry_price=4035.0)
+    large = pos(id=2, entry_price=4060.0)
+    events = _stopout([small, large], balance=800.0)
+    assert [(e.position_id, e.reason) for e in events] == [(2, "stopout")]
+    assert large.status == "closed" and small.status == "open"
+
+
+def test_the_cascade_keeps_closing_until_the_level_recovers():
+    a = pos(id=1, entry_price=4055.0)
+    b = pos(id=2, entry_price=4060.0)
+    events = _stopout([a, b], balance=100.0)
+    assert [(e.position_id, e.reason) for e in events] == [(2, "stopout"), (1, "stopout")]
+
+
+def test_a_stopped_out_position_exits_at_the_exit_side_of_the_quote():
+    p = pos(entry_price=4060.0)
+    events = _stopout([p], balance=100.0)
+    assert events[0].price == pytest.approx(4000.0)   # the bid, for a buy
+
+
+def test_a_missing_quote_stops_nothing_rather_than_liquidating_on_a_guess():
+    p = pos(entry_price=4060.0, symbol="BTCUSDc")
+    events = pe.resolve_stopout([p], {}, {"BTCUSDc": XAU}, balance=1.0,
+                                stopout_pct=20.0, leverage=500, now_msc=9_000)
+    assert events == []
+    assert p.status == "open"
