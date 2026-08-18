@@ -20,6 +20,7 @@ CHART_KEY = "chart"
 REPLAY_KEY = "replay"
 TRADE_PNG_KEY = "trade_png"
 RISK_KEY = "risk_sizing"
+PAPER_KEY = "paper"
 
 
 def get_pref(conn: sqlite3.Connection, key: str) -> str | None:
@@ -84,6 +85,20 @@ def get_trade_png_prefs(conn: sqlite3.Connection) -> Any | None:
 def set_trade_png_prefs(conn: sqlite3.Connection, prefs: Any) -> int:
     """Persist trade-PNG render settings (serialised to JSON). Returns updated_ms."""
     return set_pref(conn, TRADE_PNG_KEY, json.dumps(prefs), now_ms())
+
+
+def get_paper_prefs(conn: sqlite3.Connection) -> Any | None:
+    """Paper-trading UI state: `{mode: 'real'|'paper', accountId: int|null}`.
+    Its OWN key, not folded into the chart blob — `ChartSettings` is versioned
+    and carries a legacy-object migration, and which paper account is selected is
+    not chart appearance."""
+    raw = get_pref(conn, PAPER_KEY)
+    return None if raw is None else json.loads(raw)
+
+
+def set_paper_prefs(conn: sqlite3.Connection, prefs: Any) -> int:
+    """Upsert the paper-trading UI prefs blob. Returns the updated_ms stamp."""
+    return set_pref(conn, PAPER_KEY, json.dumps(prefs), now_ms())
 
 
 DRAWINGS_PREFIX = "drawings"

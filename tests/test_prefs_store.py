@@ -116,3 +116,11 @@ def test_set_drawings_upserts_one_row_per_key(conn):
         "SELECT COUNT(*) AS n FROM app_prefs WHERE key = 'drawings:XAUUSD'"
     ).fetchone()
     assert row["n"] == 1
+
+
+def test_paper_prefs_round_trip_under_their_own_key(conn):
+    assert ps.get_paper_prefs(conn) is None
+    ps.set_paper_prefs(conn, {"mode": "paper", "accountId": 3})
+    assert ps.get_paper_prefs(conn) == {"mode": "paper", "accountId": 3}
+    # Its own key: turning paper on must not disturb the chart's appearance.
+    assert ps.get_chart_prefs(conn) is None
