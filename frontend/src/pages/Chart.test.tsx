@@ -549,3 +549,56 @@ describe("risk sizing panel", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 });
+
+
+// ---------------------------------------------------------------- paper mode
+// The paper account's own data comes from one hook. Mocked here so the mode
+// test is about what the PAGE renders, not about polling.
+vi.mock("../hooks/usePaperAccount", () => ({
+  usePaperAccount: () => ({
+    view: {
+      account: { id: 1, name: "Scalping XAU", initial_balance: 1e6, balance: 1e6,
+                 leverage: 500, stopout_pct: 20, status: "active",
+                 created_at_msc: 1, archived_at_msc: null },
+      header: { currency: "USC", balance: 1e6, equity: 1e6, margin: 0,
+                free_margin: 1e6, margin_level: null, floating: 0,
+                leverage: 500, stopout_pct: 20 },
+      open: [], pending: [], closed: [],
+      summary: { n: 0, win_rate: null, avg_r: null, total_r: 0,
+                 avg_mae_r: null, avg_mfe_r: null },
+      max_drawdown: null, equity_curve: [],
+    },
+    error: null,
+    refresh: vi.fn(),
+  }),
+}));
+
+describe("Chart in paper mode", () => {
+  function renderPaperChart() {
+    window.localStorage.setItem("paper",
+      JSON.stringify({ mode: "paper", accountId: 1 }));
+    stubFetch();
+    render(
+      <MemoryRouter initialEntries={["/chart"]}>
+        <Routes><Route path="/chart" element={<Chart />} /></Routes>
+      </MemoryRouter>,
+    );
+  }
+
+  it("marks the chart as paper so it cannot be misread as the real account", async () => {
+    renderPaperChart();
+    // The badge ON THE CHART, not the toolbar's mode button — a screenshot
+    // carries the chart and nothing else, so that is where the marker has to be.
+    const badge = await screen.findByLabelText("chart akun paper");
+    expect(badge.textContent).toMatch(/PAPER/);
+  });
+
+  it("does not render the real-money open button while paper is active", async () => {
+    renderPaperChart();
+    await screen.findByLabelText("chart akun paper");
+    // The real panel's open button is the one that spends real money. In paper
+    // mode it must not exist at all — disabled is not enough, a disabled button
+    // still reads as "the thing I am about to press".
+    expect(screen.queryByRole("button", { name: /^buka posisi/i })).toBeNull();
+  });
+});
