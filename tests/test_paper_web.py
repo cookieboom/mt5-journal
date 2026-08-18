@@ -255,3 +255,100 @@ def test_the_equity_curve_and_drawdown_read_closed_slices_in_exit_order(conn, ac
     assert view["summary"]["n"] == 3
     assert view["summary"]["win_rate"] == pytest.approx(1 / 3)
     assert view["max_drawdown"] == pytest.approx(300.0)   # 1_000_500 → 1_000_200
+
+
+def test_a_manual_close_credits_the_balance_at_the_exit_side(conn, account):
+    _fresh_quote(conn)
+    out = _order(conn, account)                        # buy at 4030.5
+    _fresh_quote(conn, bid=4040.0, ask=4040.5)
+    closed = paper.close_position(conn, out["id"])
+    # 9.5 USD/oz on 0.10 oz = 0.95 USD = 95 USC, taken at the bid, not the mid.
+    assert closed["net_profit"] == pytest.approx(95.0)
+    assert closed["exit_reason"] == "manual"
+    assert paper_store.get_account(conn, account)["balance"] == pytest.approx(
+        1_000_095.0)
+
+
+def test_a_partial_close_leaves_a_smaller_open_parent_and_a_closed_child(conn, account):
+    _fresh_quote(conn)
+    out = _order(conn, account)
+    _fresh_quote(conn, bid=4040.0, ask=4040.5)
+    child = paper.close_position(conn, out["id"], volume=0.04)
+    parent = paper_store.get_position(conn, out["id"])
+    assert child["volume"] == pytest.approx(0.04)
+    assert child["status"] == "closed"
+    assert child["net_profit"] == pytest.approx(38.0)      # 9.5 USD/oz on 0.04 oz
+    assert parent["volume"] == pytest.approx(0.06)
+    assert parent["status"] == "open"
+
+
+def test_a_partial_close_of_the_whole_volume_closes_it_outright(conn, account):
+    _fresh_quote(conn)
+    out = _order(conn, account)
+    closed = paper.close_position(conn, out["id"], volume=0.10)
+    assert closed["status"] == "closed"
+    assert paper_store.get_position(conn, out["id"])["status"] == "closed"
+
+
+def test_moving_the_stop_never_rewrites_the_stop_it_was_born_with(conn, account):
+    _fresh_quote(conn)
+    out = _order(conn, account)
+    moved = paper.modify_sltp(conn, out["id"], sl=4029.0)
+    assert moved["sl"] == pytest.approx(4029.0)
+    assert moved["sl_initial"] == pytest.approx(4025.0)
+
+
+def test_clearing_a_level_is_zero_and_leaving_it_alone_is_none(conn, account):
+    _fresh_quote(conn)
+    out = _order(conn, account, tp=4050.0)
+    kept = paper.modify_sltp(conn, out["id"], sl=None, tp=0.0)
+    assert kept["sl"] == pytest.approx(4025.0)        # untouched
+    assert kept["tp"] == pytest.approx(0.0)          # cleared
+
+
+def test_a_reverse_closes_the_old_row_and_opens_the_other_way(conn, account):
+    _fresh_quote(conn)
+    out = _order(conn, account)
+    result = paper.reverse_position(conn, out["id"])
+    old = paper_store.get_position(conn, out["id"])
+    assert old["status"] == "closed" and old["exit_reason"] == "reverse"
+    assert result["direction"] == "sell"
+    assert result["volume"] == pytest.approx(0.10)
+    assert result["sl"] == pytest.approx(0.0) and result["tp"] == pytest.approx(0.0)
+
+
+def test_cancelling_a_pending_order_marks_it_cancelled_and_keeps_the_row(conn, account):
+    _fresh_quote(conn)
+    out = _order(conn, account, kind="limit", price=4025.0, sl=4020.0)
+    cancelled = paper.cancel_pending(conn, out["id"])
+    assert cancelled["status"] == "cancelled"
+
+
+def test_cancelling_an_open_position_is_refused(conn, account):
+    _fresh_quote(conn)
+    out = _order(conn, account)
+    with pytest.raises(paper.PaperError, match="pending"):
+        paper.cancel_pending(conn, out["id"])
+
+
+def test_close_all_reaches_every_symbol_and_the_pending_orders_too(conn, account):
+    _fresh_quote(conn)
+    live_store.upsert_quote(conn, "BTCUSDc", bid=50_000.0, ask=50_010.0,
+                            tick_msc=now_ms(), now_msc=now_ms())
+    conn.execute(
+        "INSERT INTO symbol_specs (symbol, symbol_base, digits, point, tick_size, "
+        "tick_value, contract_size, currency_profit, fetched_at, volume_min, "
+        "volume_max, volume_step, stops_level, freeze_level, trade_mode, "
+        "filling_mode) VALUES ('BTCUSDc', 'BTCUSD', 2, 0.01, 0.01, 0.1, 1.0, "
+        "'USD', 1, 0.01, 100.0, 0.01, 0, 0, 4, 1)"
+    )
+    conn.commit()
+    a = _order(conn, account)
+    b = _order(conn, account, symbol="BTCUSDc", sl=49_000.0)
+    c = _order(conn, account, kind="limit", price=4000.0, sl=3_990.0)
+
+    out = paper.close_all(conn, account)
+
+    assert sorted(out["closed"]) == sorted([a["id"], b["id"]])
+    assert out["cancelled"] == [c["id"]]
+    assert paper_store.list_positions(conn, account, statuses=("open", "pending")) == []
