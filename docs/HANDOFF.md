@@ -36,7 +36,60 @@ home each, and a second copy is a future lie. Point, never duplicate.
 
 ## CURRENT STATE — update this section every session
 
-**Last updated:** 2026-08-14
+**Last updated:** 2026-08-18
+
+**2026-08-18 — paper trading: a virtual account on the live chart
+(`worktree-spec-paper-trading`, 17 tasks, spec + plan in
+`docs/superpowers/`).** A second, simulated account with its own balance,
+leverage and stop-out, fed by the same ticks `journal live` already stores, so
+a setup can be traded without a broker order. Nothing here touches `deals_raw`
+or `trades` (rule 2): the feature lives entirely in `paper_accounts`,
+`paper_positions`, `live_quotes` (migration 013) and is invisible to
+`journal rebuild`.
+
+Shape: a pure evaluator (`domain/paper_eval.py`) decides fills, pending
+triggers, SL/TP and the stop-out cascade per tick; a pure store
+(`store/paper_store.py`) writes them; `web/paper.py` is the impure glue and the
+only place that refuses. The daemon evaluates paper positions per tick ahead of
+its blocking work. The web never touches the bridge — prices come from the DB
+or the order is refused, with the same `FEED_STALE_MS` threshold a real open
+uses.
+
+Two defects found while building, both fixed at the root rather than at the
+call site:
+
+- `place_order` built its margin state from the ordered symbol's quote alone,
+  so an account already holding XAUUSDc could never open BTCUSDc — free margin
+  read as unknown and every second-symbol open was refused. `_live_state` now
+  reads a quote and specs per open symbol across the whole book.
+- The browser treated a refusal as a fill. `postJson` RESOLVES a 400 as
+  `{ok:false, error}` rather than throwing, so the drafted submit path called
+  `onPlaced()` on a rejected order. The panel now reads the envelope, and a
+  test drives a refusal through it.
+
+Measured, contradicting the plan: the plan's own close tests expected
+**950 USC** on a 9.5 move at 0.10 lot. XAUUSDc is `tick_size=0.001`,
+`tick_value=0.1` USC per lot per tick, so the true figure is **95 USC**
+(0.95 USD) — the plan had multiplied by ten. The implementation is right and
+the expectations were corrected.
+
+Two deliberate divergences from the plan, both recorded in the commits: money
+renders through the existing `lib/format.money` (unknown reads `n/a`, as
+everywhere else) instead of a second component-local formatter; and archiving
+an account confirms inline, because `ConfirmModal` is typed to a live-command
+`PreviewResult` and does not fit.
+
+Gates: `uv run pytest` **907 passed, 1 skipped**; `npm --prefix frontend test`
+**402 passed / 51 files**; `tsc -b && vite build` clean. `journal rebuild` run
+against an online snapshot of the live 61 MB store (the daemon was writing, so
+the store itself was left alone): **132 trades**, `journal status` exit 0, the
+paper tables present and empty, `deals_raw` 270 before and after.
+
+**Still owed by a human, not done here:** restart `journal live` so the daemon
+loads `paper_step` (it also still owes the `code_fingerprint` restart from
+migration 012), and hand-verify one margin figure against MT5 for a 0.10 lot
+XAUUSDc position at 1:500 — the broker is the authority, not this doc.
+`app.py` is past 1,100 lines and wants splitting; that is its own change.
 
 **2026-08-14 — the dashboard's last-trades strip stopped being a dead end
 (`worktree-dashboard-recent-links`).** "Trade terakhir" listed a close time and
