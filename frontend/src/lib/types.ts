@@ -379,3 +379,45 @@ export interface LabScore {
   pooled: boolean;
   bars: LabBarScore[];
 }
+
+// Paper trading. Money is USC — `header.currency` is the label to print, and
+// every one of these numbers can be null, meaning UNKNOWN (never 0).
+export interface PaperAccount {
+  id: number; name: string; initial_balance: number; balance: number;
+  leverage: number; stopout_pct: number; status: "active" | "archived";
+  created_at_msc: number; archived_at_msc: number | null;
+}
+
+export interface PaperHeader {
+  currency: string; balance: number;
+  equity: number | null; margin: number | null; free_margin: number | null;
+  margin_level: number | null; floating: number | null;
+  leverage: number; stopout_pct: number;
+}
+
+export interface PaperPosition {
+  id: number; account_id: number; symbol: string; symbol_base: string;
+  direction: "buy" | "sell"; order_kind: "market" | "limit" | "stop";
+  request_price: number | null; volume: number; sl: number; tp: number;
+  sl_initial: number | null; expires_msc: number | null;
+  status: "pending" | "open" | "closed" | "cancelled" | "expired";
+  requested_msc: number; entry_msc: number | null; entry_price: number | null;
+  exit_msc: number | null; exit_price: number | null;
+  exit_reason: "tp" | "sl" | "manual" | "stopout" | "reverse" | null;
+  net_profit: number | null; r_multiple: number | null;
+  mae_r: number | null; mfe_r: number | null; parent_id: number | null;
+  floating?: number | null;
+}
+
+export interface PaperSummary {
+  n: number; win_rate: number | null; avg_r: number | null; total_r: number;
+  avg_mae_r: number | null; avg_mfe_r: number | null;
+}
+
+export interface PaperAccountView {
+  account: PaperAccount; header: PaperHeader;
+  open: PaperPosition[]; pending: PaperPosition[]; closed: PaperPosition[];
+  summary: PaperSummary; max_drawdown: number | null;
+  equity_curve: { exit_msc: number; balance: number; position_id: number;
+                  symbol_base: string }[];
+}
