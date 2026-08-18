@@ -100,3 +100,19 @@ def test_upsert_forming_rejects_seconds(conn):
     bad = Candle(time_msc=1_700_000_040, open=1.0, high=2.0, low=0.5, close=1.5)
     with pytest.raises(ValueError):
         ls.upsert_forming(conn, "XAUUSDc", "M5", bad, 1_700_000_045_000)
+
+
+def test_a_quote_is_overwritten_in_place_and_stamps_when_it_was_written(conn):
+    ls.upsert_quote(conn, "XAUUSDc", bid=4030.0, ask=4030.5,
+                    tick_msc=1_000, now_msc=1_100)
+    ls.upsert_quote(conn, "XAUUSDc", bid=4031.0, ask=4031.5,
+                    tick_msc=2_000, now_msc=2_100)
+    row = ls.read_quote(conn, "XAUUSDc")
+    assert (row["bid"], row["ask"]) == (4031.0, 4031.5)
+    assert row["tick_msc"] == 2_000
+    assert row["updated_msc"] == 2_100
+    assert conn.execute("SELECT COUNT(*) FROM live_quotes").fetchone()[0] == 1
+
+
+def test_an_unseen_symbol_has_no_quote_rather_than_a_zero_one(conn):
+    assert ls.read_quote(conn, "BTCUSDc") is None

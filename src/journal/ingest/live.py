@@ -81,6 +81,8 @@ import time
 from dataclasses import dataclass, field
 
 from ..adapter.base import MT5Client, Position
+from ..domain import paper_eval as pe
+from ..domain import replay_eval as rev
 from ..domain.commands import CommandError, build_request
 from ..domain.symbols import to_base
 from ..execute import (
@@ -96,7 +98,7 @@ from ..execute import (
     recover_interrupted,
     reject,
 )
-from ..store import backup, health, live_store
+from ..store import backup, health, live_store, paper_store
 from ..store.candle_queue import claim_next_request, requeue_orphaned
 from ..store.db import now_ms
 from .candle_fill import fulfill_request
@@ -118,6 +120,7 @@ class LiveReport:
     command_status: str | None = None     # its resulting status ('done'/'failed'/…)
     candle_request_id: int | None = None
     candle_bars_written: int | None = None
+    paper_resolved: int = 0
 
 
 @dataclass(frozen=True)
@@ -322,6 +325,154 @@ def _execute_one_command(
     return cmd_id, status
 
 
+def _paper_specs(conn: sqlite3.Connection, symbol: str) -> pe.Specs | None:
+    row = conn.execute(
+        "SELECT tick_size, tick_value, contract_size, currency_profit "
+        "FROM symbol_specs WHERE symbol = ?", (symbol,)
+    ).fetchone()
+    if row is None or row["tick_size"] in (None, 0) or row["tick_value"] in (None, 0):
+        return None
+    return pe.Specs(
+        tick_size=float(row["tick_size"]), tick_value=float(row["tick_value"]),
+        contract_size=float(row["contract_size"] or 1.0),
+        currency_profit=row["currency_profit"] or "",
+    )
+
+
+def _as_state(row: sqlite3.Row) -> pe.PaperPos:
+    return pe.PaperPos(
+        id=row["id"], symbol=row["symbol"], direction=row["direction"],
+        order_kind=row["order_kind"], request_price=row["request_price"],
+        volume=row["volume"], sl=row["sl"] or 0.0, tp=row["tp"] or 0.0,
+        status=row["status"], entry_price=row["entry_price"],
+        entry_msc=row["entry_msc"], expires_msc=row["expires_msc"],
+    )
+
+
+def _persist_exit(conn: sqlite3.Connection, row: sqlite3.Row, ev: pe.Event,
+                  specs: pe.Specs | None) -> None:
+    """Write one closed slice: money from the specs, R from `sl_initial`, and the
+    account's realized balance moved by exactly that money. MAE/MFE stay NULL
+    here — they need cached candle rows, and the close path must not block the
+    daemon on a candle read; `web/paper.py` fills them when the panel asks.
+
+    `specs` may be None — a symbol can fill and exit on price alone (rule 4's
+    "no guess" only bites the MONEY math). `net_profit` then stays NULL/unknown
+    rather than coerced to 0; R still resolves independently, since it needs
+    only entry/exit/sl, not the symbol's tick value."""
+    entry = row["entry_price"]
+    net = None if entry is None or specs is None else rev.net_profit_usc(
+        row["direction"], entry, ev.price, row["volume"],
+        specs.tick_size, specs.tick_value,
+    )
+    r = None
+    if entry is not None and row["sl_initial"] is not None:
+        r = rev.r_multiple(row["direction"], entry, ev.price, row["sl_initial"])
+    paper_store.mark_close(
+        conn, row["id"], exit_msc=ev.time_msc, exit_price=ev.price,
+        exit_reason=ev.reason, net_profit=net, r_multiple=r,
+        mae=None, mfe=None, mae_r=None, mfe_r=None,
+    )
+    if net is not None:
+        paper_store.add_balance(conn, row["account_id"], net)
+
+
+def paper_step(client: MT5Client, conn: sqlite3.Connection, *,
+               now_msc: int) -> int:
+    """Advance every live paper position by one tick, and return how many
+    DISTINCT positions were resolved this cycle — closed or expired. A fill
+    alone does not count: it starts a position's life, it does not conclude it.
+    Counted by position id, not by event: a pending order that fills and then
+    gaps through its stop on the SAME tick produces two events (fill, exit) for
+    one position, and must report 1, not 2 — this value surfaces to a human
+    through `LiveReport.paper_resolved` and must not lie about how many
+    positions it touched.
+
+    Zero exposure means zero bridge calls: the symbol list comes from the DB
+    first. A bridge failure is logged and the step returns — losing the loop
+    loses unrecoverable live SL history, and no simulated account is worth that.
+
+    Runs regardless of `trading`: paper is not real trading.
+
+    A position can only be resolved once, on both axes:
+      * WITHIN this cycle, `states` (mutable `PaperPos`s) are shared between
+        `step_tick` and `resolve_stopout` — once a position's in-memory status
+        flips to "closed"/"expired", both functions' own status guards exclude
+        it from further processing on the very same pass, so the event list
+        contains at most one exit per position this cycle.
+      * ACROSS cycles/restarts, each cycle re-reads `list_positions(...,
+        statuses=("pending","open"))` fresh from the DB. `mark_fill`/
+        `mark_close` flip that status column, so a row closed by a prior cycle
+        (or a prior process, before a restart) never appears in `rows`/`states`
+        again — it is structurally excluded from being handed to `mark_close`
+        a second time, which is the hazard `mark_close` itself does not guard.
+    """
+    symbols = paper_store.open_or_pending_symbols(conn)
+    if not symbols:
+        return 0
+
+    quotes: dict[str, pe.Quote] = {}
+    specs: dict[str, pe.Specs] = {}
+    for symbol in symbols:
+        try:
+            tick = client.symbol_info_tick(symbol)
+        except Exception:
+            log.exception("paper: tick fetch failed for %s — step skipped", symbol)
+            return 0
+        if tick is None or tick.bid is None or tick.ask is None:
+            continue
+        # A fill/SL/TP trigger needs only the quote — no specs required. Specs
+        # are needed ONLY for the money math on a close (rule 4: unknown specs
+        # must not block a fill, they must only leave net_profit/margin NULL).
+        tick_msc = tick.time_msc or now_msc
+        live_store.upsert_quote(conn, symbol, bid=float(tick.bid),
+                                ask=float(tick.ask), tick_msc=tick_msc,
+                                now_msc=now_msc)
+        quotes[symbol] = pe.Quote(symbol=symbol, bid=float(tick.bid),
+                                  ask=float(tick.ask), time_msc=tick_msc)
+        spec = _paper_specs(conn, symbol)
+        if spec is not None:
+            specs[symbol] = spec
+
+    resolved_ids: set[int] = set()
+    for account in paper_store.list_accounts(conn, status="active"):
+        rows = {r["id"]: r for r in paper_store.list_positions(
+            conn, account["id"], statuses=("pending", "open"))}
+        states = [_as_state(r) for r in rows.values()]
+        if not states:
+            continue
+
+        events: list[pe.Event] = []
+        for quote in quotes.values():
+            events.extend(pe.step_tick(states, quote, now_msc))
+        events.extend(pe.resolve_stopout(
+            states, quotes, specs, balance=float(account["balance"]),
+            stopout_pct=float(account["stopout_pct"]),
+            leverage=int(account["leverage"]), now_msc=now_msc,
+        ))
+
+        for ev in events:
+            row = rows[ev.position_id]
+            if ev.kind == "fill":
+                paper_store.mark_fill(
+                    conn, ev.position_id, entry_msc=ev.time_msc,
+                    entry_price=ev.price,
+                    sl_initial=(row["sl"] if row["sl"] and row["sl"] > 0 else None),
+                )
+            elif ev.kind == "expire":
+                paper_store.update_status(conn, ev.position_id, "expired")
+                resolved_ids.add(ev.position_id)
+            else:
+                # Re-read: a fill earlier in this same loop wrote the entry price
+                # this exit's money depends on. specs.get(...): None is a valid,
+                # meaningful value here (unknown spec), not a bug.
+                fresh = paper_store.get_position(conn, ev.position_id)
+                _persist_exit(conn, fresh, ev, specs.get(fresh["symbol"]))
+                resolved_ids.add(ev.position_id)
+
+    return len(resolved_ids)
+
+
 def live_cycle(
     client: MT5Client,
     conn: sqlite3.Connection,
@@ -369,6 +520,16 @@ def live_cycle(
     # tell "journal live is running" from "data is just old". Empty open_positions
     # cannot serve as a heartbeat (no rows when nothing is open).
     live_store.beat(conn, now_ms())
+
+    # (4b) paper trading. AHEAD of the ingest pipeline and the order send, both
+    # of which can block for seconds on a bridge round trip: a paper SL has a
+    # deadline the same way an order does. Zero cost when no paper position is
+    # live, and it runs with `trading` off — paper is not real trading.
+    try:
+        paper_resolved = paper_step(client, conn, now_msc=observed_msc)
+    except Exception:
+        log.exception("paper: step failed — loop continues")
+        paper_resolved = 0
 
     # (5) detect closes → ingest.
     ingest_ran = False
@@ -446,6 +607,7 @@ def live_cycle(
         command_status=command_status,
         candle_request_id=candle_request_id,
         candle_bars_written=candle_bars_written,
+        paper_resolved=paper_resolved,
     )
 
 

@@ -10,11 +10,15 @@ alongside; the reader judges the sample size.
 
 Only CLOSED positions with a non-null `net_profit` count toward a summary — an
 `eod` (unresolved) or never-filled position is excluded (unknown outcome, rule 4).
+
+The summary aggregator itself lives in domain/sim_stats.py and is shared with
+paper trading.
 """
 from __future__ import annotations
 
 import sqlite3
 
+from ..domain.sim_stats import summary as _summary
 from .db import now_ms
 
 
@@ -136,26 +140,6 @@ def mark_close(conn: sqlite3.Connection, position_id: int, *, exit_msc: int,
          mae, mfe, mae_r, mfe_r, position_id),
     )
     conn.commit()
-
-
-def _summary(rows: list[sqlite3.Row]) -> dict:
-    """Aggregate CLOSED, resolved (non-null net_profit) positions. Ungated: a
-    metric is null only when it has NO input (rule 4 — unknown, not zero)."""
-    resolved = [r for r in rows if r["net_profit"] is not None]
-    n = len(resolved)
-    r_vals = [r["r_multiple"] for r in resolved if r["r_multiple"] is not None]
-    mae_vals = [r["mae_r"] for r in resolved if r["mae_r"] is not None]
-    mfe_vals = [r["mfe_r"] for r in resolved if r["mfe_r"] is not None]
-    total_r = sum(r_vals)
-    wins = sum(1 for r in resolved if r["net_profit"] > 0)
-    return {
-        "n": n,
-        "win_rate": (wins / n) if n else None,
-        "avg_r": (total_r / len(r_vals)) if r_vals else None,
-        "total_r": total_r,
-        "avg_mae_r": (sum(mae_vals) / len(mae_vals)) if mae_vals else None,
-        "avg_mfe_r": (sum(mfe_vals) / len(mfe_vals)) if mfe_vals else None,
-    }
 
 
 def session_summary(conn: sqlite3.Connection, session_id: int) -> dict:

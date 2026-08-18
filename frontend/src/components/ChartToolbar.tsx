@@ -5,6 +5,7 @@ import ChartSettingsDrawer from "./ChartSettingsDrawer";
 
 export default function ChartToolbar({
   symbol, tf, settings, onSymbol, onTf, onSettings, onReset, onJumpNow, onReplay, replayActive,
+  paperMode, onPaperMode,
 }: {
   symbol: Sym;
   tf: Timeframe;
@@ -16,6 +17,8 @@ export default function ChartToolbar({
   onJumpNow: () => void;
   onReplay: () => void;
   replayActive?: boolean;
+  paperMode: boolean;
+  onPaperMode: (on: boolean) => void;
 }) {
   const [gear, setGear] = useState(false);
   return (
@@ -56,6 +59,23 @@ export default function ChartToolbar({
       >
         Ke sekarang
       </button>
+
+      {/* Which account the buttons below aim at. `violet`, not `cyan`: cyan is
+          the app's focus-visible ring, and a mode marker in the focus colour
+          reads as focus. */}
+      <div className="glass flex overflow-hidden text-body" role="group"
+           aria-label="mode akun">
+        <button
+          onClick={() => onPaperMode(false)}
+          aria-pressed={!paperMode}
+          className={`px-2 py-1 ${!paperMode ? "bg-pos/20 text-pos" : "text-muted"}`}
+        >REAL</button>
+        <button
+          onClick={() => onPaperMode(true)}
+          aria-pressed={paperMode}
+          className={`px-2 py-1 ${paperMode ? "bg-violet/20 text-violet" : "text-muted"}`}
+        >PAPER</button>
+      </div>
 
       <button
         className="glass px-3 py-1 text-cyan"

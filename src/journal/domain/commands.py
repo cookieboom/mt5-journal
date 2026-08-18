@@ -40,7 +40,7 @@ from .risk import risk_amount
 # The human's hard cap, 2026-07-23: one lot per command. A constant here rather
 # than a `max` attribute on a form field, so it is enforced somewhere testable.
 # On XAUUSDc 1 lot = 1 oz (CLAUDE.md), so this is a real ceiling, not a
-# formality. It governs volume a human TYPES — see `_check_volume`.
+# formality. It governs volume a human TYPES — see `check_volume`.
 MAX_LOT = 1.0
 
 # The second hard ceiling, and the one that scales with the account: no single
@@ -138,14 +138,14 @@ def _check_trade_mode(kind: str, spec: Mapping[str, Any] | Any, direction: str) 
         raise CommandError("Simbol ini short-only.")
 
 
-def _check_volume(
+def check_volume(
     kind: str, position: Mapping[str, Any] | Any, spec: Mapping[str, Any] | Any,
     volume: float | None,
 ) -> None:
     """Every rule about a volume the HUMAN typed.
 
-    Not called for `close`, whose volume is the position's own — validating it
-    could only ever refuse a legitimate exit.
+    Paper trading is now a second caller. Not called for `close`, whose volume is
+    the position's own — validating it could only ever refuse a legitimate exit.
     """
     if volume is None:
         raise CommandError("Volume wajib diisi untuk perintah ini.")
@@ -188,15 +188,17 @@ def _check_volume(
             )
 
 
-def _check_level(
+def check_level(
     name: str, level: float | None, direction: str,
     price: float | None, spec: Mapping[str, Any] | Any,
 ) -> None:
     """One of SL/TP against the current price.
 
-    `None` = leave it alone, `0.0` = clear it (rule 4). A cleared level has no
-    side, so the side check must skip it — otherwise clearing a buy's stop would
-    be refused for sitting 'below' the price.
+    Paper trading is now a second caller. `price` is the entry price for a market
+    order and the requested price for a pending one. `None` = leave it alone,
+    `0.0` = clear it (rule 4). A cleared level has no side, so the side check must
+    skip it — otherwise clearing a buy's stop would be refused for sitting 'below'
+    the price.
     """
     if level is None:
         return
@@ -311,23 +313,23 @@ def validate(
             # here is cheaper and tells the human something they can act on.
             raise CommandError("Tidak ada yang diubah — isi SL atau TP.")
         price = _get(position, "price_current")
-        _check_level("sl", sl, direction, price, spec)
-        _check_level("tp", tp, direction, price, spec)
+        check_level("sl", sl, direction, price, spec)
+        check_level("tp", tp, direction, price, spec)
         return
 
     if kind == "open":
         # Order matters: volume rules first (the cheapest and most specific
         # message), then the levels, then the risk — which needs both a valid
         # volume and a valid SL to mean anything.
-        _check_volume(kind, position, spec, volume)
+        check_volume(kind, position, spec, volume)
         price = _get(position, "price_current")
-        _check_level("sl", sl, direction, price, spec)
-        _check_level("tp", tp, direction, price, spec)
+        check_level("sl", sl, direction, price, spec)
+        check_level("tp", tp, direction, price, spec)
         _check_risk(position, spec, sl, volume, balance)
         return
 
     if kind in ("close_partial", "add_volume"):
-        _check_volume(kind, position, spec, volume)
+        check_volume(kind, position, spec, volume)
 
 
 # ------------------------------------------------------------- request building

@@ -13,6 +13,13 @@ import { useLiveStatus } from "../hooks/useLiveStatus";
 import { useLiveForming } from "../hooks/useLiveForming";
 import { useLiveCommand } from "../hooks/useLiveCommand";
 import { useRiskSizing } from "../hooks/useRiskSizing";
+import { usePaperAccount } from "../hooks/usePaperAccount";
+import { usePaperPrefs } from "../hooks/usePaperPrefs";
+import {
+  cancelPending, closeAll, closePosition, listAccounts, modifySltp,
+  reversePosition,
+} from "../lib/paperApi";
+import type { PaperAccount } from "../lib/types";
 import SltpConfirmDialog from "../components/SltpConfirmDialog";
 import ConfirmModal from "../components/ConfirmModal";
 import ChartToolbar from "../components/ChartToolbar";
@@ -26,6 +33,10 @@ import ReplayControls from "../components/ReplayControls";
 import ReplayPositions from "../components/ReplayPositions";
 import ReplaySummary from "../components/ReplaySummary";
 import RiskSizePanel from "../components/RiskSizePanel";
+import PaperAccountBar from "../components/PaperAccountBar";
+import PaperAccountDialog from "../components/PaperAccountDialog";
+import PaperOrderPanel from "../components/PaperOrderPanel";
+import PaperPositions from "../components/PaperPositions";
 import Sheet from "../components/Sheet";
 import { useChartData } from "../hooks/useChartData";
 import { useDrawings } from "../hooks/useDrawings";
@@ -234,6 +245,31 @@ export default function Chart() {
       : mergeForming(data.candles, forming, timeframeMs(tf))),
     [replayOpen, cursor, data.candles, forming, tf],
   );
+  // ------------------------------------------------------------ paper mode
+  // A virtual account with its own balance. Replay owns the chart when it is
+  // open, so paper only applies outside it — two simulated accounts fed by
+  // different clocks on one chart is a trap, not a feature.
+  const paperPrefs = usePaperPrefs();
+  const paperMode = paperPrefs.prefs.mode === "paper" && !replayOpen;
+  const paperAccountId = paperPrefs.prefs.accountId;
+  const paper = usePaperAccount(paperMode ? paperAccountId : null);
+  const [accountsOpen, setAccountsOpen] = useState(false);
+  const [accounts, setAccounts] = useState<PaperAccount[]>([]);
+  const loadAccounts = useCallback(() => {
+    listAccounts().then(setAccounts).catch(() => { /* offline / dev */ });
+  }, []);
+  useEffect(() => { if (paperMode) loadAccounts(); }, [paperMode, loadAccounts]);
+
+  const draggablePaper = useMemo(
+    () => (paperMode
+      ? (paper.view?.open ?? []).map((p) => ({
+          id: p.id, direction: p.direction, entry_price: p.entry_price,
+          sl: p.sl, tp: p.tp,
+        }))
+      : undefined),
+    [paperMode, paper.view],
+  );
+
   const draggableReplay = useMemo(
     () => (replayOpen
       ? replay.positions
@@ -255,10 +291,16 @@ export default function Chart() {
       replay.modifySltp(positionId, change);
       return;
     }
+    // A paper position is a position: the drag commits straight away, with no
+    // ConfirmModal, because nothing reaches the broker.
+    if (paperMode) {
+      void modifySltp(positionId, change).then(() => paper.refresh());
+      return;
+    }
     const kind: "sl" | "tp" = change.sl !== undefined ? "sl" : "tp";
     const price = (change.sl ?? change.tp)!;
     setSltpDialog({ positionId, kind, price, removing: Math.abs(price) < 1e-9 });
-  }, [replayOpen, replay]);
+  }, [replayOpen, replay, paperMode, paper]);
   const currentClose = shownCandles.length ? shownCandles[shownCandles.length - 1].c : null;
   const atEnd = !!replay.session && cursor !== null && cursor >= replay.session.range_end_msc;
 
@@ -331,7 +373,41 @@ export default function Chart() {
 
   // One definition, two containers: the lg column and the sheet below it. Only
   // one of them renders it at a time — RiskSizePanel must not exist twice.
-  const sidePanel = replayOpen ? (
+  const paperPanel = (
+    <>
+      {paper.view ? (
+        <>
+          <PaperAccountBar header={paper.view.header} name={paper.view.account.name}
+                           live={liveStatus?.live ?? false} />
+          <PaperOrderPanel accountId={paper.view.account.id} symbol={symbol}
+                           lastPrice={currentClose} onPlaced={paper.refresh} />
+          <PaperPositions
+            view={paper.view}
+            chartSymbol={symbol}
+            onClose={(id) => void closePosition(id).then(paper.refresh)}
+            onPartial={(id) => {
+              const held = paper.view?.open.find((p) => p.id === id)?.volume ?? 0;
+              const half = Math.round((held / 2) * 100) / 100;
+              if (half > 0) void closePosition(id, half).then(paper.refresh);
+            }}
+            onReverse={(id) => void reversePosition(id).then(paper.refresh)}
+            onCancel={(id) => void cancelPending(id).then(paper.refresh)}
+            onCloseAll={() => void closeAll(paper.view!.account.id).then(paper.refresh)}
+          />
+        </>
+      ) : (
+        <div className="glass p-3 text-body text-muted">
+          {paper.error ?? "Belum ada akun paper dipilih."}
+        </div>
+      )}
+      <button className="glass px-3 py-1 text-body text-muted hover:text-ink"
+              onClick={() => { loadAccounts(); setAccountsOpen(true); }}>
+        Akun paper…
+      </button>
+    </>
+  );
+
+  const sidePanel = paperMode ? paperPanel : replayOpen ? (
     <>
       <RiskSizePanel
         disabled={!replay.session || atEnd}
@@ -432,6 +508,8 @@ export default function Chart() {
           onJumpNow={() => chartRef.current?.jumpToNow()}
           onReplay={enterReplay}
           replayActive={replayOpen}
+          paperMode={paperMode}
+          onPaperMode={(on) => paperPrefs.update({ mode: on ? "paper" : "real" })}
         />
         <LiveDot status={liveStatus} />
         <button
@@ -469,7 +547,16 @@ export default function Chart() {
         </div>
       )}
       <div className="flex gap-3 flex-1 min-h-0">
-        <div className="relative flex-1 min-h-0">
+        <div className={`relative flex-1 min-h-0 ${paperMode ? "ring-2 ring-violet rounded-lg" : ""}`}>
+          {/* On the CHART, not only in the toolbar: a screenshot
+              carries the chart alone, and a paper equity curve
+              mistaken for the real account is the whole risk here. */}
+          {paperMode && (
+            <div aria-label="chart akun paper"
+                 className="absolute top-2 right-2 z-20 glass px-2 py-1 text-meta text-violet font-semibold">
+              PAPER
+            </div>
+          )}
           {hasBars ? (
             <CandleChart
               ref={chartRef}
@@ -477,7 +564,7 @@ export default function Chart() {
               tf={tf}
               settings={settings}
               candles={shownCandles}
-              draggablePositions={draggableReplay}
+              draggablePositions={draggablePaper ?? draggableReplay}
               plannedOrder={plannedOrder}
               countdown={!replayOpen}
               onSlTpChange={handleSlTpChange}
@@ -580,6 +667,19 @@ export default function Chart() {
             liveCmd.request(sltpDialog.positionId, "sltp", { [sltpDialog.kind]: price });
           }}
           onCancel={() => setSltpDialog(null)}
+        />
+      )}
+      {accountsOpen && (
+        <PaperAccountDialog
+          accounts={accounts}
+          selectedId={paperAccountId}
+          onSelect={(id) => paperPrefs.update({ accountId: id })}
+          onCreated={(a) => { loadAccounts(); paperPrefs.update({ accountId: a.id }); }}
+          onArchived={(id) => {
+            loadAccounts();
+            if (id === paperAccountId) paperPrefs.update({ accountId: null });
+          }}
+          onClose={() => setAccountsOpen(false)}
         />
       )}
       {liveCmd.preview && (
