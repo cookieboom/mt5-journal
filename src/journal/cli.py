@@ -37,13 +37,14 @@ _DEFAULT_DB = "data/journal.db"
 def doctor() -> None:
     """Verify the adapter: account info, symbols, a live tick, and history shape.
 
-    Needs the siliconmetatrader5 bridge up on localhost:8001.
+    Needs a reachable MT5 backend: the siliconmetatrader5 Docker bridge, or on
+    Windows a running local terminal.
     """
     # Imported here (not at module top) so the CLI module stays importable — and
     # unit-testable — without the bridge installed. Only `doctor` needs it.
-    from .adapter.live import LiveMT5Client
+    from .adapter.select import get_client
 
-    client = LiveMT5Client()
+    client = get_client()
 
     # ---- account -------------------------------------------------------
     acct = client.account_info()
@@ -135,10 +136,10 @@ def sync(db: str = typer.Option(_DEFAULT_DB, help="SQLite DB path.")) -> None:
     only way the archive detector can speak about the whole journal. It is also the
     slow one (minutes on this bridge) — that is the trade.
     """
-    from .adapter.live import LiveMT5Client
+    from .adapter.select import get_client
     from .ingest.deals import sync as run_sync
 
-    client = LiveMT5Client()
+    client = get_client()
     conn = connect(db)
     try:
         r = run_sync(client, conn, full=True)
@@ -526,10 +527,10 @@ def candles(db: str = typer.Option(_DEFAULT_DB, help="SQLite DB path.")) -> None
     same pipeline inside `journal live`, which limits itself to a few windows per
     position close so the forming bar keeps streaming.
     """
-    from .adapter.live import LiveMT5Client
+    from .adapter.select import get_client
     from .ingest.candles import sync_candles
 
-    client = LiveMT5Client()
+    client = get_client()
     conn = connect(db)
     try:
         # No cap here: this is a deliberate foreground command a human is
@@ -562,11 +563,11 @@ def candles_warm(
 ) -> None:
     """Eagerly fill a candle range from the bridge into the store (pre-warm before
     an offline session). Needs the live bridge. Idempotent."""
-    from .adapter.live import LiveMT5Client
+    from .adapter.select import get_client
     from .ingest.candle_fill import fill_range
     from .store.db import now_ms
 
-    client = LiveMT5Client()
+    client = get_client()
     conn = connect(db)
     try:
         n = fill_range(client, conn, symbol, timeframe, from_ms, to_ms, now_ms())
@@ -671,7 +672,7 @@ def poll(
     logging: a row is written only when SL/TP/volume actually changes, so an
     idle account writes nothing. Ctrl+C stops cleanly.
     """
-    from .adapter.live import LiveMT5Client
+    from .adapter.select import get_client
     from .ingest.poller import poll_loop
 
     def _echo_cycle(r) -> None:
@@ -690,7 +691,7 @@ def poll(
     conn = connect(db)
     try:
         login = _one_account_login(conn)  # friendly exit if `sync` never ran
-        client = LiveMT5Client()
+        client = get_client()
         typer.echo(
             f"polling every {interval}s"
             + ("" if once else " — Ctrl+C to stop" + (f", max {duration}s" if duration else ""))
@@ -746,7 +747,7 @@ def live(
     """
     import logging
 
-    from .adapter.live import LiveMT5Client
+    from .adapter.select import get_client
     from .ingest.live import live_loop
 
     # The package logs but nothing ever configured a handler, so every `log.info`
@@ -793,7 +794,7 @@ def live(
     conn = connect(db)
     try:
         login = _one_account_login(conn)  # friendly exit if `sync` never ran
-        client = LiveMT5Client()
+        client = get_client()
         mode = "TRADING ON — will send real orders" if trading else "ingest only (--no-trading)"
         typer.echo(
             f"live: {mode}; idle interval {interval}s"
