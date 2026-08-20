@@ -33,7 +33,7 @@ from journal.adapter.base import (
     is_success,
 )
 from journal.adapter.fake import FakeMT5Client
-from journal.adapter.live import _from_bridge_result, _to_bridge_request
+from journal.adapter._mt5_common import _from_bridge_result, _to_bridge_request
 
 # ------------------------------------------------------------------- enums
 
