@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 import sys
 
-from .base import MT5Client
+from .base import EnumMismatch, MT5Client
 
 log = logging.getLogger(__name__)
 
@@ -24,15 +24,24 @@ def get_client() -> MT5Client:
     if sys.platform == "win32":
         try:
             from .native import NativeMT5Client
-
-            client = NativeMT5Client()
-            log.info("adapter: native MetaTrader5 (Windows)")
-            return client
-        except Exception as exc:
+        except ImportError as exc:
             log.warning(
-                "native adapter unavailable (%s); falling back to the Docker bridge",
+                "native MetaTrader5 package unavailable (%s); falling back to the Docker bridge",
                 exc,
             )
+        else:
+            try:
+                client = NativeMT5Client()
+            except EnumMismatch:
+                raise  # a rule-12 violation is a correctness bug, not an availability failure — never silently fall back
+            except Exception as exc:
+                log.warning(
+                    "native adapter unavailable (%s); falling back to the Docker bridge",
+                    exc,
+                )
+            else:
+                log.info("adapter: native MetaTrader5 (Windows)")
+                return client
 
     from .live import LiveMT5Client
 

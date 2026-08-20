@@ -4,7 +4,8 @@ Everything the rest of the codebase is allowed to know about MetaTrader 5 lives
 here: our own dataclasses (never raw MT5 namedtuples) and our own enums (never
 raw MT5 integer constants). See CLAUDE.md Hard rules 1 and 12.
 
-- Rule 1: `import siliconmetatrader5` may appear ONLY in `live.py`.
+- Rule 1: an MT5 package (`siliconmetatrader5`, `MetaTrader5`) may be imported
+  ONLY in `adapter/live.py` or `adapter/native.py`.
 - Rule 12: MT5 *values* must not escape the adapter either. Timeframes cross
   this Protocol as strings ("M15", matching `candles.timeframe`); deal enums are
   the `IntEnum`s below. `domain/` must never contain a magic `3`.
@@ -20,6 +21,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import Any, Protocol, runtime_checkable
+
+
+class EnumMismatch(RuntimeError):
+    """One of our authoritative IntEnums disagrees with what an MT5 backend
+    (bridge or native) actually reports at init — a rule-12 violation, not an
+    availability failure. Must never be silently downgraded to a fallback."""
+
 
 # --------------------------------------------------------------------- enums
 # The ONLY place these integers live. `live.py` asserts at init that each member

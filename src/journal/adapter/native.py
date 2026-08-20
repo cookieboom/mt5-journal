@@ -24,6 +24,7 @@ from .base import (
     DealEntry,
     DealReason,
     DealType,
+    EnumMismatch,
     Order,
     OrderFilling,
     OrderType,
@@ -91,7 +92,7 @@ class NativeMT5Client:
                     continue
                 native_val = getattr(mt5, attr)
                 if native_val != member.value:
-                    raise RuntimeError(
+                    raise EnumMismatch(
                         f"enum mismatch: {enum_cls.__name__}.{member.name}="
                         f"{member.value} but native {attr}={native_val}"
                     )
@@ -113,7 +114,7 @@ class NativeMT5Client:
         return _build(Tick, tick._asdict()) if tick is not None else None
 
     def symbols_get(self, group: str | None = None) -> list[SymbolInfo]:
-        syms = mt5.symbols_get(group) if group else mt5.symbols_get()
+        syms = mt5.symbols_get(group=group) if group else mt5.symbols_get()
         return [_build(SymbolInfo, s._asdict()) for s in (syms or ())]
 
     def copy_rates_range(

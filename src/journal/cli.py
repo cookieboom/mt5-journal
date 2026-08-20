@@ -561,8 +561,9 @@ def candles_warm(
     to_ms: int = typer.Option(..., "--to", help="Range end, epoch ms (server time)."),
     db: str = typer.Option(_DEFAULT_DB, help="SQLite DB path."),
 ) -> None:
-    """Eagerly fill a candle range from the bridge into the store (pre-warm before
-    an offline session). Needs the live bridge. Idempotent."""
+    """Eagerly fill a candle range into the store (pre-warm before an offline
+    session). Needs a reachable MT5 backend: the siliconmetatrader5 Docker
+    bridge, or on Windows a running local terminal. Idempotent."""
     from .adapter.select import get_client
     from .ingest.candle_fill import fill_range
     from .store.db import now_ms
