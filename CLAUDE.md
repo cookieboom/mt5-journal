@@ -6,7 +6,10 @@ Single user, local-only, macOS (Apple Silicon M4).
 
 ## This account (measured, not assumed)
 
-- Adapter: `siliconmetatrader5` bridge, Docker container on `localhost:8001`.
+- Adapter: `siliconmetatrader5` bridge, Docker container on `localhost:8001`
+  (macOS), OR the official `MetaTrader5` package talking to a local terminal
+  directly (Windows). `adapter/select.py` picks automatically by platform —
+  see `docs/superpowers/specs/2026-08-20-native-mt5-adapter-design.md`.
 - `margin_mode = 2` → **HEDGING**. One order = one position; `position_id` maps
   cleanly to one trade. Only `entry` `0` (IN) and `1` (OUT) exist in this
   account's history — raise on `INOUT` and `OUT_BY`.
