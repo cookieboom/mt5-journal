@@ -3,8 +3,9 @@
 get_client() itself needs a real backend to fully exercise (no bridge and no
 Windows terminal are available in this test run), so these tests cover
 select.py's platform-branch logic with the real backend imports patched out.
-The MT5Client-Protocol contract check itself already exists at
-tests/test_adapter.py:28 (`FakeMT5Client`) — not duplicated here.
+The MT5Client-Protocol contract check for all three backends lives
+elsewhere: `FakeMT5Client` at tests/test_adapter.py:28, `NativeMT5Client`
+and `LiveMT5Client` at tests/test_native_adapter.py — not duplicated here.
 """
 
 from __future__ import annotations

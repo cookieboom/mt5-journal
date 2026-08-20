@@ -1,31 +1,37 @@
-"""Native (Windows) MT5 adapter — see docs/superpowers/specs/2026-08-20-native-mt5-adapter-design.md.
+"""Adapter-backend Protocol conformance — see
+docs/superpowers/specs/2026-08-20-native-mt5-adapter-design.md.
 
-No Windows machine is available to this repo's test run, so this only
-verifies what's checkable without a live terminal: the module imports (or is
-skipped where the `MetaTrader5` package isn't installed) and the class shape
-matches the `MT5Client` Protocol. Functional correctness against a real
-terminal is a manual follow-up (`journal doctor` on Windows).
+Runs unconditionally (no `importorskip`, no Windows terminal, no Docker
+bridge needed): both checks below only need the CLASS to exist, not a live
+connection, so `MetaTrader5` is stubbed into `sys.modules` for the duration
+of the native import — the same technique `tests/test_adapter_select.py`
+uses for the same reason. `LiveMT5Client` needs no stubbing: `live.py`
+imports `siliconmetatrader5`, which has no platform marker in
+pyproject.toml and is installed on every machine including this one.
+
+`issubclass(cls, MT5Client)` on a `runtime_checkable` Protocol checks that
+every Protocol method is present on the class — a real conformance check,
+unlike a hardcoded `hasattr` list (misses new Protocol methods) or
+`issubclass(cls, object)` (true of every class). Functional correctness
+against a real terminal/bridge is a manual follow-up, not this test's job.
 """
 
 from __future__ import annotations
 
-import pytest
+import sys
+from unittest.mock import MagicMock, patch
 
-pytest.importorskip("MetaTrader5")
+from journal.adapter.base import MT5Client
 
 
 def test_native_client_satisfies_mt5client_protocol():
-    from journal.adapter.base import MT5Client
-    from journal.adapter.native import NativeMT5Client
+    with patch.dict(sys.modules, {"MetaTrader5": MagicMock()}):
+        from journal.adapter.native import NativeMT5Client
 
-    assert issubclass(NativeMT5Client, object)
-    for method in (
-        "account_info", "symbol_info", "symbol_info_tick", "symbols_get",
-        "copy_rates_range", "history_deals_get", "history_orders_get",
-        "positions_get", "order_check", "order_send",
-    ):
-        assert hasattr(NativeMT5Client, method), f"missing {method}"
-    # runtime_checkable Protocol: an unconnected instance still can't be
-    # built without a terminal, so this checks the class shape, not an
-    # instance — an isinstance check on a real instance is Task 3's contract
-    # test, run against both backends together.
+    assert issubclass(NativeMT5Client, MT5Client)
+
+
+def test_live_client_satisfies_mt5client_protocol():
+    from journal.adapter.live import LiveMT5Client
+
+    assert issubclass(LiveMT5Client, MT5Client)
