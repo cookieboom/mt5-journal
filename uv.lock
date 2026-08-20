@@ -289,6 +289,17 @@ wheels = [
 ]
 
 [[package]]
+name = "metatrader5"
+version = "5.0.6090"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/74/be/628204c9990d55aa075a6d0182b59fa0feddc0a842d628fb943b69df102e/metatrader5-5.0.6090-cp312-cp312-win_amd64.whl", hash = "sha256:70601ae582a0d9a5b8e4d074b6f198ccf82a3172ced4c8eb4b47ad091f578a86", size = 47928, upload-time = "2026-08-01T12:31:19.146Z" },
+]
+
+[[package]]
 name = "mplfinance"
 version = "0.12.10b0"
 source = { registry = "https://pypi.org/simple" }
@@ -308,6 +319,7 @@ source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
     { name = "lightgbm" },
+    { name = "metatrader5", marker = "sys_platform == 'win32'" },
     { name = "mplfinance" },
     { name = "pandas" },
     { name = "scikit-learn" },
@@ -327,6 +339,7 @@ dev = [
 requires-dist = [
     { name = "fastapi" },
     { name = "lightgbm" },
+    { name = "metatrader5", marker = "sys_platform == 'win32'" },
     { name = "mplfinance" },
     { name = "pandas" },
     { name = "scikit-learn" },
