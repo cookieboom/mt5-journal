@@ -212,38 +212,6 @@ def test_positions_get_called_once_per_cycle(conn):
 # ---------------------------------------------------------------- close detection
 
 
-def test_close_triggers_pipeline_once_in_order(conn, monkeypatch):
-    calls = _spy_pipeline(monkeypatch)
-    client = FakeLiveClient([[_pos(identifier=111)], []])
-    r1 = live_cycle(client, conn, _LOGIN)
-    assert r1.ingest_ran is False          # position still open
-    assert calls == []
-    r2 = live_cycle(client, conn, _LOGIN)  # 111 gone -> closed
-    assert r2.ingest_ran is True
-    assert r2.closed_ids == [111]
-    assert calls == ["sync", "rebuild", "candles", "rebuild"]
-
-
-def test_multiple_closes_debounced_to_one_pipeline(conn, monkeypatch):
-    calls = _spy_pipeline(monkeypatch)
-    client = FakeLiveClient([[_pos(identifier=111), _pos(identifier=222)], []])
-    live_cycle(client, conn, _LOGIN)
-    r2 = live_cycle(client, conn, _LOGIN)
-    assert sorted(r2.closed_ids) == [111, 222]
-    # ONE pipeline run, not one per closed position.
-    assert calls.count("sync") == 1
-    assert calls == ["sync", "rebuild", "candles", "rebuild"]
-
-
-def test_no_close_no_pipeline(conn, monkeypatch):
-    calls = _spy_pipeline(monkeypatch)
-    client = FakeLiveClient([[_pos(identifier=111)], [_pos(identifier=111)]])
-    live_cycle(client, conn, _LOGIN)
-    r2 = live_cycle(client, conn, _LOGIN)
-    assert r2.ingest_ran is False
-    assert calls == []
-
-
 def test_position_cycle_pushes_closed_ids_onto_the_queue_instead_of_ingesting(conn, monkeypatch):
     calls = []
     monkeypatch.setattr(live, "_run_ingest_pipeline", lambda *a, **k: calls.append(a))
@@ -270,43 +238,80 @@ def test_position_cycle_does_not_call_serve_watches(conn, monkeypatch):
     assert calls == []
 
 
-def test_on_close_callback_receives_closed_ids(conn, monkeypatch):
-    _spy_pipeline(monkeypatch)
-    seen = []
-    client = FakeLiveClient([[_pos(identifier=111)], []])
-    live_cycle(client, conn, _LOGIN, on_close=seen.append)
-    live_cycle(client, conn, _LOGIN, on_close=seen.append)
-    assert seen == [[111]]  # fired ONCE, only on the cycle with a close
+# ---------------------------------------------------------------- symbol_cycle
 
 
-def test_on_closing_fires_before_the_ingest_pipeline(conn, monkeypatch):
-    # The CLI uses on_closing to warn the human BEFORE the (blocking) ingest, so
-    # the heartbeat pause never reads as a freeze. It must run before sync.
-    calls = _spy_pipeline(monkeypatch)
-    client = FakeLiveClient([[_pos(identifier=111)], []])
-    live_cycle(conn=conn, client=client, login=_LOGIN)  # cycle 1: position open
-    live_cycle(
-        conn=conn, client=client, login=_LOGIN,
-        on_closing=lambda ids: calls.append(f"closing{ids}"),
-    )  # cycle 2: it closed
-    assert calls == ["closing[111]", "sync", "rebuild", "candles", "rebuild"]
+def test_symbol_cycle_drains_the_queue_and_runs_ingest(conn, monkeypatch):
+    calls = []
+    monkeypatch.setattr(live, "_run_ingest_pipeline", lambda *a, **k: calls.append(a))
+    client = FakeLiveClient(positions=[])
+    q: queue_mod.Queue = queue_mod.Queue()
+    q.put([1])
+    q.put([2, 3])                      # two separate position_cycle closes
+
+    report = live.symbol_cycle(client, conn, q)
+
+    assert len(calls) == 1              # coalesced into ONE pipeline run
+    assert report.ingest_ran is True
+    assert sorted(report.closed_ids) == [1, 2, 3]
 
 
-def test_failed_ingest_does_not_kill_the_loop(conn, monkeypatch):
-    # Losing the poller loop loses unrecoverable SL history; a broken sync must
-    # be caught and logged, never propagated.
-    def boom(client, conn):
-        raise RuntimeError("bridge died mid-sync")
+def test_symbol_cycle_with_empty_queue_does_not_ingest(conn, monkeypatch):
+    calls = []
+    monkeypatch.setattr(live, "_run_ingest_pipeline", lambda *a, **k: calls.append(a))
+    client = FakeLiveClient(positions=[])
+    q: queue_mod.Queue = queue_mod.Queue()
 
-    monkeypatch.setattr("journal.ingest.deals.sync", boom)
-    monkeypatch.setattr("journal.domain.reconstruct.rebuild", lambda conn: None)
-    monkeypatch.setattr("journal.ingest.candles.sync_candles", lambda client, conn: CandlesReport())
+    report = live.symbol_cycle(client, conn, q)
 
-    client = FakeLiveClient([[_pos(identifier=111)], []])
-    live_cycle(client, conn, _LOGIN)
-    r2 = live_cycle(client, conn, _LOGIN)  # must NOT raise
-    assert r2.closed_ids == [111]
-    assert r2.ingest_ran is False          # it was attempted but failed
+    assert calls == []
+    assert report.ingest_ran is False
+    assert report.closed_ids == []
+
+
+def test_symbol_cycle_calls_serve_watches(conn, monkeypatch):
+    calls = []
+    monkeypatch.setattr(live, "serve_watches", lambda *a, **k: calls.append(a) or 0)
+    client = FakeLiveClient(positions=[])
+    q: queue_mod.Queue = queue_mod.Queue()
+    live.symbol_cycle(client, conn, q)
+    assert len(calls) == 1
+
+
+def test_symbol_cycle_fulfils_one_candle_request(conn):
+    from journal.store import candle_queue as q
+    from journal.adapter.base import Candle
+
+    BASE = 1_700_000_000_000
+    M1 = 60_000
+    bar = Candle(
+        time_msc=BASE + M1, open=1, high=2, low=0.5, close=1.5,
+        tick_volume=1, spread=1, real_volume=1,
+    )
+    client = FakeLiveClientWithRates([[]], bar)
+    q.request_candles(conn, "XAUUSDc", "M1", 0, 3 * M1)
+
+    report = live.symbol_cycle(client, conn, queue_mod.Queue())
+
+    assert report.candle_request_id is not None
+    assert report.candle_bars_written == 1
+    row = conn.execute(
+        "SELECT status FROM candle_requests WHERE id = ?", (report.candle_request_id,)
+    ).fetchone()
+    assert row["status"] == "done"
+
+
+def test_symbol_cycle_ingest_failure_does_not_raise(conn, monkeypatch):
+    def _boom(*a, **k):
+        raise RuntimeError("bridge gone")
+    monkeypatch.setattr(live, "_run_ingest_pipeline", _boom)
+    client = FakeLiveClient(positions=[])
+    q: queue_mod.Queue = queue_mod.Queue()
+    q.put([1])
+
+    report = live.symbol_cycle(client, conn, q)  # must not raise
+
+    assert report.ingest_ran is False
 
 
 # ---------------------------------------------------------------- command execution
@@ -678,67 +683,6 @@ def test_the_backup_still_runs_while_the_bridge_is_down(conn, tmp_path):
     assert len(_snaps(tmp_path)) == 1
 
 
-# ---------------------------------------------------------------- candle requests
-
-
-def test_live_cycle_fulfils_one_candle_request(conn):
-    from journal.store import candle_queue as q
-    from journal.adapter.base import Candle
-
-    BASE = 1_700_000_000_000
-    M1 = 60_000
-    bar = Candle(
-        time_msc=BASE + M1, open=1, high=2, low=0.5, close=1.5,
-        tick_volume=1, spread=1, real_volume=1,
-    )
-    client = FakeLiveClientWithRates([[]], bar)
-    q.request_candles(conn, "XAUUSDc", "M1", 0, 3 * M1)
-
-    r = live_cycle(client, conn, _LOGIN, trading=True)
-
-    assert r.candle_request_id is not None
-    assert r.candle_bars_written == 1
-    row = conn.execute(
-        "SELECT status FROM candle_requests WHERE id = ?", (r.candle_request_id,)
-    ).fetchone()
-    assert row["status"] == "done"
-
-
-def test_cycle_order_chart_first_bulk_backfill_last(conn, monkeypatch):
-    """The whole cycle is one serial call, so ORDER is the contract:
-
-      * `serve_watches` + the beacon run BEFORE the two blocking steps (ingest
-        on close, order send) — otherwise /chart's forming bar and the liveness
-        indicator freeze for the length of a bridge round trip;
-      * `fulfill_request` runs LAST, behind the command — `fill_range` can walk
-        a whole requested range, and an SL/TP or close must never queue behind
-        bulk history;
-      * the beacon beats a SECOND time right after the ingest pipeline, so a
-        long ingest cannot age it past the web's staleness threshold.
-    """
-    from journal.store import candle_queue as q
-    seen: list[str] = []
-
-    monkeypatch.setattr("journal.ingest.live.serve_watches",
-                        lambda *a, **k: seen.append("watches"))
-    monkeypatch.setattr("journal.ingest.live.live_store.beat",
-                        lambda *a, **k: seen.append("beat"))
-    monkeypatch.setattr("journal.ingest.live._run_ingest_pipeline",
-                        lambda *a, **k: seen.append("ingest"))
-    monkeypatch.setattr("journal.ingest.live._execute_one_command",
-                        lambda *a, **k: (seen.append("command"), (None, None))[1])
-    monkeypatch.setattr("journal.ingest.live.fulfill_request",
-                        lambda *a, **k: (seen.append("candles"), 0)[1])
-
-    client = FakeLiveClient([[_pos(identifier=111)], []])
-    live_cycle(client, conn, _LOGIN)          # cycle 1: 111 open
-    seen.clear()
-    q.request_candles(conn, "XAUUSDc", "M1", 0, 60_000)
-    live_cycle(client, conn, _LOGIN)          # cycle 2: 111 gone -> close + ingest
-
-    assert seen == ["watches", "beat", "ingest", "beat", "command", "candles"]
-
-
 # ---------------------------------------------------------------- heartbeat
 
 
@@ -759,42 +703,6 @@ def test_loop_records_the_code_it_actually_loaded(conn):
     live_loop(FakeLiveClient([[]]), conn, _LOGIN, once=True)
     fp = ls.read_code_fingerprint(conn)
     assert fp and health.changed_modules(fp) == []
-
-
-def test_beat_refreshed_after_the_ingest_pipeline_runs(conn, monkeypatch):
-    """The step-4 beat fires BEFORE the (blocking) ingest pipeline. If that were
-    the only beat, a slow ingest (candles fetch + two rebuilds) could age the
-    beacon past the web's staleness threshold before the next cycle's beat ever
-    lands — `journal live` would read as down while it is in fact working. This
-    asserts a SECOND beat lands after the ingest pipeline finishes, so the
-    heartbeat recorded while ingest is still in flight is stale by the time
-    `live_cycle` returns."""
-    from journal.store import live_store as ls
-
-    ticks = iter(range(1_700_000_000_000, 1_700_000_100_000, 1000))
-    monkeypatch.setattr("journal.ingest.live.now_ms", lambda: next(ticks))
-
-    captured: dict = {}
-
-    def spy_sync(client, conn):
-        # Runs mid-ingest, AFTER the step-4 beat: captures what the beacon says
-        # while ingest is still running.
-        captured["mid_ingest_beat"] = ls.read_heartbeat(conn)
-        return SyncReport()
-
-    monkeypatch.setattr("journal.ingest.deals.sync", spy_sync)
-    monkeypatch.setattr("journal.domain.reconstruct.rebuild", lambda conn: None)
-    monkeypatch.setattr(
-        "journal.ingest.candles.sync_candles", lambda client, conn: CandlesReport()
-    )
-
-    client = FakeLiveClient([[_pos(identifier=111)], []])
-    live_cycle(client, conn, _LOGIN)          # cycle 1: position open
-    live_cycle(client, conn, _LOGIN)          # cycle 2: it closes -> ingest runs
-
-    assert "mid_ingest_beat" in captured
-    final_beat = ls.read_heartbeat(conn)
-    assert final_beat > captured["mid_ingest_beat"]
 
 
 # ---------------------------------------------------------------- serve_watches

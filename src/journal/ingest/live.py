@@ -144,6 +144,16 @@ class PositionCycleReport:
     paper_resolved: int = 0
 
 
+@dataclass(frozen=True)
+class SymbolCycleReport:
+    observed_msc: int
+    forming_bars_written: int = 0
+    ingest_ran: bool = False
+    closed_ids: list[int] = field(default_factory=list)
+    candle_request_id: int | None = None
+    candle_bars_written: int | None = None
+
+
 def _direction(type_: int | None) -> str | None:
     """MT5 position `type`: 0 = buy, 1 = sell. Anything else is unknown — return
     None (the `open_positions.direction` CHECK allows NULL) rather than guess."""
@@ -707,6 +717,66 @@ def position_cycle(
         command_id=command_id,
         command_status=command_status,
         paper_resolved=paper_resolved,
+    )
+
+
+def symbol_cycle(
+    client: MT5Client,
+    conn: sqlite3.Connection,
+    closed_queue: queue_mod.Queue[list[int]],
+) -> SymbolCycleReport:
+    """One symbol-data cycle: serve forming bars, drain any closed-position ids
+    handed off by position_cycle and run the ingest pipeline once for all of
+    them coalesced, then fulfil one queued candle backfill request.
+
+    Runs on its own interval, independent of position_cycle's — see
+    docs/superpowers/specs/2026-09-04-decouple-live-loop-design.md. A close
+    detected by position_cycle is ingested here on THIS loop's next tick, not
+    inline in the cycle that detected it: that's the whole point of the split.
+    """
+    observed_msc = now_ms()
+
+    forming_bars_written = serve_watches(client, conn, observed_msc)
+
+    closed_ids: list[int] = []
+    while True:
+        try:
+            closed_ids.extend(closed_queue.get_nowait())
+        except queue_mod.Empty:
+            break
+
+    ingest_ran = False
+    if closed_ids:
+        log.info("live: symbol_cycle ingesting closed position(s): %s", closed_ids)
+        try:
+            _run_ingest_pipeline(client, conn)
+            ingest_ran = True
+        except Exception:
+            log.exception(
+                "live: ingest pipeline failed for closed position(s) %s — "
+                "symbol_cycle continues, position_cycle is unaffected", closed_ids,
+            )
+
+    candle_request_id: int | None = None
+    candle_bars_written: int | None = None
+    req = claim_next_request(conn)
+    if req is not None:
+        candle_request_id = int(req["id"])
+        try:
+            candle_bars_written = fulfill_request(client, conn, req, observed_msc)
+        except Exception:
+            log.exception(
+                "live: candle request %d failed — marked failed, will not "
+                "auto-retry this exact row", candle_request_id,
+            )
+
+    return SymbolCycleReport(
+        observed_msc=observed_msc,
+        forming_bars_written=forming_bars_written,
+        ingest_ran=ingest_ran,
+        closed_ids=closed_ids,
+        candle_request_id=candle_request_id,
+        candle_bars_written=candle_bars_written,
     )
 
 
