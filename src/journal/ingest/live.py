@@ -76,6 +76,7 @@ wraps it in a sleep loop with an injectable clock (mirrors `poll_loop`) so
 from __future__ import annotations
 
 import logging
+import queue as queue_mod
 import sqlite3
 import time
 from dataclasses import dataclass, field
@@ -129,6 +130,18 @@ class LiveLoopReport:
     recovered: int = 0                    # orphans closed out at startup
     failed_cycles: int = 0                # cycles that raised (bridge gone, etc)
     stopped_by: str = "duration"          # 'once' | 'duration' | 'interrupt'
+
+
+@dataclass(frozen=True)
+class PositionCycleReport:
+    account_login: int
+    observed_msc: int
+    positions_seen: int = 0
+    snapshots_written: int = 0
+    closed_ids: list[int] = field(default_factory=list)
+    command_id: int | None = None         # the command this cycle acted on, if any
+    command_status: str | None = None     # its resulting status ('done'/'failed'/…)
+    paper_resolved: int = 0
 
 
 def _direction(type_: int | None) -> str | None:
@@ -607,6 +620,92 @@ def live_cycle(
         command_status=command_status,
         candle_request_id=candle_request_id,
         candle_bars_written=candle_bars_written,
+        paper_resolved=paper_resolved,
+    )
+
+
+def position_cycle(
+    client: MT5Client,
+    conn: sqlite3.Connection,
+    login: int,
+    closed_queue: queue_mod.Queue[list[int]],
+    *,
+    trading: bool = True,
+    on_closing=None,
+) -> PositionCycleReport:
+    """The fast half of the split live loop: mirror open positions, detect
+    closes, and (if `trading`) execute one queued command. Timing-free — this is
+    the unit surface (mirrors `live_cycle`, minus watch-serving and ingest).
+
+    A closed position is no longer ingested inline: its id is pushed onto
+    `closed_queue` for the (separately scheduled) symbol side to drain, so a
+    multi-second sync/candle round trip never blocks this cycle's beacon beat
+    or command execution. `on_closing`, if given, is called with the closed
+    position_ids the MOMENT a close is detected, before they are queued.
+    """
+    positions = client.positions_get()
+    observed_msc = now_ms()
+
+    # (1) SL/TP snapshots — reuse poll_once with the SAME fetched list so
+    # positions_get() is called exactly once this cycle.
+    poll_report = poll_once(client, conn, login, positions=positions)
+
+    # (2) close detection reads the PRIOR mirror before we overwrite it.
+    prior_ids = _open_position_ids(conn, login)
+    live_ids = {int(p.identifier) for p in positions if p.identifier is not None}
+    closed_ids = sorted(prior_ids - live_ids)
+
+    _replace_open_positions(conn, login, positions, observed_msc)
+
+    # (3) liveness beacon — ALWAYS, even with no positions, so the web can
+    # tell "journal live is running" from "data is just old". Empty
+    # open_positions cannot serve as a heartbeat (no rows when nothing is open).
+    live_store.beat(conn, now_ms())
+
+    # (3b) paper trading. AHEAD of the order send below, which can block for
+    # seconds on a bridge round trip: a paper SL has a deadline the same way an
+    # order does. Zero cost when no paper position is live, and it runs with
+    # `trading` off — paper is not real trading.
+    try:
+        paper_resolved = paper_step(client, conn, now_msc=observed_msc)
+    except Exception:
+        log.exception("paper: step failed — loop continues")
+        paper_resolved = 0
+
+    # (4) detect closes → hand off to the symbol side. MT5 drops a closed
+    # position from `positions_get()` forever (Trap 6), so this is the one
+    # moment we know to queue its finished deal for ingest.
+    if closed_ids:
+        log.info("live: %d position(s) closed: %s", len(closed_ids), closed_ids)
+        if on_closing is not None:
+            on_closing(closed_ids)
+        closed_queue.put(closed_ids)
+
+    # (5) refuse anything that has been queued too long, THEN execute one
+    # command. Ahead of the claim on purpose: a stale row must not be the one
+    # this cycle sends. Runs with `trading` off too — that is precisely the
+    # mode in which nothing else ever clears the row.
+    expired = expire_stale(conn, login)
+    if expired:
+        log.warning(
+            "live: %d queued command(s) expired unsent — older than %.0fs with "
+            "nothing executing them; re-queue from /live if still wanted",
+            expired, STALE_PENDING_S,
+        )
+
+    command_id: int | None = None
+    command_status: str | None = None
+    if trading:
+        command_id, command_status = _execute_one_command(client, conn, login)
+
+    return PositionCycleReport(
+        account_login=login,
+        observed_msc=observed_msc,
+        positions_seen=poll_report.positions_seen,
+        snapshots_written=poll_report.snapshots_written,
+        closed_ids=closed_ids,
+        command_id=command_id,
+        command_status=command_status,
         paper_resolved=paper_resolved,
     )
 

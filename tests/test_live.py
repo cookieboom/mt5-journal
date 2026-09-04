@@ -16,6 +16,7 @@ properties that matter and are all about real state or real money:
 
 from __future__ import annotations
 
+import queue as queue_mod
 import sqlite3
 
 import pytest
@@ -240,6 +241,32 @@ def test_no_close_no_pipeline(conn, monkeypatch):
     live_cycle(client, conn, _LOGIN)
     r2 = live_cycle(client, conn, _LOGIN)
     assert r2.ingest_ran is False
+    assert calls == []
+
+
+def test_position_cycle_pushes_closed_ids_onto_the_queue_instead_of_ingesting(conn, monkeypatch):
+    calls = []
+    monkeypatch.setattr(live, "_run_ingest_pipeline", lambda *a, **k: calls.append(a))
+    client = FakeLiveClient(positions=[])
+    q: queue_mod.Queue = queue_mod.Queue()
+    live.position_cycle(client, conn, 7, q, trading=False)
+    # seed one open position, then close it next cycle
+    client2 = FakeLiveClient(positions=[_pos(1, symbol="XAUUSDc")])
+    live.position_cycle(client2, conn, 7, q, trading=False)
+    client3 = FakeLiveClient(positions=[])
+    report = live.position_cycle(client3, conn, 7, q, trading=False)
+
+    assert report.closed_ids == [1]
+    assert calls == []                      # ingest NEVER called inline
+    assert q.get_nowait() == [1]             # instead it's on the queue
+
+
+def test_position_cycle_does_not_call_serve_watches(conn, monkeypatch):
+    calls = []
+    monkeypatch.setattr(live, "serve_watches", lambda *a, **k: calls.append(a))
+    client = FakeLiveClient(positions=[])
+    q: queue_mod.Queue = queue_mod.Queue()
+    live.position_cycle(client, conn, 7, q, trading=False)
     assert calls == []
 
 
