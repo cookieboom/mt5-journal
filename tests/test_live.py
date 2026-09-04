@@ -1369,18 +1369,37 @@ def test_position_loop_and_symbol_loop_share_a_locked_client_without_deadlock(co
     from journal.store.db import connect as db_connect
 
     class _SlowClient(FakeLiveClient):
+        def __init__(self, *a, **k):
+            super().__init__(*a, **k)
+            self.rates_calls = 0
+
         def positions_get(self):
             time_mod.sleep(0.01)
             return super().positions_get()
 
         def copy_rates_range(self, *a, **k):
+            self.rates_calls += 1
             time_mod.sleep(0.01)
             return super().copy_rates_range(*a, **k)
 
     db_path = conn.execute("PRAGMA database_list").fetchone()[2]
     conn_symbols = db_connect(db_path)
 
-    client = LockedMT5Client(_SlowClient(positions=[]))
+    # Without an active watch, symbol_cycle's serve_watches is a no-op and
+    # never calls copy_rates_range — the two loops would then just be looping
+    # independently on the same lock OBJECT without ever actually contending
+    # for it. Seed one so symbol_loop's thread genuinely calls through the
+    # SAME LockedMT5Client that position_loop's thread is also calling
+    # positions_get through, on every cycle.
+    conn_symbols.execute(
+        "INSERT INTO live_watches (symbol, timeframe, expires_msc, requested_msc) "
+        "VALUES ('XAUUSDc', 'M1', ?, ?)",
+        (now_ms() + 3_600_000, now_ms()),
+    )
+    conn_symbols.commit()
+
+    inner = _SlowClient(positions=[])
+    client = LockedMT5Client(inner)
     q: queue_mod.Queue = queue_mod.Queue()
     stop_event = threading.Event()
 
@@ -1425,3 +1444,6 @@ def test_position_loop_and_symbol_loop_share_a_locked_client_without_deadlock(co
     assert r1.cycles > 0
     assert not t_symbol.is_alive()
     assert symbol_report_holder and symbol_report_holder[0].cycles > 0
+    # The point of the test: both threads actually contended for `client._lock`,
+    # not just looped independently on the same object.
+    assert inner.rates_calls > 0
