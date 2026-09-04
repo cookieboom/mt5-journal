@@ -755,7 +755,9 @@ def live(
     command that may have reached the broker is NEVER auto-retried; the next
     startup marks it failed and tells you to check MT5 by hand. Ctrl+C stops
     cleanly — only the main thread sees it, so it sets a stop event both loops
-    check after their current cycle.
+    check. The position loop checks it before its next cycle too, so a stop
+    never sends one more order; the symbol loop always drains its queue once
+    more first, so a close detected while it slept is still ingested.
 
     Because this is the only thing here that runs all day, it also takes the
     `journal backup` snapshot once every 24 h (7 kept, skipped while a trade

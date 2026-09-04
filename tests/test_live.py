@@ -763,20 +763,30 @@ def test_symbol_loop_stops_via_stop_event(conn):
     assert r.stopped_by == "interrupt"
 
 
-def test_symbol_loop_runs_no_further_cycle_when_the_event_fires_mid_sleep(conn):
-    # Same guard as position_loop: no order at stake here, but no reason to spend
-    # another bridge round trip after the process has been told to stop either.
+def test_symbol_loop_drains_a_close_queued_while_it_slept_before_stopping(conn, monkeypatch):
+    """The asymmetry with `position_loop`, and why this loop must NOT check the
+    stop event before its cycle: `symbol_cycle` is the only thing that drains
+    `closed_queue`, and `position_cycle` deletes the id from `open_positions`
+    before queuing it. A stop that skipped one last drain would lose that close
+    with the process — and nothing re-detects it on restart, ever."""
+    calls = []
+    monkeypatch.setattr(live, "_run_ingest_pipeline", lambda *a, **k: calls.append(a))
     client = FakeLiveClient(positions=[])
+    q: queue_mod.Queue = queue_mod.Queue()
     stop_event = threading.Event()
 
-    r = live.symbol_loop(
-        client, conn, queue_mod.Queue(),
-        sleep=lambda _: stop_event.set(),
-        stop_event=stop_event,
-    )
+    def _sleep(_):
+        # Ctrl+C lands on the main thread while a position closes on the other:
+        # both happen during THIS sleep.
+        q.put([111])
+        stop_event.set()
+
+    r = live.symbol_loop(client, conn, q, sleep=_sleep, stop_event=stop_event)
 
     assert r.stopped_by == "interrupt"
-    assert r.cycles == 1
+    assert r.cycles == 2                 # the sleep bought one more drain
+    assert len(calls) == 1               # and 111 was actually ingested
+    assert q.empty()
 
 
 def test_symbol_loop_survives_a_failing_cycle(conn, monkeypatch):
