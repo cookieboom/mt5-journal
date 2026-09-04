@@ -1332,3 +1332,96 @@ def test_position_cycle_runs_the_paper_step_even_with_trading_off(conn):
     client = FakeLiveClient(positions=[], tick=_tick(bid=4020.0, ask=4020.5))
     report = live.position_cycle(client, conn, _LOGIN, queue_mod.Queue(), trading=False)
     assert report.paper_resolved == 1
+
+
+# ------------------------------------------------------- Task 8: seam coverage
+
+
+def test_close_detected_by_position_cycle_is_ingested_by_a_later_symbol_cycle(conn, monkeypatch):
+    """End-to-end proof of the spec's core claim: a close never runs ingest
+    inline in the cycle that detected it."""
+    calls = []
+    monkeypatch.setattr(live, "_run_ingest_pipeline", lambda *a, **k: calls.append(a))
+    q: queue_mod.Queue = queue_mod.Queue()
+
+    client_open = FakeLiveClient(positions=[_pos(1, symbol="XAUUSDc")])
+    live.position_cycle(client_open, conn, 7, q, trading=False)
+
+    client_closed = FakeLiveClient(positions=[])
+    report = live.position_cycle(client_closed, conn, 7, q, trading=False)
+    assert report.closed_ids == [1]
+    assert calls == []                          # NOT ingested yet
+
+    sym_report = live.symbol_cycle(client_closed, conn, q)
+    assert calls == [(client_closed, conn)]      # ingested NOW
+    assert sym_report.closed_ids == [1]
+
+
+def test_position_loop_and_symbol_loop_share_a_locked_client_without_deadlock(conn):
+    """Smoke test: both loop RUNNERS ticking concurrently against a
+    LockedMT5Client wrapping a client with an injected delay must not deadlock
+    and both must make progress — mirrors cli.py's `live` command, which runs
+    each loop on its own thread with its own connection, sharing only the
+    locked client and the closed_queue."""
+    import time as time_mod
+
+    from journal.ingest.locked_client import LockedMT5Client
+    from journal.store.db import connect as db_connect
+
+    class _SlowClient(FakeLiveClient):
+        def positions_get(self):
+            time_mod.sleep(0.01)
+            return super().positions_get()
+
+        def copy_rates_range(self, *a, **k):
+            time_mod.sleep(0.01)
+            return super().copy_rates_range(*a, **k)
+
+    db_path = conn.execute("PRAGMA database_list").fetchone()[2]
+    conn_symbols = db_connect(db_path)
+
+    client = LockedMT5Client(_SlowClient(positions=[]))
+    q: queue_mod.Queue = queue_mod.Queue()
+    stop_event = threading.Event()
+
+    # Deterministic instead of wall-clock: stop only once EACH loop has
+    # completed at least one cycle, so this cannot flake on a loaded CI box
+    # the way a fixed sleep-then-stop would (a fixed 0.2s window did flake
+    # under `uv run pytest -v` for the whole suite — thread scheduling delay
+    # alone ate the window with zero cycles run).
+    made_progress = {"position": 0, "symbol": 0}
+
+    def _stop_when_both_have_run():
+        deadline = time_mod.monotonic() + 5.0
+        while time_mod.monotonic() < deadline:
+            if made_progress["position"] and made_progress["symbol"]:
+                break
+            time_mod.sleep(0.005)
+        stop_event.set()
+
+    threading.Thread(target=_stop_when_both_have_run).start()
+
+    symbol_report_holder: list = []
+
+    def _run_symbol_loop():
+        symbol_report_holder.append(
+            live.symbol_loop(
+                client, conn_symbols, q, interval=0.01, stop_event=stop_event,
+                on_cycle=lambda r: made_progress.__setitem__(
+                    "symbol", made_progress["symbol"] + 1),
+            )
+        )
+
+    t_symbol = threading.Thread(target=_run_symbol_loop)
+    t_symbol.start()
+
+    r1 = live.position_loop(
+        client, conn, 7, q, interval_idle=0.01, interval_busy=0.01,
+        trading=False, stop_event=stop_event,
+        on_cycle=lambda r: made_progress.__setitem__("position", made_progress["position"] + 1),
+    )
+    t_symbol.join(timeout=5)
+
+    assert r1.cycles > 0
+    assert not t_symbol.is_alive()
+    assert symbol_report_holder and symbol_report_holder[0].cycles > 0
