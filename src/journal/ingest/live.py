@@ -389,8 +389,15 @@ def paper_step(client: MT5Client, conn: sqlite3.Connection, *,
     positions it touched.
 
     Zero exposure means zero bridge calls: the symbol list comes from the DB
-    first. A bridge failure is logged and the step returns — losing the loop
-    loses unrecoverable live SL history, and no simulated account is worth that.
+    first. But "exposure" isn't only an open/pending position — with at least
+    one active paper account, the symbol the chart is currently watching
+    (`live_watches`) counts too, or `place_order` could never accept a FIRST
+    order on any symbol: `live_quotes` would never have a row for it, and
+    `_fresh_quote` refuses on a missing row rather than guessing a price. No
+    active paper account at all means paper trading isn't in use, so a watched
+    chart symbol alone still costs zero bridge calls. A bridge failure is
+    logged and the step returns — losing the loop loses unrecoverable live SL
+    history, and no simulated account is worth that.
 
     Runs regardless of `trading`: paper is not real trading.
 
@@ -407,7 +414,9 @@ def paper_step(client: MT5Client, conn: sqlite3.Connection, *,
         again — it is structurally excluded from being handed to `mark_close`
         a second time, which is the hazard `mark_close` itself does not guard.
     """
-    symbols = paper_store.open_or_pending_symbols(conn)
+    symbols = set(paper_store.open_or_pending_symbols(conn))
+    if paper_store.list_accounts(conn, status="active"):
+        symbols |= {s for s, _tf in live_store.active_watches(conn, now_msc)}
     if not symbols:
         return 0
 

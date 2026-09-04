@@ -1136,6 +1136,21 @@ def test_the_paper_step_makes_no_bridge_call_when_nothing_is_open(conn):
     assert client.tick_calls == []
 
 
+def test_the_paper_step_fetches_a_quote_for_a_watched_symbol_with_no_position(conn):
+    # Opening the FIRST position on a symbol needs a quote in `live_quotes` — but
+    # `open_or_pending_symbols` is empty until a position exists. Without also
+    # covering the symbol the chart is watching, `place_order` can never accept
+    # a first order on any symbol (chicken-and-egg).
+    paper_store.create_account(conn, name="T", initial_balance=1_000.0,
+                               leverage=500, stopout_pct=20.0)
+    live_store.upsert_watch(conn, "XAUUSDc", "M15", now_msc=1_000, ttl_ms=60_000)
+    client = FakeLiveClient(positions=[], tick=_tick(bid=4030.0, ask=4030.5))
+
+    live.paper_step(client, conn, now_msc=1_000)
+
+    assert live_store.read_quote(conn, "XAUUSDc")["bid"] == pytest.approx(4030.0)
+
+
 def test_the_paper_step_fills_a_pending_order_and_stores_the_quote(conn):
     account = paper_store.create_account(conn, name="T", initial_balance=1_000_000.0,
                                          leverage=500, stopout_pct=20.0)
