@@ -78,6 +78,7 @@ from __future__ import annotations
 import logging
 import queue as queue_mod
 import sqlite3
+import threading
 import time
 from dataclasses import dataclass, field
 
@@ -912,6 +913,116 @@ def live_loop(
                 return _report("once")
             if deadline is not None and monotonic() >= deadline:
                 return _report("duration")
+            interval = interval_busy if pending_count(conn, login) > 0 else interval_idle
+            sleep(interval)
+    except KeyboardInterrupt:
+        return _report("interrupt")
+
+
+def position_loop(
+    client: MT5Client,
+    conn: sqlite3.Connection,
+    login: int,
+    closed_queue: queue_mod.Queue[list[int]],
+    *,
+    interval_idle: float = 5.0,
+    interval_busy: float = 1.0,
+    trading: bool = True,
+    once: bool = False,
+    duration: float | None = None,
+    backup_every_s: float | None = 86_400.0,
+    backup_keep: int = 7,
+    sleep=time.sleep,
+    monotonic=time.monotonic,
+    on_cycle=None,
+    on_closing=None,
+    stop_event: threading.Event | None = None,
+) -> LiveLoopReport:
+    """Repeatedly run `position_cycle` — the fast half of the split live loop
+    (mirrors `live_loop`, which repeats `live_cycle`). `recover_interrupted` runs
+    ONCE before the first cycle — a `claimed`/`sent` row on startup means a crash
+    mid-command and is marked failed, never re-sent.
+
+    After each cycle the next sleep is `interval_busy` when a command is pending
+    (be responsive) else `interval_idle`. `sleep`/`monotonic` are injectable so
+    `--once`/`--duration`/Ctrl+C are all testable with a fake clock. Always runs
+    at least one cycle; `once` beats `duration`; the deadline is checked after a
+    cycle and before the next sleep, so a `duration` run never sleeps after its
+    final cycle. Ctrl+C stops cleanly with `stopped_by='interrupt'` — `stop_event`
+    does the same from outside this thread: Task 7 runs `symbol_loop` on a
+    separate thread that never receives the SIGINT-driven `KeyboardInterrupt`
+    directly, so the CLI's own signal handling sets `stop_event` to reach it.
+
+    A cycle that RAISES does not end the loop: it is rolled back, counted in
+    `failed_cycles`, and retried on the next tick. Nothing beats the heartbeat on
+    that path on purpose — the process is up but cannot see the broker, and a
+    beat would tell `/live` and `journal status` that everything is fine while
+    the position mirror sits frozen. "live down" is the more honest of the two
+    available lies; the log line says which one it is.
+
+    Every cycle also asks `_maybe_backup` whether the DB is due a snapshot
+    (`backup_every_s=None` turns that off). It is the only thing here that is
+    not about the bridge, and it is here because this is the only process that
+    runs all day — see that function.
+    """
+    live_store.mark_started(conn, now_ms(), health.code_fingerprint())
+    recovered = recover_interrupted(conn, login)
+    if recovered:
+        log.info("live: recovered %d interrupted command(s) at startup", recovered)
+
+    cycles = 0
+    failed = 0          # total, reported
+    streak = 0          # consecutive, resets on the first good cycle
+    deadline = monotonic() + duration if duration is not None else None
+
+    def _report(stopped_by: str) -> LiveLoopReport:
+        return LiveLoopReport(
+            cycles=cycles, recovered=recovered, failed_cycles=failed,
+            stopped_by=stopped_by,
+        )
+
+    try:
+        while True:
+            try:
+                r = position_cycle(
+                    client, conn, login, closed_queue, trading=trading, on_closing=on_closing,
+                )
+            except Exception as e:
+                # The bridge went away mid-cycle (container restart, refused
+                # connection) — the single most likely way this process dies, and
+                # dying is the expensive outcome: live SL/TP history is the one
+                # thing here that CANNOT be re-synced later (Trap 16), and the
+                # daily snapshot only exists inside this loop. Log, sleep, retry.
+                conn.rollback()   # never carry a half-written cycle's WAL writer
+                                  # slot into the sleep — `journal serve` blocks
+                                  # on it, and this project has paid for that twice
+                if isinstance(e, sqlite3.OperationalError) and "locked" in str(e).lower():
+                    # Past a 5 s busy_timeout this is a SECOND `journal live` on
+                    # the same DB, not a blip. Only one loop may own the bridge:
+                    # let it out so `cli.live` can say so and exit, instead of
+                    # retrying a configuration error every five seconds forever.
+                    raise
+                failed += 1
+                streak += 1
+                if streak == 1:
+                    log.exception("live: cycle failed — retrying, the loop stays up")
+                elif streak % 60 == 0:
+                    log.warning("live: cycle still failing, %d in a row", streak)
+            else:
+                if streak:
+                    log.info("live: recovered after %d failed cycle(s)", streak)
+                    streak = 0
+                if on_cycle is not None:
+                    on_cycle(r)
+            cycles += 1
+            if backup_every_s is not None:
+                _maybe_backup(conn, login, backup_every_s, backup_keep)
+            if once:
+                return _report("once")
+            if deadline is not None and monotonic() >= deadline:
+                return _report("duration")
+            if stop_event is not None and stop_event.is_set():
+                return _report("interrupt")
             interval = interval_busy if pending_count(conn, login) > 0 else interval_idle
             sleep(interval)
     except KeyboardInterrupt:

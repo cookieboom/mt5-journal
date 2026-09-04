@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import queue as queue_mod
 import sqlite3
+import threading
 
 import pytest
 
@@ -703,6 +704,253 @@ def test_loop_records_the_code_it_actually_loaded(conn):
     live_loop(FakeLiveClient([[]]), conn, _LOGIN, once=True)
     fp = ls.read_code_fingerprint(conn)
     assert fp and health.changed_modules(fp) == []
+
+
+# --------------------------------------------------- position_loop (Task 5)
+#
+# Copies of the live_loop tests above, retargeted at position_loop: the same
+# runner behavior (recovery, interval choice, backup, bridge resilience,
+# heartbeat, code fingerprint), now calling position_cycle instead of
+# live_cycle. live_loop/live_cycle and their tests above are untouched — they
+# retire together in Task 6.
+
+
+def test_position_loop_recovers_interrupted_at_startup_and_never_resends(conn):
+    # A row left 'sent' by a crashed process: recover_interrupted marks it failed,
+    # and no cycle re-sends it.
+    client = FakeLiveClient([[_pos(identifier=111)]])
+    live_cycle(client, conn, _LOGIN)
+    cmd_id = enqueue(conn, _LOGIN, "close", 111)
+    conn.execute("UPDATE trade_commands SET status = 'sent' WHERE id = ?", (cmd_id,))
+    conn.commit()
+
+    r = live.position_loop(client, conn, _LOGIN, queue_mod.Queue(), once=True)
+    assert r.recovered == 1
+    assert get_command(conn, cmd_id)["status"] == "failed"
+    assert client.sent == []               # never re-sent
+
+
+def test_position_loop_once_runs_exactly_one_cycle(conn):
+    client = FakeLiveClient([[_pos(identifier=111)]])
+    r = live.position_loop(client, conn, _LOGIN, queue_mod.Queue(), once=True)
+    assert r.cycles == 1
+    assert r.stopped_by == "once"
+
+
+def test_position_loop_busy_interval_when_commands_pending(conn):
+    # trading OFF keeps the pending row pending, so pending_count stays > 0 and
+    # the loop must pick the BUSY interval.
+    client = FakeLiveClient([[_pos(identifier=111)]])
+    live_cycle(client, conn, _LOGIN)
+    enqueue(conn, _LOGIN, "close", 111)
+
+    sleeps = []
+    clock = {"t": 0.0}
+    r = live.position_loop(
+        client, conn, _LOGIN, queue_mod.Queue(), trading=False,
+        interval_idle=5.0, interval_busy=1.0, duration=0.5,
+        sleep=lambda s: (sleeps.append(s), clock.__setitem__("t", clock["t"] + s)),
+        monotonic=lambda: clock["t"],
+    )
+    assert r.stopped_by == "duration"
+    assert sleeps and all(s == 1.0 for s in sleeps)   # busy interval
+
+
+def test_position_loop_idle_interval_when_nothing_pending(conn):
+    client = FakeLiveClient([[_pos(identifier=111)]])
+    sleeps = []
+    clock = {"t": 0.0}
+    live.position_loop(
+        client, conn, _LOGIN, queue_mod.Queue(),
+        interval_idle=5.0, interval_busy=1.0, duration=0.5,
+        sleep=lambda s: (sleeps.append(s), clock.__setitem__("t", clock["t"] + s)),
+        monotonic=lambda: clock["t"],
+    )
+    assert sleeps and all(s == 5.0 for s in sleeps)   # idle interval
+
+
+def test_position_loop_keyboard_interrupt_stops_cleanly(conn):
+    client = FakeLiveClient([[_pos(identifier=111)]])
+
+    def kb_sleep(_):
+        raise KeyboardInterrupt
+
+    r = live.position_loop(client, conn, _LOGIN, queue_mod.Queue(), sleep=kb_sleep)
+    assert r.stopped_by == "interrupt"
+    assert r.cycles == 1
+
+
+def test_position_loop_once_takes_priority_over_duration(conn):
+    client = FakeLiveClient([[_pos(identifier=111)]])
+
+    def exploding_sleep(_):
+        raise AssertionError("sleep must not be called when once=True")
+
+    r = live.position_loop(
+        client, conn, _LOGIN, queue_mod.Queue(),
+        once=True, duration=100.0, sleep=exploding_sleep,
+    )
+    assert r.cycles == 1
+    assert r.stopped_by == "once"
+
+
+def test_position_loop_snapshots_the_database_when_none_has_been_taken(conn, tmp_path):
+    client = FakeLiveClient([[_pos(identifier=111)]])
+
+    live.position_loop(client, conn, _LOGIN, queue_mod.Queue(), once=True)
+
+    snaps = _snaps(tmp_path)
+    assert len(snaps) == 1
+    # A file appearing is not a backup; being readable and carrying the rows is.
+    snap = sqlite3.connect(str(snaps[0]))
+    try:
+        assert snap.execute("SELECT login FROM accounts").fetchall() == [(_LOGIN,)]
+    finally:
+        snap.close()
+
+
+def test_position_loop_does_not_snapshot_again_until_the_interval_has_passed(conn, tmp_path):
+    client = FakeLiveClient([[_pos(identifier=111)], [_pos(identifier=111)]])
+    clock = {"t": 0.0}
+
+    live.position_loop(
+        client, conn, _LOGIN, queue_mod.Queue(), duration=6.0, interval_idle=5.0,
+        sleep=lambda s: clock.__setitem__("t", clock["t"] + s),
+        monotonic=lambda: clock["t"],
+    )
+
+    # Two cycles, one snapshot: a 5 s loop must not write a 60 MB file per cycle.
+    assert len(_snaps(tmp_path)) == 1
+
+
+def test_position_loop_can_be_told_not_to_back_up(conn, tmp_path):
+    client = FakeLiveClient([[_pos(identifier=111)]])
+
+    live.position_loop(client, conn, _LOGIN, queue_mod.Queue(), once=True, backup_every_s=None)
+
+    assert _snaps(tmp_path) == []
+
+
+def test_position_loop_skips_the_snapshot_while_a_trade_command_is_pending(conn, tmp_path):
+    # The copy runs in the loop thread. An SL/TP or close must never queue behind
+    # it — trading OFF keeps the row pending, which is the state being tested.
+    client = FakeLiveClient([[_pos(identifier=111)]])
+    live_cycle(client, conn, _LOGIN)
+    enqueue(conn, _LOGIN, "close", 111)
+
+    live.position_loop(client, conn, _LOGIN, queue_mod.Queue(), once=True, trading=False)
+
+    assert _snaps(tmp_path) == []
+
+
+def test_position_loop_survives_a_failing_backup(conn, tmp_path, monkeypatch):
+    # A full disk must not take down the process that is executing trades.
+    client = FakeLiveClient([[_pos(identifier=111)], [_pos(identifier=111)]])
+
+    def boom(*a, **k):
+        raise OSError("No space left on device")
+
+    monkeypatch.setattr("journal.ingest.live.backup.snapshot", boom)
+    clock = {"t": 0.0}
+
+    r = live.position_loop(
+        client, conn, _LOGIN, queue_mod.Queue(), duration=6.0, interval_idle=5.0,
+        sleep=lambda s: clock.__setitem__("t", clock["t"] + s),
+        monotonic=lambda: clock["t"],
+    )
+
+    # Kept cycling through the raised OSError instead of dying on it.
+    assert r.cycles > 1 and r.stopped_by == "duration"
+
+
+def _run_position_loop(client, conn, **kw):
+    clock = {"t": 0.0}
+    return live.position_loop(
+        client, conn, _LOGIN, queue_mod.Queue(), interval_idle=5.0,
+        sleep=lambda s: clock.__setitem__("t", clock["t"] + s),
+        monotonic=lambda: clock["t"], **kw,
+    )
+
+
+def test_position_loop_survives_the_bridge_going_away_and_resumes(conn):
+    # Losing the loop loses the live SL history that cannot be re-synced, and
+    # stops the daily backup — a bridge blip must never cost that.
+    client = FlakyClient([[_pos(identifier=111)]], n_fail=2)
+
+    r = _run_position_loop(client, conn, duration=11.0)
+
+    assert r.stopped_by == "duration"
+    assert r.failed_cycles == 2
+    assert r.cycles > 2                      # kept going past the failures
+    # and once the bridge came back the mirror was written for real.
+    assert conn.execute("SELECT COUNT(*) FROM open_positions").fetchone()[0] == 1
+
+
+def test_a_failed_position_cycle_leaves_no_open_write_transaction(conn):
+    # This project has twice paid for holding the WAL writer slot; a cycle that
+    # raised mid-write must not carry its transaction into the next sleep.
+    class MidWriteBoom(FakeLiveClient):
+        def positions_get(self):
+            live_store.beat(conn, now_ms())   # dirties the connection
+            raise ConnectionError("bridge unreachable")
+
+    r = _run_position_loop(MidWriteBoom([[]]), conn, once=True)
+
+    assert r.failed_cycles == 1
+    assert not conn.in_transaction
+
+
+def test_position_loop_once_returns_even_when_the_cycle_fails(conn):
+    r = _run_position_loop(FlakyClient([[_pos(identifier=111)]], n_fail=1), conn, once=True)
+    assert r.stopped_by == "once" and r.cycles == 1 and r.failed_cycles == 1
+
+
+def test_a_locked_database_still_escapes_the_position_loop(conn):
+    # Past the 5 s busy_timeout, "database is locked" means a SECOND journal
+    # live on this DB — a configuration error `cli.live` explains and exits on.
+    # Retrying it every five seconds forever would bury that message.
+    class Locked(FakeLiveClient):
+        def positions_get(self):
+            raise sqlite3.OperationalError("database is locked")
+
+    with pytest.raises(sqlite3.OperationalError):
+        _run_position_loop(Locked([[]]), conn, duration=6.0)
+
+
+def test_the_backup_still_runs_while_the_bridge_is_down_for_position_loop(conn, tmp_path):
+    # The one process that snapshots the DB must keep snapshotting it even when
+    # the thing it talks to is gone — nothing about a backup needs the bridge.
+    r = _run_position_loop(FlakyClient([[]], n_fail=99), conn, duration=6.0)
+
+    assert r.failed_cycles == r.cycles > 1
+    assert len(_snaps(tmp_path)) == 1
+
+
+def test_position_loop_writes_heartbeat(conn):
+    from journal.store import live_store as ls
+    client = FakeLiveClient([[]])          # no positions is fine
+    assert ls.read_heartbeat(conn) is None
+    live.position_cycle(client, conn, _LOGIN, queue_mod.Queue())
+    beat = ls.read_heartbeat(conn)
+    assert beat is not None and beat >= _MSC_FLOOR  # real ms, always written
+
+
+def test_position_loop_records_the_code_it_actually_loaded(conn):
+    """`journal status` cannot see a skipped restart from `started_msc` alone —
+    a timestamp only says WHEN, and every unrelated `.py` edit moved that answer.
+    The loop stamps WHICH modules it loaded so the check compares content."""
+    from journal.store import health, live_store as ls
+    live.position_loop(FakeLiveClient([[]]), conn, _LOGIN, queue_mod.Queue(), once=True)
+    fp = ls.read_code_fingerprint(conn)
+    assert fp and health.changed_modules(fp) == []
+
+
+def test_position_loop_stops_via_stop_event(conn):
+    client = FakeLiveClient(positions=[])
+    stop_event = threading.Event()
+    stop_event.set()
+    r = live.position_loop(client, conn, 7, queue_mod.Queue(), stop_event=stop_event)
+    assert r.stopped_by == "interrupt"
 
 
 # ---------------------------------------------------------------- serve_watches
