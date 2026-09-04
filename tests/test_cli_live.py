@@ -76,7 +76,7 @@ def test_live_shares_one_client_between_both_loops(db, monkeypatch):
     """One bridge connection, serialized behind `LockedMT5Client` — two raw
     clients would mean two bridge sessions, which is the thing this process
     exists to prevent."""
-    from journal.ingest.live import LiveLoopReport, SymbolLoopReport
+    from journal.ingest.live import PositionLoopReport, SymbolLoopReport
     from journal.ingest.locked_client import LockedMT5Client
 
     made: list = []
@@ -91,7 +91,7 @@ def test_live_shares_one_client_between_both_loops(db, monkeypatch):
     monkeypatch.setattr(
         "journal.ingest.live.position_loop",
         lambda client, conn, login, q, **k: (pos.append((client, conn)),
-                                             LiveLoopReport(cycles=1, stopped_by="once"))[1],
+                                             PositionLoopReport(cycles=1, stopped_by="once"))[1],
     )
     monkeypatch.setattr(
         "journal.ingest.live.symbol_loop",

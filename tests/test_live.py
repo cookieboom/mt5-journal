@@ -3,9 +3,10 @@
 Written before the implementation (CLAUDE.md rule 7). Everything here runs under
 `FakeMT5Client` with an injected clock: NO test may need a live bridge.
 
-`live_cycle` is the timing-free unit surface (mirrors `poll_once`); `live_loop`
-wraps it in the injectable-clock sleep loop (mirrors `poll_loop`). The three
-properties that matter and are all about real state or real money:
+`position_cycle`/`symbol_cycle` are the timing-free unit surfaces (they mirror
+`poll_once`); `position_loop`/`symbol_loop` wrap them in the injectable-clock
+sleep loop (mirrors `poll_loop`). The three properties that matter and are all
+about real state or real money:
 
   * a position that DISAPPEARS from the feed triggers the ingest pipeline exactly
     once, and a failed ingest never kills the loop;
@@ -28,7 +29,6 @@ from journal.execute import claim_next, enqueue, get_command
 from journal.ingest import live
 from journal.ingest.candles import CandlesReport
 from journal.ingest.deals import SyncReport
-from journal.ingest.live import live_cycle, live_loop
 from journal.store import live_store, paper_store
 from journal.store.db import connect, now_ms
 
@@ -57,7 +57,7 @@ def conn(tmp_path):
 class FakeLiveClient(FakeMT5Client):
     """Returns one scripted batch of `Position`s per `positions_get()` call,
     advancing through the list and repeating the last batch (so a multi-cycle
-    `live_loop` never runs off the end). Inherits `script_results`/`order_check`/
+    `position_loop` never runs off the end). Inherits `script_results`/`order_check`/
     `order_send`/`sent`/`checked` from the base fake."""
 
     def __init__(self, batches=(), positions=None, tick=None, tick_raises=None):
@@ -144,7 +144,7 @@ def _spy_pipeline(monkeypatch):
 
 def test_open_positions_mirrored_from_feed(conn):
     client = FakeLiveClient([[_pos(identifier=111, type=0, sl=3290.0, tp=3350.0)]])
-    r = live_cycle(client, conn, _LOGIN)
+    r = live.position_cycle(client, conn, _LOGIN, queue_mod.Queue())
     assert r.positions_seen == 1
     row = conn.execute(
         "SELECT * FROM open_positions WHERE position_id = 111"
@@ -160,7 +160,7 @@ def test_open_positions_mirrored_from_feed(conn):
 
 def test_direction_from_type_sell(conn):
     client = FakeLiveClient([[_pos(identifier=222, type=1)]])
-    live_cycle(client, conn, _LOGIN)
+    live.position_cycle(client, conn, _LOGIN, queue_mod.Queue())
     row = conn.execute("SELECT direction FROM open_positions WHERE position_id = 222").fetchone()
     assert row["direction"] == "sell"
 
@@ -168,8 +168,8 @@ def test_direction_from_type_sell(conn):
 def test_open_positions_replaced_wholesale(conn):
     # cycle 1 shows 111; cycle 2 shows only 222 -> 111 must be GONE, not lingering.
     client = FakeLiveClient([[_pos(identifier=111)], [_pos(identifier=222)]])
-    live_cycle(client, conn, _LOGIN)
-    live_cycle(client, conn, _LOGIN)
+    live.position_cycle(client, conn, _LOGIN, queue_mod.Queue())
+    live.position_cycle(client, conn, _LOGIN, queue_mod.Queue())
     ids = [r["position_id"] for r in conn.execute(
         "SELECT position_id FROM open_positions ORDER BY position_id"
     ).fetchall()]
@@ -178,7 +178,7 @@ def test_open_positions_replaced_wholesale(conn):
 
 def test_malformed_position_skipped(conn):
     client = FakeLiveClient([[Position(identifier=None, symbol="XAUUSDc"), _pos(identifier=111)]])
-    r = live_cycle(client, conn, _LOGIN)
+    r = live.position_cycle(client, conn, _LOGIN, queue_mod.Queue())
     ids = [row["position_id"] for row in conn.execute(
         "SELECT position_id FROM open_positions"
     ).fetchall()]
@@ -187,9 +187,9 @@ def test_malformed_position_skipped(conn):
 
 
 def test_snapshots_still_written_via_poll_once(conn):
-    # live_cycle reuses poll_once for sl_tp_snapshots; a fresh position => 1 row.
+    # position_cycle reuses poll_once for sl_tp_snapshots; a fresh position => 1 row.
     client = FakeLiveClient([[_pos(identifier=111, sl=3290.0)]])
-    r = live_cycle(client, conn, _LOGIN)
+    r = live.position_cycle(client, conn, _LOGIN, queue_mod.Queue())
     assert r.snapshots_written == 1
     assert conn.execute(
         "SELECT COUNT(*) FROM sl_tp_snapshots WHERE position_id = 111"
@@ -206,7 +206,7 @@ def test_positions_get_called_once_per_cycle(conn):
             return super().positions_get()
 
     client = Counting([[_pos(identifier=111)]])
-    live_cycle(client, conn, _LOGIN)
+    live.position_cycle(client, conn, _LOGIN, queue_mod.Queue())
     assert Counting.calls == 1
 
 
@@ -321,35 +321,35 @@ def test_symbol_cycle_ingest_failure_does_not_raise(conn, monkeypatch):
 def test_pending_command_claimed_and_sent_once(conn):
     # Populate open_positions, then queue a close against it.
     client = FakeLiveClient([[_pos(identifier=111)]])
-    live_cycle(client, conn, _LOGIN)
+    live.position_cycle(client, conn, _LOGIN, queue_mod.Queue())
     cmd_id = enqueue(conn, _LOGIN, "close", 111)
 
-    r = live_cycle(client, conn, _LOGIN)
+    r = live.position_cycle(client, conn, _LOGIN, queue_mod.Queue())
     assert len(client.sent) == 1           # exactly one real order
     assert r.command_id == cmd_id
     assert get_command(conn, cmd_id)["status"] == "done"
 
     # A racing/second cycle finds nothing pending -> no second send.
-    live_cycle(client, conn, _LOGIN)
+    live.position_cycle(client, conn, _LOGIN, queue_mod.Queue())
     assert len(client.sent) == 1
     assert claim_next(conn, _LOGIN) is None
 
 
 def test_order_check_precedes_send(conn):
     client = FakeLiveClient([[_pos(identifier=111)]])
-    live_cycle(client, conn, _LOGIN)
+    live.position_cycle(client, conn, _LOGIN, queue_mod.Queue())
     enqueue(conn, _LOGIN, "close", 111)
-    live_cycle(client, conn, _LOGIN)
+    live.position_cycle(client, conn, _LOGIN, queue_mod.Queue())
     assert len(client.checked) == 1        # dry-run happened
     assert len(client.sent) == 1
 
 
 def test_no_trading_leaves_pending_untouched(conn):
     client = FakeLiveClient([[_pos(identifier=111)]])
-    live_cycle(client, conn, _LOGIN)
+    live.position_cycle(client, conn, _LOGIN, queue_mod.Queue())
     cmd_id = enqueue(conn, _LOGIN, "close", 111)
 
-    r = live_cycle(client, conn, _LOGIN, trading=False)
+    r = live.position_cycle(client, conn, _LOGIN, queue_mod.Queue(), trading=False)
     assert client.sent == []
     assert client.checked == []
     assert get_command(conn, cmd_id)["status"] == "pending"
@@ -369,11 +369,11 @@ def test_a_stale_pending_command_is_refused_not_sent(conn):
     would put an order on the market against a price the human read an hour ago;
     the row is refused instead, in the same cycle that would have claimed it."""
     client = FakeLiveClient([[_pos(identifier=111)]])
-    live_cycle(client, conn, _LOGIN)
+    live.position_cycle(client, conn, _LOGIN, queue_mod.Queue())
     cmd_id = enqueue(conn, _LOGIN, "close", 111)
     _age_pending(conn, cmd_id, 3600)
 
-    r = live_cycle(client, conn, _LOGIN)
+    r = live.position_cycle(client, conn, _LOGIN, queue_mod.Queue())
 
     assert client.sent == []               # never reached the broker
     assert client.checked == []
@@ -388,11 +388,11 @@ def test_stale_commands_expire_even_with_trading_off(conn):
     trading off nothing claims, so without this the row sat pending forever —
     and pending defers every daily snapshot for exactly as long."""
     client = FakeLiveClient([[_pos(identifier=111)]])
-    live_cycle(client, conn, _LOGIN)
+    live.position_cycle(client, conn, _LOGIN, queue_mod.Queue())
     cmd_id = enqueue(conn, _LOGIN, "close", 111)
     _age_pending(conn, cmd_id, 3600)
 
-    live_cycle(client, conn, _LOGIN, trading=False)
+    live.position_cycle(client, conn, _LOGIN, queue_mod.Queue(), trading=False)
 
     assert get_command(conn, cmd_id)["status"] == "rejected"
 
@@ -401,10 +401,10 @@ def test_command_whose_position_vanished_is_rejected(conn, monkeypatch):
     _spy_pipeline(monkeypatch)  # keep the close from running real ingest
     # 111 open, queue a close, then the feed drops it before the command runs.
     client = FakeLiveClient([[_pos(identifier=111)], []])
-    live_cycle(client, conn, _LOGIN)
+    live.position_cycle(client, conn, _LOGIN, queue_mod.Queue())
     cmd_id = enqueue(conn, _LOGIN, "close", 111)
 
-    live_cycle(client, conn, _LOGIN)       # feed empty -> 111 removed, then claim
+    live.position_cycle(client, conn, _LOGIN, queue_mod.Queue())       # feed empty -> 111 removed, then claim
     row = get_command(conn, cmd_id)
     assert row["status"] == "rejected"
     assert row["retcode"] is None          # never reached the broker
@@ -413,23 +413,23 @@ def test_command_whose_position_vanished_is_rejected(conn, monkeypatch):
 
 def test_only_one_command_per_cycle(conn):
     client = FakeLiveClient([[_pos(identifier=111)]])
-    live_cycle(client, conn, _LOGIN)
+    live.position_cycle(client, conn, _LOGIN, queue_mod.Queue())
     a = enqueue(conn, _LOGIN, "close", 111)
     enqueue(conn, _LOGIN, "modify_sltp", 111, sl=3290.0)
 
-    r = live_cycle(client, conn, _LOGIN)
+    r = live.position_cycle(client, conn, _LOGIN, queue_mod.Queue())
     assert len(client.sent) == 1           # serial: one per cycle
     assert r.command_id == a               # the oldest
 
 
 def test_order_send_raising_does_not_kill_loop_or_mark_done(conn):
     client = FakeLiveClient([[_pos(identifier=111)]])
-    live_cycle(client, conn, _LOGIN)
+    live.position_cycle(client, conn, _LOGIN, queue_mod.Queue())
     cmd_id = enqueue(conn, _LOGIN, "close", 111)
     # order_check pops the DONE; order_send pops the Exception and raises.
     client.script_results(TradeResult(retcode=TradeRetcode.DONE), RuntimeError("bridge died"))
 
-    r = live_cycle(client, conn, _LOGIN)   # must NOT raise
+    r = live.position_cycle(client, conn, _LOGIN, queue_mod.Queue())   # must NOT raise
     row = get_command(conn, cmd_id)
     assert row["status"] == "sent"         # evidence of possible broker contact
     assert row["status"] != "done"
@@ -437,87 +437,8 @@ def test_order_send_raising_does_not_kill_loop_or_mark_done(conn):
 
     # The loop keeps going, and the 'sent' row is NEVER re-sent by another cycle.
     before = len(client.sent)
-    live_cycle(client, conn, _LOGIN)
+    live.position_cycle(client, conn, _LOGIN, queue_mod.Queue())
     assert len(client.sent) == before
-
-
-# ---------------------------------------------------------------- live_loop
-
-
-def test_loop_recovers_interrupted_at_startup_and_never_resends(conn):
-    # A row left 'sent' by a crashed process: recover_interrupted marks it failed,
-    # and no cycle re-sends it.
-    client = FakeLiveClient([[_pos(identifier=111)]])
-    live_cycle(client, conn, _LOGIN)
-    cmd_id = enqueue(conn, _LOGIN, "close", 111)
-    conn.execute("UPDATE trade_commands SET status = 'sent' WHERE id = ?", (cmd_id,))
-    conn.commit()
-
-    r = live_loop(client, conn, _LOGIN, once=True)
-    assert r.recovered == 1
-    assert get_command(conn, cmd_id)["status"] == "failed"
-    assert client.sent == []               # never re-sent
-
-
-def test_loop_once_runs_exactly_one_cycle(conn):
-    client = FakeLiveClient([[_pos(identifier=111)]])
-    r = live_loop(client, conn, _LOGIN, once=True)
-    assert r.cycles == 1
-    assert r.stopped_by == "once"
-
-
-def test_loop_busy_interval_when_commands_pending(conn):
-    # trading OFF keeps the pending row pending, so pending_count stays > 0 and
-    # the loop must pick the BUSY interval.
-    client = FakeLiveClient([[_pos(identifier=111)]])
-    live_cycle(client, conn, _LOGIN)
-    enqueue(conn, _LOGIN, "close", 111)
-
-    sleeps = []
-    clock = {"t": 0.0}
-    r = live_loop(
-        client, conn, _LOGIN, trading=False,
-        interval_idle=5.0, interval_busy=1.0, duration=0.5,
-        sleep=lambda s: (sleeps.append(s), clock.__setitem__("t", clock["t"] + s)),
-        monotonic=lambda: clock["t"],
-    )
-    assert r.stopped_by == "duration"
-    assert sleeps and all(s == 1.0 for s in sleeps)   # busy interval
-
-
-def test_loop_idle_interval_when_nothing_pending(conn):
-    client = FakeLiveClient([[_pos(identifier=111)]])
-    sleeps = []
-    clock = {"t": 0.0}
-    live_loop(
-        client, conn, _LOGIN,
-        interval_idle=5.0, interval_busy=1.0, duration=0.5,
-        sleep=lambda s: (sleeps.append(s), clock.__setitem__("t", clock["t"] + s)),
-        monotonic=lambda: clock["t"],
-    )
-    assert sleeps and all(s == 5.0 for s in sleeps)   # idle interval
-
-
-def test_loop_keyboard_interrupt_stops_cleanly(conn):
-    client = FakeLiveClient([[_pos(identifier=111)]])
-
-    def kb_sleep(_):
-        raise KeyboardInterrupt
-
-    r = live_loop(client, conn, _LOGIN, sleep=kb_sleep)
-    assert r.stopped_by == "interrupt"
-    assert r.cycles == 1
-
-
-def test_loop_once_takes_priority_over_duration(conn):
-    client = FakeLiveClient([[_pos(identifier=111)]])
-
-    def exploding_sleep(_):
-        raise AssertionError("sleep must not be called when once=True")
-
-    r = live_loop(client, conn, _LOGIN, once=True, duration=100.0, sleep=exploding_sleep)
-    assert r.cycles == 1
-    assert r.stopped_by == "once"
 
 
 # ------------------------------------------------------- auto-backup (Trap 16)
@@ -530,75 +451,6 @@ def test_loop_once_takes_priority_over_duration(conn):
 def _snaps(tmp_path):
     d = tmp_path / "backups"
     return sorted(d.glob("journal-*.db")) if d.is_dir() else []
-
-
-def test_loop_snapshots_the_database_when_none_has_been_taken(conn, tmp_path):
-    client = FakeLiveClient([[_pos(identifier=111)]])
-
-    live_loop(client, conn, _LOGIN, once=True)
-
-    snaps = _snaps(tmp_path)
-    assert len(snaps) == 1
-    # A file appearing is not a backup; being readable and carrying the rows is.
-    snap = sqlite3.connect(str(snaps[0]))
-    try:
-        assert snap.execute("SELECT login FROM accounts").fetchall() == [(_LOGIN,)]
-    finally:
-        snap.close()
-
-
-def test_loop_does_not_snapshot_again_until_the_interval_has_passed(conn, tmp_path):
-    client = FakeLiveClient([[_pos(identifier=111)], [_pos(identifier=111)]])
-    clock = {"t": 0.0}
-
-    live_loop(
-        client, conn, _LOGIN, duration=6.0, interval_idle=5.0,
-        sleep=lambda s: clock.__setitem__("t", clock["t"] + s),
-        monotonic=lambda: clock["t"],
-    )
-
-    # Two cycles, one snapshot: a 5 s loop must not write a 60 MB file per cycle.
-    assert len(_snaps(tmp_path)) == 1
-
-
-def test_loop_can_be_told_not_to_back_up(conn, tmp_path):
-    client = FakeLiveClient([[_pos(identifier=111)]])
-
-    live_loop(client, conn, _LOGIN, once=True, backup_every_s=None)
-
-    assert _snaps(tmp_path) == []
-
-
-def test_loop_skips_the_snapshot_while_a_trade_command_is_pending(conn, tmp_path):
-    # The copy runs in the loop thread. An SL/TP or close must never queue behind
-    # it — trading OFF keeps the row pending, which is the state being tested.
-    client = FakeLiveClient([[_pos(identifier=111)]])
-    live_cycle(client, conn, _LOGIN)
-    enqueue(conn, _LOGIN, "close", 111)
-
-    live_loop(client, conn, _LOGIN, once=True, trading=False)
-
-    assert _snaps(tmp_path) == []
-
-
-def test_loop_survives_a_failing_backup(conn, tmp_path, monkeypatch):
-    # A full disk must not take down the process that is executing trades.
-    client = FakeLiveClient([[_pos(identifier=111)], [_pos(identifier=111)]])
-
-    def boom(*a, **k):
-        raise OSError("No space left on device")
-
-    monkeypatch.setattr("journal.ingest.live.backup.snapshot", boom)
-    clock = {"t": 0.0}
-
-    r = live_loop(
-        client, conn, _LOGIN, duration=6.0, interval_idle=5.0,
-        sleep=lambda s: clock.__setitem__("t", clock["t"] + s),
-        monotonic=lambda: clock["t"],
-    )
-
-    # Kept cycling through the raised OSError instead of dying on it.
-    assert r.cycles > 1 and r.stopped_by == "duration"
 
 
 # ------------------------------------------------- the bridge going away
@@ -621,105 +473,19 @@ class FlakyClient(FakeLiveClient):
         return super().positions_get()
 
 
-def _run(client, conn, **kw):
-    clock = {"t": 0.0}
-    return live_loop(
-        client, conn, _LOGIN, interval_idle=5.0,
-        sleep=lambda s: clock.__setitem__("t", clock["t"] + s),
-        monotonic=lambda: clock["t"], **kw,
-    )
-
-
-def test_loop_survives_the_bridge_going_away_and_resumes(conn):
-    # Losing the loop loses the live SL history that cannot be re-synced, and
-    # stops the daily backup — a bridge blip must never cost that.
-    client = FlakyClient([[_pos(identifier=111)]], n_fail=2)
-
-    r = _run(client, conn, duration=11.0)
-
-    assert r.stopped_by == "duration"
-    assert r.failed_cycles == 2
-    assert r.cycles > 2                      # kept going past the failures
-    # and once the bridge came back the mirror was written for real.
-    assert conn.execute("SELECT COUNT(*) FROM open_positions").fetchone()[0] == 1
-
-
-def test_a_failed_cycle_leaves_no_open_write_transaction(conn):
-    # This project has twice paid for holding the WAL writer slot; a cycle that
-    # raised mid-write must not carry its transaction into the next sleep.
-    class MidWriteBoom(FakeLiveClient):
-        def positions_get(self):
-            live_store.beat(conn, now_ms())   # dirties the connection
-            raise ConnectionError("bridge unreachable")
-
-    r = _run(MidWriteBoom([[]]), conn, once=True)
-
-    assert r.failed_cycles == 1
-    assert not conn.in_transaction
-
-
-def test_once_returns_even_when_the_cycle_fails(conn):
-    r = _run(FlakyClient([[_pos(identifier=111)]], n_fail=1), conn, once=True)
-    assert r.stopped_by == "once" and r.cycles == 1 and r.failed_cycles == 1
-
-
-def test_a_locked_database_still_escapes_the_loop(conn):
-    # Past the 5 s busy_timeout, "database is locked" means a SECOND journal
-    # live on this DB — a configuration error `cli.live` explains and exits on.
-    # Retrying it every five seconds forever would bury that message.
-    class Locked(FakeLiveClient):
-        def positions_get(self):
-            raise sqlite3.OperationalError("database is locked")
-
-    with pytest.raises(sqlite3.OperationalError):
-        _run(Locked([[]]), conn, duration=6.0)
-
-
-def test_the_backup_still_runs_while_the_bridge_is_down(conn, tmp_path):
-    # The one process that snapshots the DB must keep snapshotting it even when
-    # the thing it talks to is gone — nothing about a backup needs the bridge.
-    r = _run(FlakyClient([[]], n_fail=99), conn, duration=6.0)
-
-    assert r.failed_cycles == r.cycles > 1
-    assert len(_snaps(tmp_path)) == 1
-
-
-# ---------------------------------------------------------------- heartbeat
-
-
-def test_live_cycle_writes_heartbeat(conn):
-    from journal.store import live_store as ls
-    client = FakeLiveClient([[]])          # no positions is fine
-    assert ls.read_heartbeat(conn) is None
-    live_cycle(client, conn, _LOGIN)
-    beat = ls.read_heartbeat(conn)
-    assert beat is not None and beat >= _MSC_FLOOR  # real ms, always written
-
-
-def test_loop_records_the_code_it_actually_loaded(conn):
-    """`journal status` cannot see a skipped restart from `started_msc` alone —
-    a timestamp only says WHEN, and every unrelated `.py` edit moved that answer.
-    The loop stamps WHICH modules it loaded so the check compares content."""
-    from journal.store import health, live_store as ls
-    live_loop(FakeLiveClient([[]]), conn, _LOGIN, once=True)
-    fp = ls.read_code_fingerprint(conn)
-    assert fp and health.changed_modules(fp) == []
-
-
 # --------------------------------------------------- position_loop (Task 5)
 #
-# Copies of the live_loop tests above, retargeted at position_loop: the same
-# runner behavior (recovery, interval choice, backup, bridge resilience,
-# heartbeat, code fingerprint), now calling position_cycle instead of
-# live_cycle. live_loop/live_cycle and their tests above are untouched — they
-# retire together in Task 6.
+# The whole runner surface: recovery, interval choice, backup, bridge
+# resilience, heartbeat, code fingerprint. `_snaps` and `FlakyClient` above are
+# shared with these. The pre-split `live_loop`/`live_cycle` and their copies of
+# these tests were retired in Task 7 once `cli.py` stopped calling them.
 
 
 def test_position_loop_recovers_interrupted_at_startup_and_never_resends(conn):
     # A row left 'sent' by a crashed process: recover_interrupted marks it failed,
     # and no cycle re-sends it.
     client = FakeLiveClient([[_pos(identifier=111)]])
-    live_cycle(client, conn, _LOGIN)
+    live.position_cycle(client, conn, _LOGIN, queue_mod.Queue())
     cmd_id = enqueue(conn, _LOGIN, "close", 111)
     conn.execute("UPDATE trade_commands SET status = 'sent' WHERE id = ?", (cmd_id,))
     conn.commit()
@@ -741,7 +507,7 @@ def test_position_loop_busy_interval_when_commands_pending(conn):
     # trading OFF keeps the pending row pending, so pending_count stays > 0 and
     # the loop must pick the BUSY interval.
     client = FakeLiveClient([[_pos(identifier=111)]])
-    live_cycle(client, conn, _LOGIN)
+    live.position_cycle(client, conn, _LOGIN, queue_mod.Queue())
     enqueue(conn, _LOGIN, "close", 111)
 
     sleeps = []
@@ -835,7 +601,7 @@ def test_position_loop_skips_the_snapshot_while_a_trade_command_is_pending(conn,
     # The copy runs in the loop thread. An SL/TP or close must never queue behind
     # it — trading OFF keeps the row pending, which is the state being tested.
     client = FakeLiveClient([[_pos(identifier=111)]])
-    live_cycle(client, conn, _LOGIN)
+    live.position_cycle(client, conn, _LOGIN, queue_mod.Queue())
     enqueue(conn, _LOGIN, "close", 111)
 
     live.position_loop(client, conn, _LOGIN, queue_mod.Queue(), once=True, trading=False)
@@ -1027,9 +793,9 @@ def test_serve_watches_splits_forming_from_closed(conn):
 
 
 def test_serve_watches_promotes_a_closed_bar_the_clock_has_not_caught_up_to(conn):
-    # `now_msc` is captured at the TOP of live_cycle and only reaches
-    # serve_watches after positions_get/poll_once/mirror-write — several hundred
-    # ms with a position open. Across a bucket rollover that stamp is still in
+    # `now_msc` is captured at the TOP of symbol_cycle and is already stale by
+    # the time the bridge answers serve_watches' copy_rates_range — ms on a good
+    # day, seconds on a slow bridge. Across a bucket rollover that stamp is in
     # the PREVIOUS bucket while the bridge already returns the new bar. Judging
     # "forming" by the clock alone then marks the just-closed bar as forming too;
     # the newer bar overwrites it in live_candles and it is never promoted, so
@@ -1506,7 +1272,7 @@ def test_a_none_tick_for_one_symbol_does_not_block_another_symbols_position(conn
     assert resolved == 0    # a fill alone isn't a "resolved" position
 
 
-def test_live_cycle_runs_the_paper_step_even_with_trading_off(conn):
+def test_position_cycle_runs_the_paper_step_even_with_trading_off(conn):
     account = paper_store.create_account(conn, name="T", initial_balance=1_000_000.0,
                                          leverage=500, stopout_pct=20.0)
     paper_store.insert_position(
@@ -1520,5 +1286,5 @@ def test_live_cycle_runs_the_paper_step_even_with_trading_off(conn):
     # already through the 4025.0 stop) — two events, ONE position. This is
     # `paper_resolved`'s distinguishing case: counting events would say 2.
     client = FakeLiveClient(positions=[], tick=_tick(bid=4020.0, ask=4020.5))
-    report = live.live_cycle(client, conn, _LOGIN, trading=False)
+    report = live.position_cycle(client, conn, _LOGIN, queue_mod.Queue(), trading=False)
     assert report.paper_resolved == 1
