@@ -18,6 +18,7 @@ from typing import Any
 from ..adapter.base import (
     Account,
     Deal,
+    MT5Client,
     Order,
     Position,
     SymbolInfo,
@@ -28,7 +29,7 @@ from ..adapter.base import (
 
 
 class LockedMT5Client:
-    def __init__(self, inner: Any, lock: threading.Lock | None = None) -> None:
+    def __init__(self, inner: MT5Client, lock: threading.Lock | None = None) -> None:
         self._inner = inner
         self._lock = lock if lock is not None else threading.Lock()
 
