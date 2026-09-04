@@ -715,8 +715,15 @@ def poll(
 
 @app.command()
 def live(
-    interval: float = typer.Option(
-        5.0, help="Idle seconds between cycles (drops to 1s while a command is queued)."
+    interval_positions: float = typer.Option(
+        5.0, "--interval-positions",
+        help="Idle seconds between position-monitoring cycles (drops to 1s while a "
+             "command is queued).",
+    ),
+    interval_symbols: float = typer.Option(
+        5.0, "--interval-symbols",
+        help="Seconds between symbol-data cycles (candle serving, backfill, "
+             "ingest-on-close).",
     ),
     no_trading: bool = typer.Option(
         False, "--no-trading", help="Ingest only — do NOT execute queued trade commands."
@@ -735,21 +742,32 @@ def live(
     """The one process that owns the bridge (M9): mirror open positions, auto-
     ingest a trade when its position closes, and execute queued trade commands.
 
+    Runs as TWO loops on two threads over one bridge connection: the position
+    loop (mirror, close detection, command execution — must stay fast) and the
+    symbol loop (forming bars, candle backfill, the ingest pipeline — allowed to
+    be slow). They have separate intervals, so a multi-second ingest no longer
+    blocks the position mirror. Every bridge call is serialized behind one lock
+    (`LockedMT5Client`); each loop gets its own SQLite connection.
+
     Needs the live bridge and an account already known to the store (`journal
     sync` first). Trading is ON BY DEFAULT — this loop WILL send real orders that
     the web has queued; pass `--no-trading` for a pure-ingest run. A queued
     command that may have reached the broker is NEVER auto-retried; the next
     startup marks it failed and tells you to check MT5 by hand. Ctrl+C stops
-    cleanly.
+    cleanly — only the main thread sees it, so it sets a stop event both loops
+    check after their current cycle.
 
     Because this is the only thing here that runs all day, it also takes the
     `journal backup` snapshot once every 24 h (7 kept, skipped while a trade
     command is pending, never fatal) — `--no-auto-backup` turns that off.
     """
     import logging
+    import queue as queue_mod
+    import threading
 
     from .adapter.select import get_client
-    from .ingest.live import live_loop
+    from .ingest.live import position_loop, symbol_loop
+    from .ingest.locked_client import LockedMT5Client
 
     # The package logs but nothing ever configured a handler, so every `log.info`
     # in the ingest path went to /dev/null — the last ingest freeze had to be
@@ -774,41 +792,118 @@ def live(
         if r.snapshots_written:
             parts.append(f"{r.snapshots_written} SL/TP snapshot(s)")
         if r.closed_ids:
-            parts.append(
-                f"closed {r.closed_ids}"
-                + (" -> ingested" if r.ingest_ran else " (ingest FAILED — see log)")
-            )
+            # The ingest itself no longer happens here — this cycle only hands
+            # the ids off. `_echo_symbol_cycle` reports the outcome.
+            parts.append(f"closed {r.closed_ids} -> queued for ingest")
         if r.command_id is not None:
             parts.append(f"cmd {r.command_id} -> {r.command_status}")
         typer.echo(f"  [{when:%H:%M:%S} UTC] " + " · ".join(parts))
 
+    def _echo_symbol_cycle(r) -> None:
+        # Deliberately NOT a per-cycle heartbeat: the position loop already beats
+        # once a cycle and a second beat at the same rate is just noise. This
+        # speaks only when something real happened — in particular the ingest
+        # result that `_echo_cycle` used to print before the split moved it here.
+        parts = []
+        if r.closed_ids:
+            parts.append(
+                f"closed {r.closed_ids}"
+                + (" -> ingested" if r.ingest_ran else " (ingest FAILED — see log)")
+            )
+        if r.candle_request_id is not None:
+            parts.append(f"candle req {r.candle_request_id} -> {r.candle_bars_written} bar(s)")
+        if not parts:
+            return
+        when = datetime.fromtimestamp(r.observed_msc / 1000, tz=timezone.utc)
+        typer.echo(f"  [{when:%H:%M:%S} UTC] " + " · ".join(parts))
+
     def _echo_closing(closed_ids) -> None:
-        # Fires the moment a close is detected, BEFORE the ingest pipeline blocks
-        # the loop on a bridge round-trip (sync + candles) that can take several
-        # seconds. Without this the heartbeat just goes quiet and reads as a
-        # freeze — which is exactly how it was first misread when run live.
+        # Fires the moment a close is detected, BEFORE the ingest pipeline runs
+        # (on the symbol loop now) — a bridge round-trip of sync + candles that
+        # can take several seconds. Without this the heartbeat just goes quiet
+        # and reads as a freeze — exactly how it was first misread when run live.
         typer.echo(
-            f"  closed {closed_ids} — menjalankan ingest "
-            f"(sync → rebuild → candles → rebuild), tunggu beberapa detik…"
+            f"  closed {closed_ids} — antre ingest "
+            f"(sync → rebuild → candles → rebuild) di loop symbol, "
+            f"tunggu beberapa detik…"
         )
 
-    conn = connect(db)
+    # One connection per loop: SQLite connections are not shared across threads,
+    # and each loop's rollback-on-failure must not touch the other's transaction.
+    conn_positions = connect(db)
+    conn_symbols = connect(db)
+    position_report_holder: list = []
+    symbol_report_holder: list = []
     try:
-        login = _one_account_login(conn)  # friendly exit if `sync` never ran
-        client = get_client()
+        login = _one_account_login(conn_positions)  # friendly exit if `sync` never ran
+        # ONE bridge connection for both loops, every call serialized behind a
+        # lock — two sessions on one terminal is exactly what this process exists
+        # to prevent.
+        client = LockedMT5Client(get_client())
         mode = "TRADING ON — will send real orders" if trading else "ingest only (--no-trading)"
         typer.echo(
-            f"live: {mode}; idle interval {interval}s"
+            f"live: {mode}; position interval {interval_positions}s, "
+            f"symbol interval {interval_symbols}s"
             + ("; auto-backup off" if no_auto_backup else "; daily auto-backup")
             + ("" if once else " — Ctrl+C to stop" + (f", max {duration}s" if duration else ""))
         )
-        r = live_loop(
-            client, conn, login,
-            interval_idle=interval, trading=trading,
-            once=once, duration=duration,
-            backup_every_s=None if no_auto_backup else 86_400.0,
-            on_cycle=_echo_cycle, on_closing=_echo_closing,
-        )
+
+        closed_queue: queue_mod.Queue = queue_mod.Queue()
+        stop_event = threading.Event()
+
+        # A raise inside a Thread target does NOT reach the main thread, and the
+        # "locked" refusal below is the one exception that MUST get out. Each
+        # target parks either its report or its exception; the main thread
+        # re-raises after both have joined.
+        def _run_position_loop() -> None:
+            try:
+                position_report_holder.append(position_loop(
+                    client, conn_positions, login, closed_queue,
+                    interval_idle=interval_positions, trading=trading,
+                    once=once, duration=duration,
+                    backup_every_s=None if no_auto_backup else 86_400.0,
+                    on_cycle=_echo_cycle, on_closing=_echo_closing,
+                    stop_event=stop_event,
+                ))
+            except Exception as e:                      # noqa: BLE001 — re-raised below
+                position_report_holder.append(e)
+
+        def _run_symbol_loop() -> None:
+            try:
+                symbol_report_holder.append(symbol_loop(
+                    client, conn_symbols, closed_queue,
+                    interval=interval_symbols, once=once, duration=duration,
+                    on_cycle=_echo_symbol_cycle,
+                    stop_event=stop_event,
+                ))
+            except Exception as e:                      # noqa: BLE001 — re-raised below
+                symbol_report_holder.append(e)
+
+        t_position = threading.Thread(target=_run_position_loop, name="position_loop")
+        t_symbol = threading.Thread(target=_run_symbol_loop, name="symbol_loop")
+        t_position.start()
+        t_symbol.start()
+        try:
+            while t_position.is_alive() or t_symbol.is_alive():
+                t_position.join(timeout=0.5)
+                t_symbol.join(timeout=0.5)
+                # One loop escaping (a locked DB does, on purpose) must bring the
+                # other down too — otherwise the survivor keeps looping forever
+                # and the message explaining the exit never prints.
+                if any(h and isinstance(h[0], Exception)
+                       for h in (position_report_holder, symbol_report_holder)):
+                    stop_event.set()
+        except KeyboardInterrupt:
+            # Only the main thread ever sees this; the loops learn about it here.
+            # Join without a timeout: a connection must never be closed while its
+            # own thread is still mid-cycle.
+            stop_event.set()
+            t_position.join()
+            t_symbol.join()
+
+        for holder in (position_report_holder, symbol_report_holder):
+            if holder and isinstance(holder[0], Exception):
+                raise holder[0]
     except sqlite3.OperationalError as e:
         # WAL + busy_timeout (store/db.py) makes this rare, but two `journal live`
         # processes on one DB still contend past the timeout. Only ONE live loop
@@ -823,17 +918,27 @@ def live(
             raise typer.Exit(1)
         raise
     finally:
-        conn.close()
+        conn_positions.close()
+        conn_symbols.close()
 
+    r = position_report_holder[0] if position_report_holder else None
+    rs = symbol_report_holder[0] if symbol_report_holder else None
     typer.echo("== live ==")
-    typer.echo(f"cycles:         {r.cycles}")
-    if r.failed_cycles:
-        # Without this a run whose every cycle raised prints "cycles: 720" and
-        # reads as a healthy night.
-        typer.echo(f"failed:         {r.failed_cycles} cycle(s) raised (see the log)")
-    typer.echo(f"recovered:      {r.recovered} interrupted command(s) at startup")
-    typer.echo(f"trading:        {'on' if trading else 'off (--no-trading)'}")
-    typer.echo(f"stopped by:     {r.stopped_by}")
+    if r is not None:
+        typer.echo(f"position cycles: {r.cycles}")
+        if r.failed_cycles:
+            # Without this a run whose every cycle raised prints "cycles: 720"
+            # and reads as a healthy night.
+            typer.echo(f"  failed:        {r.failed_cycles} cycle(s) raised (see the log)")
+        typer.echo(f"  recovered:     {r.recovered} interrupted command(s) at startup")
+        typer.echo(f"  trading:       {'on' if trading else 'off (--no-trading)'}")
+        typer.echo(f"  stopped by:    {r.stopped_by}")
+    if rs is not None:
+        typer.echo(f"symbol cycles:   {rs.cycles}")
+        if rs.failed_cycles:
+            typer.echo(f"  failed:        {rs.failed_cycles} cycle(s) raised (see the log)")
+        typer.echo(f"  requeued:      {rs.requeued} orphaned candle request(s) at startup")
+        typer.echo(f"  stopped by:    {rs.stopped_by}")
 
 
 # -------------------------------------------------------------------- report
