@@ -953,6 +953,42 @@ def test_position_loop_stops_via_stop_event(conn):
     assert r.stopped_by == "interrupt"
 
 
+# ----------------------------------------------------- symbol_loop (Task 6)
+
+
+def test_symbol_loop_requeues_orphaned_candle_requests_at_startup(conn, monkeypatch):
+    calls = []
+    monkeypatch.setattr(live, "requeue_orphaned", lambda c: calls.append(c) or 2)
+    client = FakeLiveClient(positions=[])
+    live.symbol_loop(client, conn, queue_mod.Queue(), once=True)
+    assert len(calls) == 1
+
+
+def test_symbol_loop_once_runs_exactly_one_cycle(conn):
+    client = FakeLiveClient(positions=[])
+    r = live.symbol_loop(client, conn, queue_mod.Queue(), once=True)
+    assert r.cycles == 1
+    assert r.stopped_by == "once"
+
+
+def test_symbol_loop_stops_via_stop_event(conn):
+    client = FakeLiveClient(positions=[])
+    stop_event = threading.Event()
+    stop_event.set()
+    r = live.symbol_loop(client, conn, queue_mod.Queue(), stop_event=stop_event)
+    assert r.stopped_by == "interrupt"
+
+
+def test_symbol_loop_survives_a_failing_cycle(conn, monkeypatch):
+    def _boom(*a, **k):
+        raise RuntimeError("bridge gone")
+    monkeypatch.setattr(live, "symbol_cycle", _boom)
+    client = FakeLiveClient(positions=[])
+    r = live.symbol_loop(client, conn, queue_mod.Queue(), once=True)
+    assert r.failed_cycles == 1
+    assert r.cycles == 1
+
+
 # ---------------------------------------------------------------- serve_watches
 
 

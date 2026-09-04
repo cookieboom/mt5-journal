@@ -155,6 +155,14 @@ class SymbolCycleReport:
     candle_bars_written: int | None = None
 
 
+@dataclass(frozen=True)
+class SymbolLoopReport:
+    cycles: int = 0
+    requeued: int = 0                     # orphaned candle requests requeued at startup
+    failed_cycles: int = 0                # cycles that raised (bridge gone, etc)
+    stopped_by: str = "duration"          # 'once' | 'duration' | 'interrupt'
+
+
 def _direction(type_: int | None) -> str | None:
     """MT5 position `type`: 0 = buy, 1 = sell. Anything else is unknown — return
     None (the `open_positions.direction` CHECK allows NULL) rather than guess."""
@@ -1024,6 +1032,91 @@ def position_loop(
             if stop_event is not None and stop_event.is_set():
                 return _report("interrupt")
             interval = interval_busy if pending_count(conn, login) > 0 else interval_idle
+            sleep(interval)
+    except KeyboardInterrupt:
+        return _report("interrupt")
+
+
+def symbol_loop(
+    client: MT5Client,
+    conn: sqlite3.Connection,
+    closed_queue: queue_mod.Queue[list[int]],
+    *,
+    interval: float = 5.0,
+    once: bool = False,
+    duration: float | None = None,
+    sleep=time.sleep,
+    monotonic=time.monotonic,
+    on_cycle=None,
+    stop_event: threading.Event | None = None,
+) -> SymbolLoopReport:
+    """Repeatedly run `symbol_cycle` — the slow half of the split live loop
+    (mirrors `position_loop`, which repeats `position_cycle`). `requeue_orphaned`
+    runs ONCE at startup: a candle request left `claimed` by a crashed process is
+    put back on the queue instead of sitting stuck forever.
+
+    Simpler than `position_loop`: one flat `interval` (no busy/idle split — there
+    is no `pending_count` here, that's position-domain), no backup call, no
+    `recover_interrupted` (order recovery is position-domain too). `sleep`/
+    `monotonic` are injectable so `--once`/`--duration`/Ctrl+C are all testable
+    with a fake clock. Always runs at least one cycle; `once` beats `duration`;
+    the deadline is checked after a cycle and before the next sleep, so a
+    `duration` run never sleeps after its final cycle. Ctrl+C stops cleanly with
+    `stopped_by='interrupt'` — `stop_event` does the same from outside this
+    thread: Task 7 runs this loop on a separate thread that never receives the
+    SIGINT-driven `KeyboardInterrupt` directly, so the CLI's own signal handling
+    sets `stop_event` to reach it.
+
+    A cycle that RAISES does not end the loop: it is counted in `failed_cycles`
+    and retried on the next tick, same reasoning as `position_loop`.
+    """
+    requeued = requeue_orphaned(conn)
+    if requeued:
+        log.info("live: requeued %d orphaned candle request(s) at startup", requeued)
+
+    cycles = 0
+    failed = 0          # total, reported
+    streak = 0          # consecutive, resets on the first good cycle
+    deadline = monotonic() + duration if duration is not None else None
+
+    def _report(stopped_by: str) -> SymbolLoopReport:
+        return SymbolLoopReport(
+            cycles=cycles, requeued=requeued, failed_cycles=failed,
+            stopped_by=stopped_by,
+        )
+
+    try:
+        while True:
+            try:
+                r = symbol_cycle(client, conn, closed_queue)
+            except Exception as e:
+                # Mirrors position_loop: rollback, log, retry, never die on a
+                # bridge blip. Never carry a half-written cycle's WAL writer
+                # slot into the sleep.
+                conn.rollback()
+                if isinstance(e, sqlite3.OperationalError) and "locked" in str(e).lower():
+                    # Past a 5 s busy_timeout this is a SECOND `journal live` on
+                    # the same DB, not a blip — same escape as position_loop.
+                    raise
+                failed += 1
+                streak += 1
+                if streak == 1:
+                    log.exception("live: symbol_cycle failed — retrying, the loop stays up")
+                elif streak % 60 == 0:
+                    log.warning("live: symbol_cycle still failing, %d in a row", streak)
+            else:
+                if streak:
+                    log.info("live: symbol_cycle recovered after %d failed cycle(s)", streak)
+                    streak = 0
+                if on_cycle is not None:
+                    on_cycle(r)
+            cycles += 1
+            if once:
+                return _report("once")
+            if deadline is not None and monotonic() >= deadline:
+                return _report("duration")
+            if stop_event is not None and stop_event.is_set():
+                return _report("interrupt")
             sleep(interval)
     except KeyboardInterrupt:
         return _report("interrupt")
