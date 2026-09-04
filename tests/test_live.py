@@ -719,6 +719,24 @@ def test_position_loop_stops_via_stop_event(conn):
     assert r.stopped_by == "interrupt"
 
 
+def test_position_loop_runs_no_further_cycle_when_the_event_fires_mid_sleep(conn):
+    """The real shape of Ctrl+C: it lands on the MAIN thread while this loop is
+    asleep. One more cycle after that would execute a queued command — put money
+    on the market — after the human asked to stop, which the pre-split
+    single-threaded loop (KeyboardInterrupt raised inside `sleep`) never did."""
+    client = FakeLiveClient([[_pos(identifier=111)]])
+    stop_event = threading.Event()
+
+    r = live.position_loop(
+        client, conn, _LOGIN, queue_mod.Queue(),
+        sleep=lambda _: stop_event.set(),   # the interrupt arrives DURING the sleep
+        stop_event=stop_event,
+    )
+
+    assert r.stopped_by == "interrupt"
+    assert r.cycles == 1                    # the one already run, and no more
+
+
 # ----------------------------------------------------- symbol_loop (Task 6)
 
 
@@ -743,6 +761,22 @@ def test_symbol_loop_stops_via_stop_event(conn):
     stop_event.set()
     r = live.symbol_loop(client, conn, queue_mod.Queue(), stop_event=stop_event)
     assert r.stopped_by == "interrupt"
+
+
+def test_symbol_loop_runs_no_further_cycle_when_the_event_fires_mid_sleep(conn):
+    # Same guard as position_loop: no order at stake here, but no reason to spend
+    # another bridge round trip after the process has been told to stop either.
+    client = FakeLiveClient(positions=[])
+    stop_event = threading.Event()
+
+    r = live.symbol_loop(
+        client, conn, queue_mod.Queue(),
+        sleep=lambda _: stop_event.set(),
+        stop_event=stop_event,
+    )
+
+    assert r.stopped_by == "interrupt"
+    assert r.cycles == 1
 
 
 def test_symbol_loop_survives_a_failing_cycle(conn, monkeypatch):

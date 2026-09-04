@@ -701,13 +701,17 @@ def position_loop(
 
     After each cycle the next sleep is `interval_busy` when a command is pending
     (be responsive) else `interval_idle`. `sleep`/`monotonic` are injectable so
-    `--once`/`--duration`/Ctrl+C are all testable with a fake clock. Always runs
-    at least one cycle; `once` beats `duration`; the deadline is checked after a
-    cycle and before the next sleep, so a `duration` run never sleeps after its
-    final cycle. Ctrl+C stops cleanly with `stopped_by='interrupt'` — `stop_event`
-    does the same from outside this thread: Task 7 runs `symbol_loop` on a
-    separate thread that never receives the SIGINT-driven `KeyboardInterrupt`
-    directly, so the CLI's own signal handling sets `stop_event` to reach it.
+    `--once`/`--duration`/Ctrl+C are all testable with a fake clock. Runs at
+    least one cycle unless `stop_event` is already set; `once` beats `duration`;
+    the deadline is checked after a cycle and before the next sleep, so a
+    `duration` run never sleeps after its final cycle. Ctrl+C stops cleanly with
+    `stopped_by='interrupt'` — `stop_event` does the same from outside this
+    thread: `cli.live` runs this loop on a thread that never receives the
+    SIGINT-driven `KeyboardInterrupt` directly, so its signal handling sets
+    `stop_event` to reach it. That event is checked at the TOP of the loop as
+    well as before the sleep: the interrupt normally arrives WHILE this thread
+    sleeps, and one further cycle would send a queued order after the human
+    asked to stop.
 
     A cycle that RAISES does not end the loop: it is rolled back, counted in
     `failed_cycles`, and retried on the next tick. Nothing beats the heartbeat on
@@ -739,6 +743,12 @@ def position_loop(
 
     try:
         while True:
+            if stop_event is not None and stop_event.is_set():
+                # BEFORE the cycle, not only after it: the event is normally set
+                # by Ctrl+C on the main thread WHILE this one sleeps, and the
+                # cycle this would otherwise run first can send a queued order.
+                # A stop must not put money on the market.
+                return _report("interrupt")
             try:
                 r = position_cycle(
                     client, conn, login, closed_queue, trading=trading, on_closing=on_closing,
@@ -807,13 +817,14 @@ def symbol_loop(
     is no `pending_count` here, that's position-domain), no backup call, no
     `recover_interrupted` (order recovery is position-domain too). `sleep`/
     `monotonic` are injectable so `--once`/`--duration`/Ctrl+C are all testable
-    with a fake clock. Always runs at least one cycle; `once` beats `duration`;
-    the deadline is checked after a cycle and before the next sleep, so a
-    `duration` run never sleeps after its final cycle. Ctrl+C stops cleanly with
-    `stopped_by='interrupt'` — `stop_event` does the same from outside this
-    thread: Task 7 runs this loop on a separate thread that never receives the
-    SIGINT-driven `KeyboardInterrupt` directly, so the CLI's own signal handling
-    sets `stop_event` to reach it.
+    with a fake clock. Runs at least one cycle unless `stop_event` is already
+    set; `once` beats `duration`; the deadline is checked after a cycle and
+    before the next sleep, so a `duration` run never sleeps after its final
+    cycle. Ctrl+C stops cleanly with `stopped_by='interrupt'` — `stop_event`
+    does the same from outside this thread: `cli.live` runs this loop on a
+    thread that never receives the SIGINT-driven `KeyboardInterrupt` directly,
+    so its signal handling sets `stop_event` to reach it. Checked at the TOP of
+    the loop as well as before the sleep, same as `position_loop`.
 
     A cycle that RAISES does not end the loop: it is counted in `failed_cycles`
     and retried on the next tick, same reasoning as `position_loop`.
@@ -835,6 +846,10 @@ def symbol_loop(
 
     try:
         while True:
+            if stop_event is not None and stop_event.is_set():
+                # Same as position_loop: checked before the cycle so a stop set
+                # during the sleep costs no further bridge round trip.
+                return _report("interrupt")
             try:
                 r = symbol_cycle(client, conn, closed_queue)
             except Exception as e:
