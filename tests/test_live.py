@@ -672,15 +672,37 @@ def test_position_loop_once_returns_even_when_the_cycle_fails(conn):
 
 
 def test_a_locked_database_still_escapes_the_position_loop(conn):
-    # Past the 5 s busy_timeout, "database is locked" means a SECOND journal
-    # live on this DB — a configuration error `cli.live` explains and exits on.
-    # Retrying it every five seconds forever would bury that message.
+    # PERSISTENTLY locked means a SECOND journal live on this DB — a
+    # configuration error `cli.live` explains and exits on. Retrying it every
+    # five seconds forever would bury that message.
     class Locked(FakeLiveClient):
         def positions_get(self):
             raise sqlite3.OperationalError("database is locked")
 
     with pytest.raises(sqlite3.OperationalError):
-        _run_position_loop(Locked([[]]), conn, duration=6.0)
+        _run_position_loop(Locked([[]]), conn, duration=60.0)
+
+
+def test_a_brief_lock_is_retried_instead_of_killing_the_position_loop(conn):
+    # Two writer connections in one process (conn_positions/conn_symbols) make an
+    # isolated "locked" cycle ordinary contention, not a second daemon. Below
+    # LOCKED_STREAK_EXIT it must behave like any other transient failure, and a
+    # good cycle in between must clear the count — an intermittent lock must
+    # never accumulate its way into a false "second journal live" exit.
+    class Flaky(FakeLiveClient):
+        def __init__(self):
+            super().__init__([[]])
+            self.n = 0
+
+        def positions_get(self):
+            self.n += 1
+            if self.n % 3:                    # locked, locked, ok, locked, ...
+                raise sqlite3.OperationalError("database is locked")
+            return super().positions_get()
+
+    r = _run_position_loop(Flaky(), conn, duration=60.0)
+
+    assert r.stopped_by == "duration" and r.cycles > 6
 
 
 def test_the_backup_still_runs_while_the_bridge_is_down_for_position_loop(conn, tmp_path):

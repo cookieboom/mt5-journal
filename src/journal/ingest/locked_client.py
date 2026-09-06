@@ -17,6 +17,7 @@ from typing import Any
 
 from ..adapter.base import (
     Account,
+    Candle,
     Deal,
     MT5Client,
     Order,
@@ -50,7 +51,7 @@ class LockedMT5Client:
             return self._inner.symbols_get(group)
 
     def copy_rates_range(self, symbol: str, timeframe: str, date_from: Any,
-                         date_to: Any):
+                         date_to: Any) -> list[Candle]:
         with self._lock:
             return self._inner.copy_rates_range(symbol, timeframe, date_from, date_to)
 

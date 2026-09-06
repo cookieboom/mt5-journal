@@ -3,8 +3,13 @@ from __future__ import annotations
 import threading
 import time
 
+from journal.adapter.base import MT5Client
 from journal.adapter.fake import FakeMT5Client
 from journal.ingest.locked_client import LockedMT5Client
+
+
+def test_conforms_to_the_protocol():
+    assert isinstance(LockedMT5Client(FakeMT5Client()), MT5Client)
 
 
 def test_forwards_calls_to_the_inner_client():

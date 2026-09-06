@@ -56,7 +56,8 @@ reason about. `cli.live` starts both.
      never propagated: losing this loop loses nothing unrecoverable, but the
      position loop is unaffected either way. This is also why `symbol_loop`
      checks its stop event only AFTER a cycle — stopping without one last drain
-     would strand a close nothing ever re-detects.
+     leaves that close un-ingested until the next close (or `journal sync`)
+     triggers a run.
 
   3. **Fulfil one candle request.** Claim the OLDEST pending row in
      `candle_requests` (queued by the web, never sent there directly — see
@@ -123,6 +124,16 @@ from .live_candles import serve_watches
 from .poller import poll_once
 
 log = logging.getLogger(__name__)
+
+# Consecutive "database is locked" cycles before a loop gives up and lets the
+# error out to `cli.live` (which prints "run only one `journal live`" and exits).
+# This process now holds TWO writer connections on one DB (conn_positions,
+# conn_symbols), so ONE locked cycle no longer implies a second daemon — a long
+# symbol-side write (a big `candle_fill.fill_range` backfill) can push the other
+# thread past the 5 s busy_timeout on its own. That clears in milliseconds; a
+# second `journal live` does not clear at all and hits this on every cycle, so
+# it still exits within LOCKED_STREAK_EXIT × interval (a few seconds).
+LOCKED_STREAK_EXIT = 3
 
 
 @dataclass(frozen=True)
@@ -744,6 +755,7 @@ def position_loop(
     cycles = 0
     failed = 0          # total, reported
     streak = 0          # consecutive, resets on the first good cycle
+    locked_streak = 0   # consecutive "locked" ones — see LOCKED_STREAK_EXIT
     deadline = monotonic() + duration if duration is not None else None
 
     def _report(stopped_by: str) -> PositionLoopReport:
@@ -774,11 +786,18 @@ def position_loop(
                                   # slot into the sleep — `journal serve` blocks
                                   # on it, and this project has paid for that twice
                 if isinstance(e, sqlite3.OperationalError) and "locked" in str(e).lower():
-                    # Past a 5 s busy_timeout this is a SECOND `journal live` on
-                    # the same DB, not a blip. Only one loop may own the bridge:
-                    # let it out so `cli.live` can say so and exit, instead of
-                    # retrying a configuration error every five seconds forever.
-                    raise
+                    # An ISOLATED locked cycle is now expected: this process holds
+                    # two writer connections, and a long symbol-side write can push
+                    # this one past the busy_timeout for a moment. What a second
+                    # `journal live` looks like is PERSISTENCE — it locks us out on
+                    # every cycle, forever. So only a streak escapes, and then
+                    # `cli.live` says so and exits; below the threshold this is
+                    # just another transient failure, logged and retried.
+                    locked_streak += 1
+                    if locked_streak >= LOCKED_STREAK_EXIT:
+                        raise
+                else:
+                    locked_streak = 0
                 failed += 1
                 streak += 1
                 if streak == 1:
@@ -789,6 +808,7 @@ def position_loop(
                 if streak:
                     log.info("live: recovered after %d failed cycle(s)", streak)
                     streak = 0
+                locked_streak = 0
                 if on_cycle is not None:
                     on_cycle(r)
             cycles += 1
@@ -836,7 +856,8 @@ def symbol_loop(
     SIGINT-driven `KeyboardInterrupt` directly, so its signal handling sets
     `stop_event` to reach it. Checked AFTER the cycle only — unlike
     `position_loop`, this loop must always drain `closed_queue` once more before
-    it stops, or a close queued while it slept is lost for good.
+    it stops, or a close queued while it slept goes un-ingested until the next
+    close (or a manual `journal sync`) triggers a run.
 
     A cycle that RAISES does not end the loop: it is counted in `failed_cycles`
     and retried on the next tick, same reasoning as `position_loop`.
@@ -848,6 +869,7 @@ def symbol_loop(
     cycles = 0
     failed = 0          # total, reported
     streak = 0          # consecutive, resets on the first good cycle
+    locked_streak = 0   # consecutive "locked" ones — see LOCKED_STREAK_EXIT
     deadline = monotonic() + duration if duration is not None else None
 
     def _report(stopped_by: str) -> SymbolLoopReport:
@@ -861,10 +883,14 @@ def symbol_loop(
             # NOT checked here, unlike position_loop: `symbol_cycle` is the only
             # thing that drains `closed_queue`, so a stop set during the sleep
             # must still buy one more cycle or any close `position_cycle` queued
-            # in that window dies with the process — unrecoverably, since the id
-            # is already gone from `open_positions` and nothing re-detects it on
-            # restart. The asymmetry is the point: position_loop's extra cycle
-            # can SEND AN ORDER, this one only drains a queue and reads candles.
+            # in that window dies with the process. Not lost forever — the drain
+            # only TRIGGERS the pipeline, which re-syncs a window rather than the
+            # queued ids, so the next unrelated close coalesces it in, and
+            # `journal sync` by hand does it now — but until one of those happens
+            # the journal silently lags behind the account, and one more cycle
+            # costs nothing. The asymmetry is the point: position_loop's extra
+            # cycle can SEND AN ORDER, this one only drains a queue and reads
+            # candles.
             try:
                 r = symbol_cycle(client, conn, closed_queue)
             except Exception as e:
@@ -873,9 +899,15 @@ def symbol_loop(
                 # slot into the sleep.
                 conn.rollback()
                 if isinstance(e, sqlite3.OperationalError) and "locked" in str(e).lower():
-                    # Past a 5 s busy_timeout this is a SECOND `journal live` on
-                    # the same DB, not a blip — same escape as position_loop.
-                    raise
+                    # Same rule as position_loop: one locked cycle is ordinary
+                    # contention between this process's two writer connections;
+                    # only a streak of them means a second `journal live`, and
+                    # only that escapes to `cli.live`.
+                    locked_streak += 1
+                    if locked_streak >= LOCKED_STREAK_EXIT:
+                        raise
+                else:
+                    locked_streak = 0
                 failed += 1
                 streak += 1
                 if streak == 1:
@@ -886,6 +918,7 @@ def symbol_loop(
                 if streak:
                     log.info("live: symbol_cycle recovered after %d failed cycle(s)", streak)
                     streak = 0
+                locked_streak = 0
                 if on_cycle is not None:
                     on_cycle(r)
             cycles += 1
