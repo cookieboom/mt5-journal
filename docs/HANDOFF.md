@@ -36,7 +36,21 @@ home each, and a second copy is a future lie. Point, never duplicate.
 
 ## CURRENT STATE — update this section every session
 
-**Last updated:** 2026-08-18
+**Last updated:** 2026-09-04
+
+**2026-09-04 — decoupled the live loop: position and symbol-data paths split
+onto two threads** (`worktree-decouple-live-loop-spec`, 8 tasks, spec +
+plan in `docs/superpowers/specs/2026-09-04-decouple-live-loop-design.md` and
+`docs/superpowers/plans/2026-09-04-decouple-live-loop.md`). `journal live` now
+runs `position_loop`/`symbol_loop` as two threads with independently
+configurable `--interval-positions`/`--interval-symbols`. A position close
+hands off to `symbol_cycle` via an in-memory `queue.Queue` instead of
+ingesting inline, so candle serving and backfill are no longer blocked by
+ingest-on-close — the multi-second sync/rebuild/candles round trip that used
+to sit in front of the position mirror and command execution is now entirely
+on the symbol side. Bridge access is serialized through one
+`LockedMT5Client` wrapping the single adapter connection, so both threads
+share it without two sessions ever landing on the terminal at once.
 
 **2026-08-18 — paper trading: a virtual account on the live chart
 (`worktree-spec-paper-trading`, 17 tasks, spec + plan in

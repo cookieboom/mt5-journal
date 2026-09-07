@@ -5,35 +5,34 @@ it. The web never talks to MT5; it INSERTs a `pending` row into `trade_commands`
 and this loop claims, sends, and records it. That split is what keeps CLAUDE.md
 rules 1 and 12 literally true everywhere else in the codebase.
 
-One cycle does five jobs, in this order and for a reason:
+The work is SPLIT ACROSS TWO THREADS with independent intervals. They share one
+bridge connection (serialized by `ingest.locked_client.LockedMT5Client`), take a
+SQLite connection each, and are connected by nothing else but one in-memory
+`closed_queue`. Neither waits on the other; there is no shared ordering left to
+reason about. `cli.live` starts both.
+
+**The position side — `position_cycle` / `position_loop`. Must stay fast.**
 
   1. **Mirror.** Fetch `positions_get()` ONCE and use that single list for
      everything downstream — the SL/TP snapshots (via the reused `poll_once`),
      the `open_positions` mirror, AND close detection. Fetching twice would risk
      the three consumers seeing three slightly different worlds a few ms apart.
 
-  2. **Serve watches + beat.** `serve_watches` (forming bar + promote closed
-     bars) and the liveness beacon. Deliberately BEFORE steps 3 and 4: those
-     can block on a multi-second bridge round trip (ingest on close, order
-     send), and this is what `/chart`'s live edge and the liveness indicator
-     depend on — it must not sit behind that wait. Cheap enough to lead with:
-     one latest-bars fetch per active watch, ~1 given demand-driven watching.
-     This beat alone is not enough to survive a close, though: the ingest
-     pipeline in step 3 can run long enough on its own to age this beat past
-     the web's staleness threshold before the NEXT cycle ever gets a chance to
-     beat again — so step 3 beats a second time right after the pipeline runs.
+  2. **Beat.** The liveness beacon, written every cycle whether or not anything
+     is open — an empty `open_positions` cannot serve as a heartbeat. Exactly
+     ONE beat per cycle: before the split there was a second one after the
+     inline ingest, because that pipeline could age the first beat past the
+     web's staleness threshold. The ingest is on the other thread now and cannot
+     block this beat, so the second beat is gone.
 
-  3. **Detect closes → ingest.** A `position_id` that was in `open_positions` at
-     the START of this cycle but is absent from the fresh feed has CLOSED. MT5
-     drops a closed position from `positions_get()` forever (Trap 6), so this is
-     the one moment we know to pull its finished deal. On any close(s) we run the
-     full pipeline — sync → rebuild → candles → rebuild — ONCE, coalesced, no
-     matter how many closed together. A failed ingest is caught and logged, never
-     propagated: losing this loop loses unrecoverable live SL history, which is
-     the whole reason M4 exists, so a transient bridge hiccup must not kill it.
-     The beacon is beaten again immediately after the pipeline (success or
-     failure) — see step 2's note on why one beat is not enough across a long
-     ingest.
+  3. **Paper step,** then **detect closes → QUEUE.** A `position_id` that was in
+     `open_positions` at the START of this cycle but is absent from the fresh
+     feed has CLOSED. MT5 drops a closed position from `positions_get()` forever
+     (Trap 6), so this is the one moment we know to pull its finished deal — but
+     this cycle does not pull it. It pushes the ids onto `closed_queue` and moves
+     on; the symbol side ingests them on its next tick. That handoff is the whole
+     point of the split: a multi-second sync/candles round trip used to block the
+     beacon and the command below it.
 
   4. **Expire, then execute one command.** `expire_stale` first: a command that
      has been queued longer than `STALE_PENDING_S` with nothing executing it is
@@ -45,16 +44,29 @@ One cycle does five jobs, in this order and for a reason:
      used at enqueue time — the world moves between enqueue and claim, so we
      re-validate. One command per cycle keeps the sequence serial and auditable.
 
-  5. **Fulfil one candle request.** Claim the OLDEST pending row in
+**The symbol side — `symbol_cycle` / `symbol_loop`. Allowed to be slow.**
+
+  1. **Serve watches.** `serve_watches` (forming bar + promote closed bars) —
+     what `/chart`'s live edge depends on. One latest-bars fetch per active
+     watch, ~1 given demand-driven watching.
+
+  2. **Drain `closed_queue` → ingest.** Everything queued since the last tick,
+     coalesced into ONE pipeline run (sync → rebuild → candles → rebuild) no
+     matter how many positions closed. A failed ingest is caught and logged,
+     never propagated: losing this loop loses nothing unrecoverable, but the
+     position loop is unaffected either way. This is also why `symbol_loop`
+     checks its stop event only AFTER a cycle — stopping without one last drain
+     leaves that close un-ingested until the next close (or `journal sync`)
+     triggers a run.
+
+  3. **Fulfil one candle request.** Claim the OLDEST pending row in
      `candle_requests` (queued by the web, never sent there directly — see
      CLAUDE.md rules 1/12) and run it through `candle_fill.fulfill_request`.
-     Same one-per-cycle discipline as commands, so a large backfill can never
-     starve the position heartbeat. LAST because `fill_range` can walk a whole
-     requested range over several round trips and nothing user-facing waits on
-     it, while an order does. A failed fetch is marked `failed` and logged,
-     never re-raised past this loop — unlike a command, a candle fetch is
-     idempotent and safe to just re-request, so it does not need the command
-     queue's stricter "never auto-retry" refusal.
+     One per cycle, so a large backfill cannot starve the forming bar. A failed
+     fetch is marked `failed` and logged, never re-raised past this loop —
+     unlike a command, a candle fetch is idempotent and safe to just re-request,
+     so it does not need the command queue's stricter "never auto-retry"
+     refusal.
 
 The single most important refusal (shared with `execute.recover_interrupted`):
 an order that MAY have reached the broker is NEVER re-sent by a machine. If
@@ -68,15 +80,21 @@ this poller's TRUE-UTC wall clock (`now_ms`); `open_time_msc` is broker SERVER
 time. They are different clocks — never compare or subtract them (Trap 7). Money
 columns (profit/swap) are in `accounts.currency` = USC; stored as-is.
 
-`live_cycle` is the timing-free unit surface (mirrors `poll_once`); `live_loop`
-wraps it in a sleep loop with an injectable clock (mirrors `poll_loop`) so
-`--once`/`--duration`/Ctrl+C are all testable without a real wall-clock wait.
+`position_cycle` and `symbol_cycle` are the timing-free unit surfaces (they
+mirror `poll_once`); `position_loop` and `symbol_loop` wrap them in sleep loops
+with an injectable clock (mirroring `poll_loop`) so `--once`/`--duration`/Ctrl+C
+are all testable without a real wall-clock wait. `journal live` runs the two
+loops on two threads with independent intervals — a close detected by
+`position_cycle` crosses to `symbol_cycle` on an in-memory queue, so an ingest
+round-trip never blocks the position mirror or command execution.
 """
 
 from __future__ import annotations
 
 import logging
+import queue as queue_mod
 import sqlite3
+import threading
 import time
 from dataclasses import dataclass, field
 
@@ -107,26 +125,51 @@ from .poller import poll_once
 
 log = logging.getLogger(__name__)
 
+# Consecutive "database is locked" cycles before a loop gives up and lets the
+# error out to `cli.live` (which prints "run only one `journal live`" and exits).
+# This process now holds TWO writer connections on one DB (conn_positions,
+# conn_symbols), so ONE locked cycle no longer implies a second daemon — a long
+# symbol-side write (a big `candle_fill.fill_range` backfill) can push the other
+# thread past the 5 s busy_timeout on its own. That clears in milliseconds; a
+# second `journal live` does not clear at all and hits this on every cycle, so
+# it still exits within LOCKED_STREAK_EXIT × interval (a few seconds).
+LOCKED_STREAK_EXIT = 3
+
 
 @dataclass(frozen=True)
-class LiveReport:
+class PositionLoopReport:
+    cycles: int = 0
+    recovered: int = 0                    # orphans closed out at startup
+    failed_cycles: int = 0                # cycles that raised (bridge gone, etc)
+    stopped_by: str = "duration"          # 'once' | 'duration' | 'interrupt'
+
+
+@dataclass(frozen=True)
+class PositionCycleReport:
     account_login: int
     observed_msc: int
     positions_seen: int = 0
     snapshots_written: int = 0
     closed_ids: list[int] = field(default_factory=list)
-    ingest_ran: bool = False              # pipeline attempted AND succeeded
     command_id: int | None = None         # the command this cycle acted on, if any
     command_status: str | None = None     # its resulting status ('done'/'failed'/…)
-    candle_request_id: int | None = None
-    candle_bars_written: int | None = None
     paper_resolved: int = 0
 
 
 @dataclass(frozen=True)
-class LiveLoopReport:
+class SymbolCycleReport:
+    observed_msc: int
+    forming_bars_written: int = 0
+    ingest_ran: bool = False
+    closed_ids: list[int] = field(default_factory=list)
+    candle_request_id: int | None = None
+    candle_bars_written: int | None = None
+
+
+@dataclass(frozen=True)
+class SymbolLoopReport:
     cycles: int = 0
-    recovered: int = 0                    # orphans closed out at startup
+    requeued: int = 0                     # orphaned candle requests requeued at startup
     failed_cycles: int = 0                # cycles that raised (bridge gone, etc)
     stopped_by: str = "duration"          # 'once' | 'duration' | 'interrupt'
 
@@ -385,7 +428,7 @@ def paper_step(client: MT5Client, conn: sqlite3.Connection, *,
     Counted by position id, not by event: a pending order that fills and then
     gaps through its stop on the SAME tick produces two events (fill, exit) for
     one position, and must report 1, not 2 — this value surfaces to a human
-    through `LiveReport.paper_resolved` and must not lie about how many
+    through `PositionCycleReport.paper_resolved` and must not lie about how many
     positions it touched.
 
     Zero exposure means zero bridge calls: the symbol list comes from the DB
@@ -473,24 +516,24 @@ def paper_step(client: MT5Client, conn: sqlite3.Connection, *,
     return len(resolved_ids)
 
 
-def live_cycle(
+def position_cycle(
     client: MT5Client,
     conn: sqlite3.Connection,
     login: int,
+    closed_queue: queue_mod.Queue[list[int]],
     *,
     trading: bool = True,
     on_closing=None,
-    on_close=None,
-) -> LiveReport:
-    """One live cycle: mirror open positions, ingest any that closed, and (if
-    `trading`) execute one queued command. Timing-free — this is the unit surface.
+) -> PositionCycleReport:
+    """The fast half of the split live loop: mirror open positions, detect
+    closes, and (if `trading`) execute one queued command. Timing-free — this is
+    the unit surface (mirrors `poll_once`; `symbol_cycle` is the other half).
 
-    `on_closing`, if given, is called with the closed position_ids the MOMENT a
-    close is detected, BEFORE the ingest pipeline runs. That pipeline is a
-    synchronous bridge round-trip (sync → candles) that can block the loop — and
-    therefore the heartbeat — for several seconds; announcing it first is what
-    stops that pause from reading as a freeze (reported the first time this ran
-    live). `on_close` fires AFTER the ingest, with the same ids.
+    A closed position is no longer ingested inline: its id is pushed onto
+    `closed_queue` for the (separately scheduled) symbol side to drain, so a
+    multi-second sync/candle round trip never blocks this cycle's beacon beat
+    or command execution. `on_closing`, if given, is called with the closed
+    position_ids the MOMENT a close is detected, before they are queued.
     """
     positions = client.positions_get()
     observed_msc = now_ms()
@@ -506,63 +549,34 @@ def live_cycle(
 
     _replace_open_positions(conn, login, positions, observed_msc)
 
-    # (3) forming bar + promote closed bars, then the beacon. FIRST, ahead of
-    # the two steps below that can block on a multi-second bridge round trip
-    # (ingest pipeline on close, order send). Reported: adding an SL/TP or a
-    # position closing froze /chart for however long that round trip took,
-    # because this used to run after them and the whole cycle is one serial
-    # call. Cheap enough to lead with — one latest-bars fetch per active watch,
-    # ~1 given demand-driven watching. The BULK candle fetch stays at step (6),
-    # behind order send: a backfill has no deadline, an order does.
-    serve_watches(client, conn, observed_msc)
-
-    # (4) liveness beacon — ALWAYS, even with no positions/watches, so the web can
-    # tell "journal live is running" from "data is just old". Empty open_positions
-    # cannot serve as a heartbeat (no rows when nothing is open).
+    # (3) liveness beacon — ALWAYS, even with no positions, so the web can
+    # tell "journal live is running" from "data is just old". Empty
+    # open_positions cannot serve as a heartbeat (no rows when nothing is open).
     live_store.beat(conn, now_ms())
 
-    # (4b) paper trading. AHEAD of the ingest pipeline and the order send, both
-    # of which can block for seconds on a bridge round trip: a paper SL has a
-    # deadline the same way an order does. Zero cost when no paper position is
-    # live, and it runs with `trading` off — paper is not real trading.
+    # (3b) paper trading. AHEAD of the order send below, which can block for
+    # seconds on a bridge round trip: a paper SL has a deadline the same way an
+    # order does. Zero cost when no paper position is live, and it runs with
+    # `trading` off — paper is not real trading.
     try:
         paper_resolved = paper_step(client, conn, now_msc=observed_msc)
     except Exception:
         log.exception("paper: step failed — loop continues")
         paper_resolved = 0
 
-    # (5) detect closes → ingest.
-    ingest_ran = False
+    # (4) detect closes → hand off to the symbol side. MT5 drops a closed
+    # position from `positions_get()` forever (Trap 6), so this is the one
+    # moment we know to queue its finished deal for ingest.
     if closed_ids:
         log.info("live: %d position(s) closed: %s", len(closed_ids), closed_ids)
         if on_closing is not None:
-            on_closing(closed_ids)   # BEFORE the blocking ingest — see docstring
-        try:
-            _run_ingest_pipeline(client, conn)   # ONCE, coalesced across closes
-            ingest_ran = True
-        except Exception:
-            # A failed ingest must NOT kill the loop — losing the loop loses
-            # unrecoverable live SL history. Catch, log, carry on.
-            log.exception(
-                "live: ingest pipeline failed after close(s) %s — loop continues",
-                closed_ids,
-            )
-        finally:
-            # The pipeline (sync + two rebuilds + capped candle fetch) can run
-            # long enough to age the step-4 beat past the web's staleness
-            # threshold before this cycle even finishes, let alone before the
-            # next one beats — which reads as "journal live is down" while it
-            # is in fact working. Beat again here, unconditionally: a failed
-            # ingest is still a live process. This does not replace the step-4
-            # beat, which must still fire BEFORE this blocking work starts.
-            live_store.beat(conn, now_ms())
-        if on_close is not None:
-            on_close(closed_ids)
+            on_closing(closed_ids)
+        closed_queue.put(closed_ids)
 
-    # (6) refuse anything that has been queued too long, THEN execute one
+    # (5) refuse anything that has been queued too long, THEN execute one
     # command. Ahead of the claim on purpose: a stale row must not be the one
-    # this cycle sends. Runs with `trading` off too — that is precisely the mode
-    # in which nothing else ever clears the row.
+    # this cycle sends. Runs with `trading` off too — that is precisely the
+    # mode in which nothing else ever clears the row.
     expired = expire_stale(conn, login)
     if expired:
         log.warning(
@@ -576,13 +590,55 @@ def live_cycle(
     if trading:
         command_id, command_status = _execute_one_command(client, conn, login)
 
-    # (7) one candle request per cycle — same one-per-cycle discipline as
-    # commands, so a big backfill can never starve the position heartbeat. LAST
-    # on purpose: `fill_range` can walk a whole requested range over several
-    # bridge round trips, and nothing user-facing waits on it (the request stays
-    # queued and the forming bar is already served at step 3), whereas an SL/TP
-    # or close command must not queue behind bulk history. This is the ONLY
-    # place a browser-triggered candle fetch reaches the bridge.
+    return PositionCycleReport(
+        account_login=login,
+        observed_msc=observed_msc,
+        positions_seen=poll_report.positions_seen,
+        snapshots_written=poll_report.snapshots_written,
+        closed_ids=closed_ids,
+        command_id=command_id,
+        command_status=command_status,
+        paper_resolved=paper_resolved,
+    )
+
+
+def symbol_cycle(
+    client: MT5Client,
+    conn: sqlite3.Connection,
+    closed_queue: queue_mod.Queue[list[int]],
+) -> SymbolCycleReport:
+    """One symbol-data cycle: serve forming bars, drain any closed-position ids
+    handed off by position_cycle and run the ingest pipeline once for all of
+    them coalesced, then fulfil one queued candle backfill request.
+
+    Runs on its own interval, independent of position_cycle's — see
+    docs/superpowers/specs/2026-09-04-decouple-live-loop-design.md. A close
+    detected by position_cycle is ingested here on THIS loop's next tick, not
+    inline in the cycle that detected it: that's the whole point of the split.
+    """
+    observed_msc = now_ms()
+
+    forming_bars_written = serve_watches(client, conn, observed_msc)
+
+    closed_ids: list[int] = []
+    while True:
+        try:
+            closed_ids.extend(closed_queue.get_nowait())
+        except queue_mod.Empty:
+            break
+
+    ingest_ran = False
+    if closed_ids:
+        log.info("live: symbol_cycle ingesting closed position(s): %s", closed_ids)
+        try:
+            _run_ingest_pipeline(client, conn)
+            ingest_ran = True
+        except Exception:
+            log.exception(
+                "live: ingest pipeline failed for closed position(s) %s — "
+                "symbol_cycle continues, position_cycle is unaffected", closed_ids,
+            )
+
     candle_request_id: int | None = None
     candle_bars_written: int | None = None
     req = claim_next_request(conn)
@@ -592,22 +648,17 @@ def live_cycle(
             candle_bars_written = fulfill_request(client, conn, req, observed_msc)
         except Exception:
             log.exception(
-                "live: candle request %d failed — marked failed, will not auto-retry "
-                "this exact row (a new request re-queues)", candle_request_id
+                "live: candle request %d failed — marked failed, will not "
+                "auto-retry this exact row", candle_request_id,
             )
 
-    return LiveReport(
-        account_login=login,
+    return SymbolCycleReport(
         observed_msc=observed_msc,
-        positions_seen=poll_report.positions_seen,
-        snapshots_written=poll_report.snapshots_written,
-        closed_ids=closed_ids,
+        forming_bars_written=forming_bars_written,
         ingest_ran=ingest_ran,
-        command_id=command_id,
-        command_status=command_status,
+        closed_ids=closed_ids,
         candle_request_id=candle_request_id,
         candle_bars_written=candle_bars_written,
-        paper_resolved=paper_resolved,
     )
 
 
@@ -646,10 +697,11 @@ def _maybe_backup(conn: sqlite3.Connection, login: int, every_s: float, keep: in
                  f", pruned {len(s.pruned)}" if s.pruned else "")
 
 
-def live_loop(
+def position_loop(
     client: MT5Client,
     conn: sqlite3.Connection,
     login: int,
+    closed_queue: queue_mod.Queue[list[int]],
     *,
     interval_idle: float = 5.0,
     interval_busy: float = 1.0,
@@ -662,17 +714,26 @@ def live_loop(
     monotonic=time.monotonic,
     on_cycle=None,
     on_closing=None,
-) -> LiveLoopReport:
-    """Repeatedly run `live_cycle`. `recover_interrupted` runs ONCE before the
-    first cycle — a `claimed`/`sent` row on startup means a crash mid-command and
-    is marked failed, never re-sent.
+    stop_event: threading.Event | None = None,
+) -> PositionLoopReport:
+    """Repeatedly run `position_cycle` — the fast half of the split live loop
+    (`symbol_loop` is the slow half). `recover_interrupted` runs
+    ONCE before the first cycle — a `claimed`/`sent` row on startup means a crash
+    mid-command and is marked failed, never re-sent.
 
     After each cycle the next sleep is `interval_busy` when a command is pending
     (be responsive) else `interval_idle`. `sleep`/`monotonic` are injectable so
-    `--once`/`--duration`/Ctrl+C are all testable with a fake clock. Always runs
-    at least one cycle; `once` beats `duration`; the deadline is checked after a
-    cycle and before the next sleep, so a `duration` run never sleeps after its
-    final cycle. Ctrl+C stops cleanly with `stopped_by='interrupt'`.
+    `--once`/`--duration`/Ctrl+C are all testable with a fake clock. Runs at
+    least one cycle unless `stop_event` is already set; `once` beats `duration`;
+    the deadline is checked after a cycle and before the next sleep, so a
+    `duration` run never sleeps after its final cycle. Ctrl+C stops cleanly with
+    `stopped_by='interrupt'` — `stop_event` does the same from outside this
+    thread: `cli.live` runs this loop on a thread that never receives the
+    SIGINT-driven `KeyboardInterrupt` directly, so its signal handling sets
+    `stop_event` to reach it. That event is checked at the TOP of the loop as
+    well as before the sleep: the interrupt normally arrives WHILE this thread
+    sleeps, and one further cycle would send a queued order after the human
+    asked to stop.
 
     A cycle that RAISES does not end the loop: it is rolled back, counted in
     `failed_cycles`, and retried on the next tick. Nothing beats the heartbeat on
@@ -690,25 +751,31 @@ def live_loop(
     recovered = recover_interrupted(conn, login)
     if recovered:
         log.info("live: recovered %d interrupted command(s) at startup", recovered)
-    requeued = requeue_orphaned(conn)
-    if requeued:
-        log.info("live: requeued %d orphaned candle request(s) at startup", requeued)
 
     cycles = 0
     failed = 0          # total, reported
     streak = 0          # consecutive, resets on the first good cycle
+    locked_streak = 0   # consecutive "locked" ones — see LOCKED_STREAK_EXIT
     deadline = monotonic() + duration if duration is not None else None
 
-    def _report(stopped_by: str) -> LiveLoopReport:
-        return LiveLoopReport(
+    def _report(stopped_by: str) -> PositionLoopReport:
+        return PositionLoopReport(
             cycles=cycles, recovered=recovered, failed_cycles=failed,
             stopped_by=stopped_by,
         )
 
     try:
         while True:
+            if stop_event is not None and stop_event.is_set():
+                # BEFORE the cycle, not only after it: the event is normally set
+                # by Ctrl+C on the main thread WHILE this one sleeps, and the
+                # cycle this would otherwise run first can send a queued order.
+                # A stop must not put money on the market.
+                return _report("interrupt")
             try:
-                r = live_cycle(client, conn, login, trading=trading, on_closing=on_closing)
+                r = position_cycle(
+                    client, conn, login, closed_queue, trading=trading, on_closing=on_closing,
+                )
             except Exception as e:
                 # The bridge went away mid-cycle (container restart, refused
                 # connection) — the single most likely way this process dies, and
@@ -719,11 +786,18 @@ def live_loop(
                                   # slot into the sleep — `journal serve` blocks
                                   # on it, and this project has paid for that twice
                 if isinstance(e, sqlite3.OperationalError) and "locked" in str(e).lower():
-                    # Past a 5 s busy_timeout this is a SECOND `journal live` on
-                    # the same DB, not a blip. Only one loop may own the bridge:
-                    # let it out so `cli.live` can say so and exit, instead of
-                    # retrying a configuration error every five seconds forever.
-                    raise
+                    # An ISOLATED locked cycle is now expected: this process holds
+                    # two writer connections, and a long symbol-side write can push
+                    # this one past the busy_timeout for a moment. What a second
+                    # `journal live` looks like is PERSISTENCE — it locks us out on
+                    # every cycle, forever. So only a streak escapes, and then
+                    # `cli.live` says so and exits; below the threshold this is
+                    # just another transient failure, logged and retried.
+                    locked_streak += 1
+                    if locked_streak >= LOCKED_STREAK_EXIT:
+                        raise
+                else:
+                    locked_streak = 0
                 failed += 1
                 streak += 1
                 if streak == 1:
@@ -734,6 +808,7 @@ def live_loop(
                 if streak:
                     log.info("live: recovered after %d failed cycle(s)", streak)
                     streak = 0
+                locked_streak = 0
                 if on_cycle is not None:
                     on_cycle(r)
             cycles += 1
@@ -743,7 +818,116 @@ def live_loop(
                 return _report("once")
             if deadline is not None and monotonic() >= deadline:
                 return _report("duration")
+            if stop_event is not None and stop_event.is_set():
+                return _report("interrupt")
             interval = interval_busy if pending_count(conn, login) > 0 else interval_idle
+            sleep(interval)
+    except KeyboardInterrupt:
+        return _report("interrupt")
+
+
+def symbol_loop(
+    client: MT5Client,
+    conn: sqlite3.Connection,
+    closed_queue: queue_mod.Queue[list[int]],
+    *,
+    interval: float = 5.0,
+    once: bool = False,
+    duration: float | None = None,
+    sleep=time.sleep,
+    monotonic=time.monotonic,
+    on_cycle=None,
+    stop_event: threading.Event | None = None,
+) -> SymbolLoopReport:
+    """Repeatedly run `symbol_cycle` — the slow half of the split live loop
+    (mirrors `position_loop`, which repeats `position_cycle`). `requeue_orphaned`
+    runs ONCE at startup: a candle request left `claimed` by a crashed process is
+    put back on the queue instead of sitting stuck forever.
+
+    Simpler than `position_loop`: one flat `interval` (no busy/idle split — there
+    is no `pending_count` here, that's position-domain), no backup call, no
+    `recover_interrupted` (order recovery is position-domain too). `sleep`/
+    `monotonic` are injectable so `--once`/`--duration`/Ctrl+C are all testable
+    with a fake clock. Always runs at least one cycle; `once` beats `duration`;
+    the deadline is checked after a cycle and before the next sleep, so a
+    `duration` run never sleeps after its final cycle. Ctrl+C stops cleanly with
+    `stopped_by='interrupt'` — `stop_event` does the same from outside this
+    thread: `cli.live` runs this loop on a thread that never receives the
+    SIGINT-driven `KeyboardInterrupt` directly, so its signal handling sets
+    `stop_event` to reach it. Checked AFTER the cycle only — unlike
+    `position_loop`, this loop must always drain `closed_queue` once more before
+    it stops, or a close queued while it slept goes un-ingested until the next
+    close (or a manual `journal sync`) triggers a run.
+
+    A cycle that RAISES does not end the loop: it is counted in `failed_cycles`
+    and retried on the next tick, same reasoning as `position_loop`.
+    """
+    requeued = requeue_orphaned(conn)
+    if requeued:
+        log.info("live: requeued %d orphaned candle request(s) at startup", requeued)
+
+    cycles = 0
+    failed = 0          # total, reported
+    streak = 0          # consecutive, resets on the first good cycle
+    locked_streak = 0   # consecutive "locked" ones — see LOCKED_STREAK_EXIT
+    deadline = monotonic() + duration if duration is not None else None
+
+    def _report(stopped_by: str) -> SymbolLoopReport:
+        return SymbolLoopReport(
+            cycles=cycles, requeued=requeued, failed_cycles=failed,
+            stopped_by=stopped_by,
+        )
+
+    try:
+        while True:
+            # NOT checked here, unlike position_loop: `symbol_cycle` is the only
+            # thing that drains `closed_queue`, so a stop set during the sleep
+            # must still buy one more cycle or any close `position_cycle` queued
+            # in that window dies with the process. Not lost forever — the drain
+            # only TRIGGERS the pipeline, which re-syncs a window rather than the
+            # queued ids, so the next unrelated close coalesces it in, and
+            # `journal sync` by hand does it now — but until one of those happens
+            # the journal silently lags behind the account, and one more cycle
+            # costs nothing. The asymmetry is the point: position_loop's extra
+            # cycle can SEND AN ORDER, this one only drains a queue and reads
+            # candles.
+            try:
+                r = symbol_cycle(client, conn, closed_queue)
+            except Exception as e:
+                # Mirrors position_loop: rollback, log, retry, never die on a
+                # bridge blip. Never carry a half-written cycle's WAL writer
+                # slot into the sleep.
+                conn.rollback()
+                if isinstance(e, sqlite3.OperationalError) and "locked" in str(e).lower():
+                    # Same rule as position_loop: one locked cycle is ordinary
+                    # contention between this process's two writer connections;
+                    # only a streak of them means a second `journal live`, and
+                    # only that escapes to `cli.live`.
+                    locked_streak += 1
+                    if locked_streak >= LOCKED_STREAK_EXIT:
+                        raise
+                else:
+                    locked_streak = 0
+                failed += 1
+                streak += 1
+                if streak == 1:
+                    log.exception("live: symbol_cycle failed — retrying, the loop stays up")
+                elif streak % 60 == 0:
+                    log.warning("live: symbol_cycle still failing, %d in a row", streak)
+            else:
+                if streak:
+                    log.info("live: symbol_cycle recovered after %d failed cycle(s)", streak)
+                    streak = 0
+                locked_streak = 0
+                if on_cycle is not None:
+                    on_cycle(r)
+            cycles += 1
+            if once:
+                return _report("once")
+            if deadline is not None and monotonic() >= deadline:
+                return _report("duration")
+            if stop_event is not None and stop_event.is_set():
+                return _report("interrupt")
             sleep(interval)
     except KeyboardInterrupt:
         return _report("interrupt")
