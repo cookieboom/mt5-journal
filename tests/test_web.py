@@ -439,11 +439,16 @@ def _resolve(app, method, path):
     """The FIRST route to fully-match (method, path), via Starlette's own matcher.
     Lets us assert route PRECEDENCE without an HTTP client (no httpx dependency)."""
     scope = {"type": "http", "method": method, "path": path}
-    for route in app.router.routes:
-        match, _ = route.matches(scope)
-        if match == Match.FULL:
-            return getattr(route, "name", None)
-    return None
+
+    def first(routes):
+        for route in routes:
+            match, _ = route.matches(scope)
+            if match == Match.FULL:
+                inner = getattr(route, "original_router", None)  # an included router
+                return first(inner.routes) if inner else getattr(route, "name", None)
+        return None
+
+    return first(app.router.routes)
 
 
 def test_api_and_chart_routes_beat_spa_catchall():
@@ -486,9 +491,14 @@ import json
 
 
 def _endpoint(app, name):
-    for route in app.router.routes:
+    # Routes live in per-area routers (`web/routes/`); FastAPI keeps an included
+    # router nested rather than flattening it, so walk into `original_router`.
+    routes = list(app.router.routes)
+    while routes:
+        route = routes.pop(0)
         if getattr(route, "name", None) == name:
             return route.endpoint
+        routes += getattr(getattr(route, "original_router", None), "routes", [])
     raise AssertionError(f"no route named {name!r}")
 
 

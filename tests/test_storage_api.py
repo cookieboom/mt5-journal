@@ -261,3 +261,32 @@ def test_storage_candles_export_csv_and_json(client: TestClient, db_path: Path):
     assert response_empty.json()["count"] == 0
 
 
+
+
+def test_storage_cache_routes_use_the_apps_cache_dir_not_the_repos(tmp_path, db_path):
+    """The cache routes once read the module constant `cache`, so this suite's
+    clear-cache test emptied the REAL repo cache/ — trained lab models included."""
+    cache = tmp_path / "cache"
+    (cache / "charts").mkdir(parents=True)
+    (cache / "charts" / "a.png").write_bytes(b"12345")
+    c = TestClient(create_app(str(db_path), cache_dir=str(cache)), base_url="http://127.0.0.1")
+
+    assert c.get("/api/storage/overview").json()["cache_files_count"] == 1
+    assert c.post("/api/storage/maintenance/clear-cache").json()["cleared_files"] == 1
+    assert not (cache / "charts" / "a.png").exists()
+
+
+def test_clear_cache_keeps_trained_lab_models(tmp_path, db_path):
+    """`lab_models.artifact_path` points into cache/models/. Those files are
+    training output a DB row depends on, not a render that can be redrawn."""
+    cache = tmp_path / "cache"
+    (cache / "models").mkdir(parents=True)
+    model = cache / "models" / "1.joblib"
+    model.write_bytes(b"model")
+    (cache / "x.png").write_bytes(b"png")
+    c = TestClient(create_app(str(db_path), cache_dir=str(cache)), base_url="http://127.0.0.1")
+
+    out = c.post("/api/storage/maintenance/clear-cache").json()
+
+    assert out["cleared_files"] == 1
+    assert model.exists()
