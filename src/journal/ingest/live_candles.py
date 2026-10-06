@@ -29,9 +29,9 @@ def serve_watches(client: MT5Client, conn: sqlite3.Connection, now_msc: int,
         frm = now_msc - (lookback_bars + 1) * size
         bars = client.copy_rates_range(symbol, tf, _ms_to_dt(frm), _ms_to_dt(now_msc))
         cur_bucket = bucket_start(now_msc, tf)
-        # `now_msc` is stamped at the top of live_cycle and only reaches here
-        # after positions_get/poll_once/mirror-write — hundreds of ms with a
-        # position open, seconds when the bridge is slow. Across a rollover it
+        # `now_msc` is stamped at the top of symbol_cycle and is already stale by
+        # the time the bridge answers `copy_rates_range` above — milliseconds on
+        # a good day, seconds when the bridge is slow. Across a rollover it
         # therefore still points at the PREVIOUS bucket while the bridge already
         # returns the new bar, and judging "forming" by the clock alone marks the
         # just-closed bar as forming too. The newer bar then overwrites it in
