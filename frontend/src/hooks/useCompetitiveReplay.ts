@@ -28,13 +28,27 @@ export function useCompetitiveReplay(
   const prevPosCount = useRef(0);
   const finished = useRef(onFinished);
   finished.current = onFinished;
+  // The result/skip pause is a timer that starts the NEXT scenario. It must die
+  // with the run: leaving replay mid-pause used to start a new session anyway.
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const later = useCallback((ms: number, fn: () => void) => {
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => { timer.current = null; fn(); }, ms);
+  }, []);
+  const cancel = useCallback(() => {
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = null;
+  }, []);
+  useEffect(() => cancel, [cancel]);
+
   /** A fresh run: round 1, no carried results, no pause pending. */
   const reset = useCallback(() => {
+    cancel();
     setRound(1);
     setClosed([]);
     setEvalPause(null);
     prevPosCount.current = 0;
-  }, []);
+  }, [cancel]);
 
   const next = useCallback((isSkip = false) => {
     if (!isSkip && prefs.competitiveRounds > 0 && round >= prefs.competitiveRounds) {
@@ -64,17 +78,17 @@ export function useCompetitiveReplay(
 
     if (isSkip) {
       setEvalPause({ pnl: 0, isSkip: true });
-      setTimeout(() => {
+      later(1000, () => {
         setEvalPause(null);
         prevPosCount.current = 0;
         replay.start(cfg);
-      }, 1000);
+      });
     } else {
       setEvalPause(null);
       prevPosCount.current = 0;
       replay.start(cfg);
     }
-  }, [prefs, round, replay]);
+  }, [prefs, round, replay, later]);
 
   useEffect(() => {
     if (!active || !prefs.competitiveMode) return;
@@ -82,12 +96,10 @@ export function useCompetitiveReplay(
     if (prevPosCount.current > 0 && count === 0 && !evalPause) {
       // Every position closed: show the scenario's result, then move on.
       setEvalPause({ pnl: replay.sessionSummary?.total_r || 0, isSkip: false });
-      setTimeout(() => {
-        next();
-      }, 3000);
+      later(3000, () => next());
     }
     prevPosCount.current = count;
-  }, [replay.positions, active, prefs.competitiveMode, evalPause, next, replay.sessionSummary]);
+  }, [replay.positions, active, prefs.competitiveMode, evalPause, next, replay.sessionSummary, later]);
 
   // Stats span the whole run: finished scenarios plus the current one.
   const positions = useMemo(
