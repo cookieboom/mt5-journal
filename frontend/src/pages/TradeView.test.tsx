@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { MemoryRouter, Routes, Route, useLocation } from "react-router-dom";
 import { it, expect, vi, beforeEach } from "vitest";
 import TradeView from "./TradeView";
@@ -101,9 +101,12 @@ it("ArrowLeft navigates to the older neighbor (prevId)", async () => {
   </MemoryRouter>);
 
   await screen.findByText("XAUUSD");
+  // The neighbor list is a second fetch; a key pressed before it lands has
+  // nowhere to go. Wait for the button the key mirrors to arm.
+  await waitFor(() => expect(screen.getByText("← lebih lama")).toBeEnabled());
   fireEvent.keyDown(window, { key: "ArrowLeft" });
   // list [3,2,1], id=2 -> prevId (older, later index) = 1.
-  expect(await screen.findByTestId("probe")).toHaveTextContent("/trades/1/view");
+  await waitFor(() => expect(screen.getByTestId("probe")).toHaveTextContent("/trades/1/view"));
 });
 
 it("ArrowRight navigates to the newer neighbor (nextId)", async () => {
@@ -115,9 +118,12 @@ it("ArrowRight navigates to the newer neighbor (nextId)", async () => {
   </MemoryRouter>);
 
   await screen.findByText("XAUUSD");
+  // The neighbor list is a second fetch; a key pressed before it lands has
+  // nowhere to go. Wait for the button the key mirrors to arm.
+  await waitFor(() => expect(screen.getByText("lebih baru →")).toBeEnabled());
   fireEvent.keyDown(window, { key: "ArrowRight" });
   // list [3,2,1], id=2 -> nextId (newer, earlier index) = 3.
-  expect(await screen.findByTestId("probe")).toHaveTextContent("/trades/3/view");
+  await waitFor(() => expect(screen.getByTestId("probe")).toHaveTextContent("/trades/3/view"));
 });
 
 // Trade opens right at the last of 3 candles, so startMs (10 M1-bars before
