@@ -131,16 +131,29 @@ def migrate(conn: sqlite3.Connection) -> list[int]:
     return applied
 
 
-def connect(path: str | Path) -> sqlite3.Connection:
-    """Open `path`, bringing its schema up to date.
+def _run_migrations(conn: sqlite3.Connection) -> list[int]:
+    return migrate(conn)   # looked up at call time, so tests can count calls
+
+
+def connect(path: str | Path, *, migrate: bool = True) -> sqlite3.Connection:
+    """Open `path`, bringing its schema up to date — or, with `migrate=False`,
+    only checking that it already is.
 
     A fresh DB gets `schema.sql` and the current version stamp. An existing DB
     gets every pending migration — before M9 it got nothing at all, which is how
     a new table could exist in `schema.sql` and never in the live database.
 
+    `migrate=False` is for connections opened per request: the web migrates
+    once when the app is built, not on every page load. Either way a store
+    whose version differs from `SCHEMA_VERSION` afterwards is refused — newer
+    means this process is running old code against a migrated store.
+
     Returns a connection with `Row` factory and foreign keys enforced.
     """
     path = Path(path)
+    if not migrate and str(path) != ":memory:" and not path.exists():
+        raise RuntimeError(f"{path} does not exist — run `journal migrate` (or any "
+                           f"journal command) to create it.")
     path.parent.mkdir(parents=True, exist_ok=True)
 
     # check_same_thread=False: the web layer opens ONE connection per request via
@@ -174,7 +187,9 @@ def connect(path: str | Path) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA synchronous = NORMAL")  # safe under WAL, no fsync/commit
 
-    if _is_fresh(conn):
+    if not migrate:
+        pass
+    elif _is_fresh(conn):
         conn.executescript(_SCHEMA_PATH.read_text())
         conn.execute(
             "INSERT INTO schema_version (version, applied_at) VALUES (?, ?)",
@@ -182,6 +197,16 @@ def connect(path: str | Path) -> sqlite3.Connection:
         )
         conn.commit()
     else:
-        migrate(conn)
+        _run_migrations(conn)
 
+    version = current_version(conn)
+    if version != SCHEMA_VERSION:
+        conn.close()
+        if version > SCHEMA_VERSION:
+            raise RuntimeError(
+                f"{path} is at schema version {version}, newer than this code "
+                f"({SCHEMA_VERSION}) — restart this process on the current code.")
+        raise RuntimeError(
+            f"{path} is at schema version {version}, this code needs "
+            f"{SCHEMA_VERSION} — run `journal migrate`.")
     return conn

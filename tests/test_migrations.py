@@ -442,3 +442,51 @@ def test_training_rows_survive_rebuild(tmp_path):
         assert n == 1
     finally:
         conn.close()
+
+
+# ------------------------------------------------- migrate once, then verify
+
+
+def test_connect_without_migrate_refuses_a_store_that_is_behind(tmp_path):
+    db = tmp_path / "j.db"
+    conn = connect(db)
+    conn.execute("DELETE FROM schema_version WHERE version = ?", (SCHEMA_VERSION,))
+    conn.commit()
+    conn.close()
+    with pytest.raises(RuntimeError, match="journal migrate"):
+        connect(db, migrate=False)
+
+
+def test_connect_without_migrate_refuses_a_store_that_was_never_created(tmp_path):
+    with pytest.raises(RuntimeError, match="journal migrate"):
+        connect(tmp_path / "missing.db", migrate=False)
+
+
+def test_connect_refuses_a_store_newer_than_this_code(tmp_path):
+    """Old code against a newer schema used to run silently — the classic shape
+    of a `journal serve` nobody restarted after a pull."""
+    db = tmp_path / "j.db"
+    conn = connect(db)
+    conn.execute("INSERT INTO schema_version (version, applied_at) VALUES (?, 0)",
+                 (SCHEMA_VERSION + 1,))
+    conn.commit()
+    conn.close()
+    for migrate in (True, False):
+        with pytest.raises(RuntimeError, match="newer than this code"):
+            connect(db, migrate=migrate)
+
+
+def test_the_web_migrates_once_at_startup_not_per_request(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from journal.store import db as db_mod
+    from journal.web.app import create_app
+
+    calls = []
+    real = db_mod.migrate
+    monkeypatch.setattr(db_mod, "migrate", lambda c: calls.append(1) or real(c))
+    client = TestClient(create_app(str(tmp_path / "j.db")), base_url="http://127.0.0.1")
+    assert len(calls) <= 1                        # startup: fresh DB, or one migrate
+    for _ in range(3):
+        client.get("/api/live-status")
+    assert len(calls) <= 1                        # requests never migrate

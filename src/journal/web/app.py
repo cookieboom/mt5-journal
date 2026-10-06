@@ -21,6 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from ..health import FRONTEND_DIR
+from ..store.db import connect
 from . import local_only
 from .routes import chart, journal, lab, live, paper, storage, training
 
@@ -41,6 +42,7 @@ def create_app(db_path: str | None = None, cache_dir: str | None = None) -> Fast
     app = FastAPI(title="mt5-journal")
     app.state.db_path = db_path or os.environ.get("JOURNAL_DB", _DEFAULT_DB)
     app.state.cache_dir = cache_dir or os.environ.get("JOURNAL_CACHE_DIR", _CACHE_DIR)
+    connect(app.state.db_path).close()   # create/migrate once; requests only verify
     app.middleware("http")(local_only.guard)
 
     # The SPA reads `error` off every failed response (`postJson`); FastAPI's

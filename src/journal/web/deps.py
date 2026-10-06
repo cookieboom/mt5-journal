@@ -17,8 +17,9 @@ from ..store.db import connect
 
 def get_conn(request: Request) -> Iterator[sqlite3.Connection]:
     """One SQLite connection per request, closed in a `finally` — the same
-    `connect(db) ... finally: conn.close()` shape every CLI command uses."""
-    conn = connect(request.app.state.db_path)
+    `connect(db) ... finally: conn.close()` shape every CLI command uses.
+    `create_app` already migrated the store; a request only verifies it."""
+    conn = connect(request.app.state.db_path, migrate=False)
     try:
         yield conn
     finally:
