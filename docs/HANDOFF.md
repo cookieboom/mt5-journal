@@ -33,8 +33,8 @@ home each, and a second copy is a future lie. Point, never duplicate.
 
 **Last updated:** 2026-10-06
 
-**2026-10-06 — repo cleanup; decoupled live loop merged; the daemon has been
-down since 2026-09-21.**
+**2026-10-06 — repo cleanup; local `main` diverged from `origin/main`; the daemon has
+been down since 2026-09-21.**
 
 - *Cleanup (`compact`).* Executed plans are no longer kept in the tree:
   `docs/plans/`, `docs/superpowers/plans/`, the phase-B kickoff prompt and the
@@ -43,11 +43,21 @@ down since 2026-09-21.**
   skill, `web/format.py` (Jinja-era helpers; `price`/`level_word` moved into
   `views.py`), and the unused `listSessions`/`getSummary` in `replayApi.ts`.
   **Convention from here: a plan is deleted in the merge that finishes it.**
-- *Merged `worktree-decouple-live-loop-spec`* (entry below). All 8 tasks were
-  committed by 2026-09-06 but never merged; it merged clean. Its plan
-  went with the cleanup convention above.
+- *`worktree-decouple-live-loop-spec` was already merged upstream* — PR #13,
+  2026-09-07 (entry below). This checkout's `main` was never pulled after
+  that, so locally it looked unmerged and was merged a second time
+  (`85bc346`, same tip `4aa54fc`, identical content). Its plan went with the
+  cleanup convention above.
+- **Local `main` and `origin/main` have diverged — reconcile before any
+  push.** `origin/main` has the PR #13 merge (`c18e2f7`); local `main` has
+  `ea18124` (paper quote fix — its remote branch was deleted today, so this
+  checkout is now its only copy), the cleanup `de10d1c`, the duplicate merge
+  and this entry. Both sides carry the same decouple commits, so
+  `git merge origin/main` (or a rebase that drops `85bc346`) should be
+  conflict-free.
 - *Remote branches `worktree-native-mt5-adapter` and
-  `worktree-paper-quote-watch-fix` deleted* — both were fully in `main`.
+  `worktree-paper-quote-watch-fix` deleted* — both were fully in local `main`
+  (the first is also in `origin/main`; the second only locally, see above).
 - *Why the daily backups stopped.* Not a bug: the snapshot is taken by
   `journal live` (`_maybe_backup`), and `journal live` is not running. Last
   `live_quotes` write 2026-09-21 22:54 UTC, last snapshot
@@ -57,20 +67,23 @@ down since 2026-09-21.**
   both (`backup … overdue`, `live … not running`). A manual `journal backup`
   was taken today.
 
-Gates: `uv run pytest` **921 passed, 1 skipped**; `npm --prefix frontend test`
+Gates: `uv run pytest` **922 passed** (the hygiene test's live-DB arm runs
+here, so nothing skipped); `npm --prefix frontend test`
 **402 passed / 51 files**; `tsc -b` clean; the threaded live tests
 (`test_live`, `test_cli_live`, `test_locked_client`, 74 tests) green 8 runs
 in a row.
 
 **Still owed by a human:** `colima start`, bring the bridge container up, then
-`journal live`. That starts the new two-thread daemon on the real account for
-the first time on `main` — watch the first position close hand off to
+`journal live`. Local `main` lacked PR #13 until today, so if the daemon that
+ran until 2026-09-21 was started from this checkout it was the old
+single-loop code (unverified). Treat the next start as the first real run of
+the two-thread daemon: watch the first position close hand off to
 `symbol_cycle` and land in `trades`.
 
 **2026-09-04 — decoupled the live loop: position and symbol-data paths split
 onto two threads** (`worktree-decouple-live-loop-spec`, 8 tasks, spec in
 `docs/superpowers/specs/2026-09-04-decouple-live-loop-design.md`; merged
-2026-10-06). `journal live` now
+2026-09-07, PR #13). `journal live` now
 runs `position_loop`/`symbol_loop` as two threads with independently
 configurable `--interval-positions`/`--interval-symbols`. A position close
 hands off to `symbol_cycle` via an in-memory `queue.Queue` instead of
@@ -614,7 +627,7 @@ note what was measured.
 | M10 | Lab: regime + entry-timing models on candle data (`/lab` page, badge on `/live`) | done (`b4250a5`, 2026-08-08 — migration 010 / `SCHEMA_VERSION = 10`, `docs/lab-models.md`; see 2026-08-06 above) |
 | Paper trading | Virtual account traded from the live chart (migration 013) | done (`3943074`, 2026-08-18) |
 | Native adapter | `MetaTrader5` package on a Windows host; `get_client()` picks by platform | done (`b818b93`, 2026-08-21) |
-| Live loop split | `journal live` as two threads (positions / symbol data), `LockedMT5Client` | merged 2026-10-06; **not yet run against the real bridge on `main`** |
+| Live loop split | `journal live` as two threads (positions / symbol data), `LockedMT5Client` | done (PR #13, 2026-09-07); first run against the real bridge unverified |
 
 M0–M3 delivers the original ask: an automatic journal with charts. **Done.**
 M4 onward — poller, analytics, annotations — is what makes the journal worth
