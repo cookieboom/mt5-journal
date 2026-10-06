@@ -72,3 +72,18 @@ def test_test_files_do_not_nag(tmp_path):
     root = _frontend(tmp_path)
     _touch(root / "src" / "lib" / "candles.test.ts", _NEW + 10)
     assert stale_dist_reason(root) is None
+
+
+def test_every_real_build_config_counts(tmp_path):
+    """The input list once named `tailwind.config.js` while the repo has
+    `tailwind.config.ts`, and left out `postcss.config.js`: editing either
+    never nagged. Check against the config files that actually exist."""
+    from journal.health import FRONTEND_DIR
+
+    configs = sorted(p.name for p in FRONTEND_DIR.glob("*.config.*"))
+    assert configs, "no build config found next to frontend/package.json"
+    for name in configs:
+        root = _frontend(tmp_path / name)
+        _touch(root / name, _NEW + 10)
+        reason = stale_dist_reason(root)
+        assert reason is not None and name in reason, name

@@ -48,10 +48,10 @@ _PKG = Path(__file__).resolve().parent   # src/journal
 # The SPA's source tree; `journal serve` mounts its `dist/` from disk.
 FRONTEND_DIR = _PKG.parent.parent / "frontend"
 
-# Files whose edits change the bundle. `src/**` plus the four build inputs that
-# live at the frontend root. Test files are excluded: they never reach the
+# Files whose edits change the bundle: `src/**`, these root files, and every
+# `*.config.*` beside them. Test files are excluded: they never reach the
 # bundle, so a vitest-only edit must not nag about rebuilding.
-_BUILD_INPUTS = ("index.html", "package.json", "vite.config.ts", "tailwind.config.js")
+_BUILD_INPUTS = ("index.html", "package.json", "package-lock.json")
 
 
 def stale_dist_reason(frontend: Path | None = None) -> str | None:
@@ -78,6 +78,7 @@ def stale_dist_reason(frontend: Path | None = None) -> str | None:
     sources = [p for p in root.glob("src/**/*")
                if p.is_file() and ".test." not in p.name]
     sources += [root / name for name in _BUILD_INPUTS]
+    sources += root.glob("*.config.*")   # vite, tailwind, postcss — whatever exists
     newer = sorted((p for p in sources if p.is_file() and p.stat().st_mtime > cutoff),
                    key=lambda p: p.stat().st_mtime, reverse=True)
     if not newer:
