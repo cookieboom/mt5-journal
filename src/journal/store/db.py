@@ -44,6 +44,21 @@ def one_account_login(conn: sqlite3.Connection) -> int:
     return int(rows[0][0])
 
 
+def server_offset_s(conn: sqlite3.Connection, login: int) -> int:
+    """Trap 7: read the MEASURED broker-clock offset, never hardcode 0. `sync`
+    writes the same reading to both the 'deals' and 'orders' rows in
+    `sync_state`, so the most recent non-NULL one is authoritative. Falls back
+    to 0 only when nothing has EVER been measured (no sync run yet) -- a
+    fresh-DB default, not an assumption made in the presence of real data."""
+    row = conn.execute(
+        "SELECT server_utc_offset_s FROM sync_state "
+        "WHERE account_login = ? AND server_utc_offset_s IS NOT NULL "
+        "ORDER BY measured_at DESC LIMIT 1",
+        (login,),
+    ).fetchone()
+    return int(row[0]) if row is not None else 0
+
+
 def _is_fresh(conn: sqlite3.Connection) -> bool:
     """A DB is fresh if it has no `schema_version` table yet."""
     row = conn.execute(

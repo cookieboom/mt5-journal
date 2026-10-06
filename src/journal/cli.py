@@ -268,7 +268,7 @@ def status(db: str = typer.Option(_DEFAULT_DB, help="SQLite DB path.")) -> None:
     """Everything that can be wrong with this journal, in one read-only pass.
 
     No bridge, no writes, no repairs — it prints the command that fixes each
-    finding and stops there. The checks live in `store/health.py`; each one
+    finding and stops there. The checks live in `health.py`; each one
     composes a detector that already ships in the command that owns it, so
     `status` can never disagree with `verify`, `backup`, `live` or `serve`.
 
@@ -277,7 +277,7 @@ def status(db: str = typer.Option(_DEFAULT_DB, help="SQLite DB path.")) -> None:
     a warning at exit 0, because a status command that fails the moment nobody
     backed up today is one nobody keeps in a script.
     """
-    from .store.health import checks
+    from .health import checks
 
     # `connect()` would happily CREATE this file, and an empty store passes
     # almost every check — the most confident possible answer to a typo'd path.
@@ -1164,7 +1164,7 @@ def serve(
 
     import uvicorn
 
-    from .web.app import stale_dist_reason
+    from .health import stale_dist_reason
 
     # watchfiles is what makes uvicorn's --reload-include actually fire; without
     # it the flag is a no-op that only prints a warning. Detect it so the .html

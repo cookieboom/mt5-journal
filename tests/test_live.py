@@ -727,7 +727,8 @@ def test_position_loop_records_the_code_it_actually_loaded(conn):
     """`journal status` cannot see a skipped restart from `started_msc` alone —
     a timestamp only says WHEN, and every unrelated `.py` edit moved that answer.
     The loop stamps WHICH modules it loaded so the check compares content."""
-    from journal.store import health, live_store as ls
+    from journal import health
+    from journal.store import live_store as ls
     live.position_loop(FakeLiveClient([[]]), conn, _LOGIN, queue_mod.Queue(), once=True)
     fp = ls.read_code_fingerprint(conn)
     assert fp and health.changed_modules(fp) == []

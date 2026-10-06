@@ -21,6 +21,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .live_store import HEARTBEAT_MAX_AGE_S
+
 AUTO_PREFIX = "journal-"  # auto-named snapshots; only these are ever pruned
 
 
@@ -162,8 +164,6 @@ def _live_is_writing(db_path: Path) -> bool:
     one nothing can be sanely writing to, and it is exactly the file this
     command exists to repair, so it answers False.
     """
-    from .health import HEARTBEAT_MAX_AGE_S  # imported here: health imports us
-
     if not db_path.exists():
         return False
     try:

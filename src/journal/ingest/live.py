@@ -116,7 +116,8 @@ from ..execute import (
     recover_interrupted,
     reject,
 )
-from ..store import backup, health, live_store, paper_store
+from .. import health
+from ..store import backup, live_store, paper_store
 from ..store.candle_queue import claim_next_request, requeue_orphaned
 from ..store.db import now_ms
 from .candle_fill import fulfill_request

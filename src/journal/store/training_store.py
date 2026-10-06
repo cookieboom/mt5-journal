@@ -142,6 +142,65 @@ def mark_close(conn: sqlite3.Connection, position_id: int, *, exit_msc: int,
     conn.commit()
 
 
+def set_sltp(conn: sqlite3.Connection, position_id: int, *,
+             sl: float | None, tp: float | None) -> None:
+    """None = leave unchanged, 0 = remove (rule 4), any other value = set."""
+    updates, params = [], []
+    if sl is not None:
+        updates.append("sl = ?")
+        params.append(sl)
+    if tp is not None:
+        updates.append("tp = ?")
+        params.append(tp)
+    if not updates:
+        return
+    params.append(position_id)
+    conn.execute(f"UPDATE training_positions SET {', '.join(updates)} WHERE id = ?", params)
+    conn.commit()
+
+
+def record_close_stat(conn: sqlite3.Connection, session_id: int, exit_reason: str) -> None:
+    """Count one close in `training_session_stats`, routed by exit reason to
+    sl_hits, tp_hits or manual_closes."""
+    conn.execute(
+        "INSERT OR IGNORE INTO training_session_stats (session_id, updated_at_msc) VALUES (?, ?)",
+        (session_id, now_ms()),
+    )
+    column = {"sl": "sl_hits", "tp": "tp_hits"}.get(exit_reason, "manual_closes")
+    conn.execute(
+        f"UPDATE training_session_stats SET {column} = {column} + 1, "
+        "total_closed = total_closed + 1, updated_at_msc = ? WHERE session_id = ?",
+        (now_ms(), session_id),
+    )
+    conn.commit()
+
+
+def session_stats(conn: sqlite3.Connection, session_id: int) -> dict:
+    """Raw SL/TP counters plus the mean R of each exit kind. Lazily creates the
+    counters row: a session made before this feature existed has none yet."""
+    stats = conn.execute(
+        "SELECT * FROM training_session_stats WHERE session_id = ?", (session_id,)
+    ).fetchone()
+    if not stats:
+        conn.execute(
+            "INSERT INTO training_session_stats (session_id, updated_at_msc) VALUES (?, ?)",
+            (session_id, now_ms()),
+        )
+        conn.commit()
+        stats = {"total_closed": 0, "sl_hits": 0, "tp_hits": 0, "manual_closes": 0}
+
+    def avg_r(reason: str) -> float | None:
+        return conn.execute(
+            "SELECT AVG(r_multiple) FROM training_positions "
+            "WHERE session_id = ? AND exit_reason = ?", (session_id, reason),
+        ).fetchone()[0]
+
+    return {
+        "total_closed": stats["total_closed"], "sl_hits": stats["sl_hits"],
+        "tp_hits": stats["tp_hits"], "manual_closes": stats["manual_closes"],
+        "avg_r_per_sl": avg_r("sl"), "avg_r_per_tp": avg_r("tp"),
+    }
+
 def session_summary(conn: sqlite3.Connection, session_id: int) -> dict:
     return _summary(list(conn.execute(
         "SELECT net_profit, r_multiple, mae_r, mfe_r FROM training_positions "

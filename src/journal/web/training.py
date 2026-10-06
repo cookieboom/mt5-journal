@@ -20,7 +20,6 @@ from ..domain import replay_eval as ev
 from ..store import candle_queue
 from ..store import candles_store as cs
 from ..store import training_store as ts
-from ..store.db import now_ms
 
 
 def _check_direction(direction: str, entry_price: float | None,
@@ -161,23 +160,6 @@ def _to_state(r: sqlite3.Row) -> ev.PositionState:
     )
 
 
-def _update_session_stats(conn: sqlite3.Connection, session_id: int,
-                          exit_reason: str) -> None:
-    """Update training_session_stats after a position closes. Routes exit_reason
-    to sl_hits, tp_hits, or manual_closes counter."""
-    conn.execute(
-        "INSERT OR IGNORE INTO training_session_stats (session_id, updated_at_msc) VALUES (?, ?)",
-        (session_id, now_ms()),
-    )
-    column = {"sl": "sl_hits", "tp": "tp_hits"}.get(exit_reason, "manual_closes")
-    conn.execute(
-        f"UPDATE training_session_stats SET {column} = {column} + 1, "
-        "total_closed = total_closed + 1, updated_at_msc = ? WHERE session_id = ?",
-        (now_ms(), session_id),
-    )
-    conn.commit()
-
-
 def _resolve_close(conn: sqlite3.Connection, symbol: str, timeframe: str,
                    state: ev.PositionState) -> None:
     """Persist a just-closed position with money, R, and MAE/MFE. Reuses the same
@@ -205,10 +187,8 @@ def _resolve_close(conn: sqlite3.Connection, symbol: str, timeframe: str,
     ts.mark_close(conn, state.id, exit_msc=state.exit_msc, exit_price=state.exit_price,
                   exit_reason=state.exit_reason, net_profit=net, r_multiple=r,
                   mae=mae, mfe=mfe, mae_r=mae_r, mfe_r=mfe_r)
-    session_id = conn.execute(
-        "SELECT session_id FROM training_positions WHERE id = ?", (state.id,)
-    ).fetchone()["session_id"]
-    _update_session_stats(conn, session_id, state.exit_reason)
+    session_id = ts.get_position(conn, state.id)["session_id"]
+    ts.record_close_stat(conn, session_id, state.exit_reason)
 
 
 def step(conn: sqlite3.Connection, session_id: int, n: int = 1) -> dict:
@@ -256,7 +236,7 @@ def end_session(conn: sqlite3.Connection, session_id: int) -> dict:
         ts.mark_close(conn, r["id"], exit_msc=s["cursor_msc"], exit_price=None,
                       exit_reason="eod", net_profit=None, r_multiple=None,
                       mae=None, mfe=None, mae_r=None, mfe_r=None)
-        _update_session_stats(conn, session_id, "eod")
+        ts.record_close_stat(conn, session_id, "eod")
     ts.set_session_status(conn, session_id, "ended")
     return session_view(conn, session_id)
 
@@ -273,9 +253,7 @@ def modify_sltp(
 ) -> dict:
     """Modify SL/TP of an open training position. sl/tp: None = leave
     unchanged, 0 = remove (rule 4), any other value = set."""
-    pos = conn.execute(
-        "SELECT * FROM training_positions WHERE id = ?", (position_id,)
-    ).fetchone()
+    pos = ts.get_position(conn, position_id)
     if not pos:
         raise ValueError(f"position {position_id} not found")
     if pos["status"] == "closed":
@@ -283,62 +261,19 @@ def modify_sltp(
 
     _check_direction(pos["direction"], pos["entry_price"], sl, tp)
 
-    updates, params = [], []
-    if sl is not None:
-        updates.append("sl = ?")
-        params.append(sl)
-    if tp is not None:
-        updates.append("tp = ?")
-        params.append(tp)
-    if updates:
-        params.append(position_id)
-        conn.execute(f"UPDATE training_positions SET {', '.join(updates)} WHERE id = ?", params)
-        conn.commit()
-
-    return _row(conn.execute(
-        "SELECT * FROM training_positions WHERE id = ?", (position_id,)
-    ).fetchone())
+    ts.set_sltp(conn, position_id, sl=sl, tp=tp)
+    return _row(ts.get_position(conn, position_id))
 
 
 def get_session_stats(conn: sqlite3.Connection, session_id: int) -> dict:
-    """SL/TP hit statistics for a training session. Lazily initializes the
-    stats row on first read (a session created before this feature existed
-    has none yet)."""
+    """SL/TP hit statistics for a training session."""
     if ts.get_session(conn, session_id) is None:
         raise ValueError(f"no training session {session_id}")
-
-    stats = conn.execute(
-        "SELECT * FROM training_session_stats WHERE session_id = ?", (session_id,)
-    ).fetchone()
-    if not stats:
-        conn.execute(
-            "INSERT INTO training_session_stats (session_id, updated_at_msc) VALUES (?, ?)",
-            (session_id, now_ms()),
-        )
-        conn.commit()
-        stats = {"total_closed": 0, "sl_hits": 0, "tp_hits": 0, "manual_closes": 0}
-
-    total = stats["total_closed"]
-    sl_rate = stats["sl_hits"] / total if total > 0 else None
-    tp_rate = stats["tp_hits"] / total if total > 0 else None
-
-    avg_r_sl = conn.execute(
-        "SELECT AVG(r_multiple) FROM training_positions "
-        "WHERE session_id = ? AND exit_reason = 'sl'", (session_id,),
-    ).fetchone()[0]
-    avg_r_tp = conn.execute(
-        "SELECT AVG(r_multiple) FROM training_positions "
-        "WHERE session_id = ? AND exit_reason = 'tp'", (session_id,),
-    ).fetchone()[0]
-
+    st = ts.session_stats(conn, session_id)
+    total = st["total_closed"]
     return {
         "session_id": session_id,
-        "total_closed": total,
-        "sl_hits": stats["sl_hits"],
-        "tp_hits": stats["tp_hits"],
-        "manual_closes": stats["manual_closes"],
-        "sl_hit_rate": sl_rate,
-        "tp_hit_rate": tp_rate,
-        "avg_r_per_sl": avg_r_sl,
-        "avg_r_per_tp": avg_r_tp,
+        **st,
+        "sl_hit_rate": st["sl_hits"] / total if total > 0 else None,
+        "tp_hit_rate": st["tp_hits"] / total if total > 0 else None,
     }

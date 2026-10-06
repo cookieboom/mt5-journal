@@ -1,4 +1,4 @@
-"""`store/health.py` — the checks behind `journal status`.
+"""`health.py` — the checks behind `journal status`.
 
 Every check here composes a detector that already ships elsewhere, so what is
 pinned is NOT the detector (that has its own suite) but the three things
@@ -16,7 +16,7 @@ import os
 import pytest
 
 from journal.adapter.base import DealType
-from journal.store import health
+from journal import health
 from journal.store.db import connect
 
 _LOGIN = 12345
@@ -406,7 +406,7 @@ def _beating(conn, now_s, *, fingerprint):
 
 def test_code_fingerprint_lists_this_package_only():
     fp = json.loads(health.code_fingerprint())
-    assert "store/health.py" in fp
+    assert "health.py" in fp
     assert all(k.endswith(".py") and not k.startswith("/") for k in fp)
     assert all(len(v) == 12 for v in fp.values())
 
@@ -417,8 +417,8 @@ def test_changed_modules_is_empty_against_an_untouched_tree():
 
 def test_changed_modules_names_a_file_whose_content_moved():
     fp = json.loads(health.code_fingerprint())
-    fp["store/health.py"] = "0" * 12
-    assert health.changed_modules(json.dumps(fp)) == ["store/health.py"]
+    fp["health.py"] = "0" * 12
+    assert health.changed_modules(json.dumps(fp)) == ["health.py"]
 
 
 def test_changed_modules_counts_a_vanished_file_as_changed():
@@ -475,7 +475,7 @@ def test_frontend_warns_when_the_bundle_is_behind_the_source(db, monkeypatch):
     `frontend/dist` from disk and only says this at startup, in a terminal the
     human scrolled past days ago."""
     conn, path = db
-    monkeypatch.setattr("journal.web.app.stale_dist_reason",
+    monkeypatch.setattr("journal.health.stale_dist_reason",
                         lambda: "frontend/dist is 2 file(s) behind the source "
                                 "(newest: src/pages/Chart.tsx)")
 
@@ -487,7 +487,7 @@ def test_frontend_warns_when_the_bundle_is_behind_the_source(db, monkeypatch):
 
 def test_frontend_ok_when_the_bundle_is_current(db, monkeypatch):
     conn, path = db
-    monkeypatch.setattr("journal.web.app.stale_dist_reason", lambda: None)
+    monkeypatch.setattr("journal.health.stale_dist_reason", lambda: None)
 
     assert _by_name(health.checks(conn, path))["frontend"].state == "ok"
 
@@ -496,7 +496,7 @@ def test_a_stale_bundle_never_fails_the_exit_code(db, monkeypatch):
     """Undone, not wrong (§ the three states) — an unbuilt bundle serves an old
     page, it does not make a single number in this store untrue."""
     conn, path = db
-    monkeypatch.setattr("journal.web.app.stale_dist_reason",
+    monkeypatch.setattr("journal.health.stale_dist_reason",
                         lambda: "frontend/dist is missing")
 
     assert not any(c.state == "fail" for c in health.checks(conn, path))

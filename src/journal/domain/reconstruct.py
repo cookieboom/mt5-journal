@@ -47,7 +47,7 @@ import sqlite3
 from dataclasses import dataclass, field
 
 from ..adapter.base import Deal, DealEntry, DealType, Order
-from ..render.chart import choose_timeframe, window_for
+from .trade_window import choose_timeframe, window_for
 from ..store.db import now_ms, one_account_login
 from .excursion import compute_excursion
 from .risk import risk_amount
@@ -544,7 +544,7 @@ def _fill_auto_tags(conn: sqlite3.Connection, trades: list[Trade]) -> None:
     only when there are >= _MIN_N closed trades; below that, `None`/`None` are
     passed so no `big-win`/`big-loss` is applied against a sample too small to
     define an outlier. `compute_auto_tags` stays pure — thresholds flow IN."""
-    from ..analytics.report import _MIN_N
+    from . import MIN_N as _MIN_N
 
     login = one_account_login(conn)
     closed = [t for t in trades if t.status == "closed"]

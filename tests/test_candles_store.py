@@ -105,3 +105,33 @@ def test_forget_coverage_leaves_untouched_ranges_alone(tmp_path):
     cs.forget_coverage(conn, "XAUUSDc", "M1", BASE + 4*M1, BASE + 6*M1)
     assert cs.read_coverage(conn, "XAUUSDc", "M1") == [
         (BASE, BASE + 2*M1), (BASE + 8*M1, BASE + 10*M1)]
+
+
+
+def test_prune_before_drops_old_bars_and_clips_coverage(tmp_path):
+    conn = _conn(tmp_path)
+    for sym in ("XAUUSDc", "BTCUSDc"):
+        for k in (1, 2, 10):
+            cs.insert_candle(conn, sym, "M1", _c(BASE + k * M1))
+        cs.record_coverage(conn, sym, "M1", BASE, BASE + M1)            # wholly old
+        cs.record_coverage(conn, sym, "M1", BASE + 2 * M1, BASE + 11 * M1)  # straddles
+    conn.commit()
+
+    deleted = cs.prune_before(conn, BASE + 5 * M1, symbol="XAUUSDc")
+
+    assert deleted == 2
+    assert [c["time_msc"] for c in cs.read_candles(conn, "XAUUSDc", "M1", 0, BASE * 2)] == [BASE + 10 * M1]
+    assert cs.read_coverage(conn, "XAUUSDc", "M1") == [(BASE + 5 * M1, BASE + 11 * M1)]
+    # The other symbol is untouched.
+    assert len(cs.read_candles(conn, "BTCUSDc", "M1", 0, BASE * 2)) == 3
+    assert cs.read_coverage(conn, "BTCUSDc", "M1") == [(BASE, BASE + M1), (BASE + 2 * M1, BASE + 11 * M1)]
+
+
+def test_prune_before_without_a_symbol_prunes_every_symbol(tmp_path):
+    conn = _conn(tmp_path)
+    for sym in ("XAUUSDc", "BTCUSDc"):
+        cs.insert_candle(conn, sym, "M1", _c(BASE + M1))
+        cs.insert_candle(conn, sym, "M1", _c(BASE + 10 * M1))
+    conn.commit()
+    assert cs.prune_before(conn, BASE + 5 * M1) == 2
+    assert len(cs.read_candles(conn, "BTCUSDc", "M1", 0, BASE * 2)) == 1

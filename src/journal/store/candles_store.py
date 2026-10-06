@@ -181,6 +181,27 @@ def record_fetch(conn: sqlite3.Connection, symbol: str, timeframe: str,
         record_coverage(conn, symbol, timeframe, from_ms, hi)
 
 
+def prune_before(conn: sqlite3.Connection, cutoff_msc: int,
+                 symbol: str | None = None) -> int:
+    """Delete bars opening before `cutoff_msc` — one symbol, or all when
+    `symbol` is None — and clip `candle_coverage` to match, so the coverage memo
+    never claims a range whose bars are gone. Returns the bars deleted."""
+    where, args = ("symbol = ? AND ", (symbol,)) if symbol else ("", ())
+    deleted = conn.execute(
+        f"DELETE FROM candles WHERE {where}time_msc < ?", (*args, cutoff_msc),
+    ).rowcount
+    conn.execute(
+        f"DELETE FROM candle_coverage WHERE {where}to_msc < ?", (*args, cutoff_msc),
+    )
+    conn.execute(
+        f"UPDATE candle_coverage SET from_msc = ? "
+        f"WHERE {where}from_msc < ? AND to_msc >= ?",
+        (cutoff_msc, *args, cutoff_msc, cutoff_msc),
+    )
+    conn.commit()
+    return deleted
+
+
 def missing_ranges(covered: list[tuple[int, int]], want: tuple[int, int]) -> list[tuple[int, int]]:
     """Inclusive integer ranges in `want` not covered by `covered`."""
     lo, hi = want

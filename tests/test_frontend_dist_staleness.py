@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import os
 
-from journal.web.app import stale_dist_reason
+from journal.health import stale_dist_reason
 
 _OLD = 1_700_000_000
 _NEW = 1_700_000_100

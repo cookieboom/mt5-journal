@@ -9,6 +9,10 @@ import sqlite3
 
 from ..adapter.base import Candle
 
+# `journal live` beats every cycle (seconds). A minute of silence means it is
+# gone, not busy.
+HEARTBEAT_MAX_AGE_S = 60.0
+
 _MSC_FLOOR = 10**12  # below this, time_msc is seconds leaking through (Trap 15)
 
 

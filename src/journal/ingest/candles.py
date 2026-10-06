@@ -3,7 +3,7 @@
 Mirrors `ingest/deals.py`: takes an `MT5Client` by parameter, never constructs
 `LiveMT5Client` (CLAUDE.md rule 1), so `sync_candles` runs under `FakeMT5Client`
 with no bridge. For each CLOSED trade, fetches the render window
-(`render.chart.choose_timeframe` / `window_for`) at the trade's own chosen
+(`domain.trade_window.choose_timeframe` / `window_for`) at the trade's own chosen
 timeframe via `candle_fill.fill_range`, which consults `candle_coverage` first
 and asks the bridge only for the ranges not already stored. A trade whose
 window is fully covered costs one SELECT and no bridge call at all.
@@ -27,7 +27,7 @@ import sqlite3
 from dataclasses import dataclass, field
 
 from ..adapter.base import MT5Client
-from ..render.chart import choose_timeframe, window_for
+from ..domain.trade_window import choose_timeframe, window_for
 from ..store import candles_store
 from ..store.db import now_ms, one_account_login
 from .candle_fill import fill_range

@@ -35,30 +35,9 @@ import mplfinance as mpf  # noqa: E402 -- must follow matplotlib.use("Agg")
 import pandas as pd  # noqa: E402
 
 from ..adapter.base import TIMEFRAMES
+from ..domain.trade_window import PAD_BARS, choose_timeframe, window_for
 from ..store import candles_store
-from ..store.db import one_account_login
-
-# --------------------------------------------------------------- TF ladder
-
-# Seconds per bar. TIMEFRAMES (adapter.base, Rule 12's single source) fixes the
-# order finest -> coarsest; this just attaches the seconds each one covers.
-_TF_SECONDS: dict[str, int] = {
-    "M1": 60, "M5": 300, "M15": 900, "H1": 3600, "H4": 14400, "D1": 86400,
-}
-assert set(_TF_SECONDS) == set(TIMEFRAMES)
-
-# Finest TF where the trade spans <= this many bars. Measured 2026-07-17
-# (docs/mt5-deal-model.md §7): median trade is 7 M1 bars, p75 20, max 685 --
-# M15 draws the MEDIAN trade as a single candle, which is not a chart. This cap
-# only escalates the tail (durations past ~1h) off M1; in practice M1/M5/M15 are
-# the only timeframes this account's history ever picks.
-MAX_TRADE_BARS = 60
-
-# Fixed context on each side, in bars of the CHOSEN tf. Combined with the
-# <=MAX_TRADE_BARS cap on the trade itself, every window lands in
-# [1 + 2*15, 60 + 2*15] = [31, 90] bars -- inside the ~20-90 readable band,
-# with no proportional math needed.
-PAD_BARS = 15
+from ..store.db import one_account_login, server_offset_s
 
 _TOL = 1e-9  # money/price float comparison tolerance (CLAUDE.md rule 5)
 
@@ -119,23 +98,6 @@ def normalize_opts(raw: dict | None) -> RenderOpts:
     )
 
 
-def choose_timeframe(duration_s: int) -> str:
-    """Finest TF where the trade spans <= MAX_TRADE_BARS bars, floor D1."""
-    for tf in TIMEFRAMES:
-        if duration_s <= _TF_SECONDS[tf] * MAX_TRADE_BARS:
-            return tf
-    return TIMEFRAMES[-1]
-
-
-def window_for(
-    open_msc: int, close_msc: int, tf: str, pad_bars: int = PAD_BARS,
-) -> tuple[int, int]:
-    """+/- `pad_bars` bars of context around [open_msc, close_msc] at `tf`
-    granularity. Epoch-ms, SERVER time (no zone conversion here)."""
-    pad_ms = pad_bars * _TF_SECONDS[tf] * 1000
-    return open_msc - pad_ms, close_msc + pad_ms
-
-
 # ------------------------------------------------------------------- errors
 
 
@@ -179,21 +141,6 @@ def _load_trade(conn: sqlite3.Connection, login: int, position_id: int, segment:
             f"(account {login}) -- run `journal rebuild`?"
         )
     return row
-
-
-def _server_offset_s(conn: sqlite3.Connection, login: int) -> int:
-    """Trap 7: read the MEASURED offset, never hardcode 0. `sync` writes the
-    same reading to both the 'deals' and 'orders' rows in `sync_state`, so the
-    most recent non-NULL one is authoritative. Falls back to 0 only when
-    nothing has EVER been measured (no sync run yet) -- a fresh-DB default,
-    not an assumption made in the presence of real data."""
-    row = conn.execute(
-        "SELECT server_utc_offset_s FROM sync_state "
-        "WHERE account_login = ? AND server_utc_offset_s IS NOT NULL "
-        "ORDER BY measured_at DESC LIMIT 1",
-        (login,),
-    ).fetchone()
-    return int(row[0]) if row is not None else 0
 
 
 def _currency(conn: sqlite3.Connection, login: int) -> str:
@@ -268,7 +215,7 @@ def render_trade(
         )
 
     chosen_tf = opts.tf_override or choose_timeframe(duration_s)
-    if chosen_tf not in _TF_SECONDS:
+    if chosen_tf not in TIMEFRAMES:
         raise ValueError(f"unknown timeframe {chosen_tf!r}; expected one of {TIMEFRAMES}")
 
     from_msc, to_msc = window_for(
@@ -283,7 +230,7 @@ def render_trade(
             f"[{from_msc}, {to_msc}] -- run `journal candles` first"
         )
 
-    offset_s = _server_offset_s(conn, login)
+    offset_s = server_offset_s(conn, login)
     ccy = _currency(conn, login)
 
     index = pd.DatetimeIndex(

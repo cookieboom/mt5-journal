@@ -34,24 +34,64 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..adapter.base import DealType
-from . import backup
+from .adapter.base import DealType
+from .store import backup
+from .store.live_store import HEARTBEAT_MAX_AGE_S
 
 # A snapshot older than this is overdue — the same 24 h `journal live` uses for
 # its own timer, deliberately shared so the two never disagree.
 BACKUP_MAX_AGE_S = 24 * 3600
-# `journal live` beats every cycle (seconds). A minute of silence means it is
-# gone, not busy.
-HEARTBEAT_MAX_AGE_S = 60.0
 
 
-_PKG = Path(__file__).resolve().parent.parent   # src/journal
+_PKG = Path(__file__).resolve().parent   # src/journal
+
+# The SPA's source tree; `journal serve` mounts its `dist/` from disk.
+FRONTEND_DIR = _PKG.parent.parent / "frontend"
+
+# Files whose edits change the bundle. `src/**` plus the four build inputs that
+# live at the frontend root. Test files are excluded: they never reach the
+# bundle, so a vitest-only edit must not nag about rebuilding.
+_BUILD_INPUTS = ("index.html", "package.json", "vite.config.ts", "tailwind.config.js")
+
+
+def stale_dist_reason(frontend: Path | None = None) -> str | None:
+    """Why the served bundle is not the source tree — or `None` when it is.
+
+    `journal serve` mounts `frontend/dist` from DISK and never builds it, so a
+    forgotten `npm run build` serves yesterday's JavaScript against today's
+    Python. Nothing shows this in the browser: the page renders, the API answers,
+    and the only symptom is a fix that "did not work". It has bitten this project
+    twice — a POST that 405'd against a route the bundle predated, and the
+    2026-08-12 browser/server parity fix sitting unbuilt on disk.
+
+    mtime comparison, no hashes and no build-info file: the check has to be
+    cheaper than the mistake, and `dist/index.html` is rewritten by every Vite
+    build. Clock-skewed checkouts can therefore give a false "fresh" — a git
+    checkout that restores an OLD source file with a NEW mtime is the same class
+    of miss, and both cost only the warning, never correctness.
+    """
+    root = frontend or FRONTEND_DIR
+    built = root / "dist" / "index.html"
+    if not built.is_file():
+        return "frontend/dist is missing"
+    cutoff = built.stat().st_mtime
+    sources = [p for p in root.glob("src/**/*")
+               if p.is_file() and ".test." not in p.name]
+    sources += [root / name for name in _BUILD_INPUTS]
+    newer = sorted((p for p in sources if p.is_file() and p.stat().st_mtime > cutoff),
+                   key=lambda p: p.stat().st_mtime, reverse=True)
+    if not newer:
+        return None
+    return (f"frontend/dist is {len(newer)} file(s) behind the source "
+            f"(newest: {newer[0].relative_to(root)})")
+
+
 
 
 def newest_source(pkg: Path | None = None) -> tuple[str, float]:
     """The most recently edited `.py` in this package: `(relative name, mtime)`.
 
-    The daemon's code age, measured the same way `web.app.stale_dist_reason`
+    The daemon's code age, measured the same way `stale_dist_reason` above
     measures the bundle's — mtimes, no hashes, no build stamp. It inherits that
     check's one blind spot too: a `git checkout` rewrites mtimes, so restoring
     OLD code can read as new. Both only ever cost a warning, never correctness.
@@ -151,7 +191,7 @@ def _integrity(conn: sqlite3.Connection) -> Check:
 
 
 def _balance(conn: sqlite3.Connection) -> Check:
-    from ..ingest.deals import verify
+    from .ingest.deals import verify
 
     try:
         v = verify(conn)
@@ -247,7 +287,7 @@ def _live(conn: sqlite3.Connection, now: float) -> Check:
     `sync` and `rebuild` by hand. A command queued with nothing running to send
     it is: the human believes an SL is in flight and it is sitting in a table.
     """
-    from .live_store import read_code_fingerprint, read_heartbeat, read_started
+    from .store.live_store import read_code_fingerprint, read_heartbeat, read_started
 
     beat = read_heartbeat(conn)
     (pending,) = conn.execute(
@@ -314,8 +354,6 @@ def _dist() -> Check:
     Never a `fail`: an unbuilt bundle serves an old page, it does not make a
     single number in this store untrue.
     """
-    from ..web.app import stale_dist_reason
-
     reason = stale_dist_reason()
     if reason is None:
         return Check("frontend", "ok", "dist is newer than every source file")

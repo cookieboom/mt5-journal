@@ -17,11 +17,9 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 
+from ..domain import MIN_N as _MIN_N
 from ..store.db import one_account_login
 from .sessions import SESSION_ORDER, session_of
-
-# docs §9: a bucket under this many trades is noise, not a statistic.
-_MIN_N = 20
 
 # Float comparison tolerance (CLAUDE.md rule 5 — never ==/>/< a raw REAL).
 # Classifying win/loss/breakeven is the one place in this report where

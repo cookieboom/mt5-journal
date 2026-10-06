@@ -26,7 +26,9 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from ..annotate import AnnotateError, add_tag, list_tags, remove_tag, set_annotation
+from .. import execute
 from ..execute import CommandError, enqueue, enqueue_open
+from ..health import FRONTEND_DIR
 from ..render.chart import NoCandlesError, TradeNotFoundError, render_trade
 from ..store import prefs_store
 from ..store import training_store
@@ -49,50 +51,12 @@ _ACTIONS = {
     "add-volume": "add_volume",
 }
 
-_HERE = Path(__file__).resolve().parent
 _DEFAULT_DB = "data/journal.db"
 _CACHE_DIR = "cache"
 
 # The built SPA (Vite → frontend/dist). Served at the site root (Phase 5
 # cutover); absent until `npm --prefix frontend run build` has run.
-_FRONTEND_DIST = _HERE.parent.parent.parent / "frontend" / "dist"
-
-# Files whose edits change the bundle. `src/**` plus the four build inputs that
-# live at the frontend root. Test files are excluded: they never reach the
-# bundle, so a vitest-only edit must not nag about rebuilding.
-_BUILD_INPUTS = ("index.html", "package.json", "vite.config.ts", "tailwind.config.js")
-
-
-def stale_dist_reason(frontend: Path | None = None) -> str | None:
-    """Why the served bundle is not the source tree — or `None` when it is.
-
-    `journal serve` mounts `frontend/dist` from DISK and never builds it, so a
-    forgotten `npm run build` serves yesterday's JavaScript against today's
-    Python. Nothing shows this in the browser: the page renders, the API answers,
-    and the only symptom is a fix that "did not work". It has bitten this project
-    twice — a POST that 405'd against a route the bundle predated, and the
-    2026-08-12 browser/server parity fix sitting unbuilt on disk.
-
-    mtime comparison, no hashes and no build-info file: the check has to be
-    cheaper than the mistake, and `dist/index.html` is rewritten by every Vite
-    build. Clock-skewed checkouts can therefore give a false "fresh" — a git
-    checkout that restores an OLD source file with a NEW mtime is the same class
-    of miss, and both cost only the warning, never correctness.
-    """
-    root = frontend or _FRONTEND_DIST.parent
-    built = root / "dist" / "index.html"
-    if not built.is_file():
-        return "frontend/dist is missing"
-    cutoff = built.stat().st_mtime
-    sources = [p for p in root.glob("src/**/*")
-               if p.is_file() and ".test." not in p.name]
-    sources += [root / name for name in _BUILD_INPUTS]
-    newer = sorted((p for p in sources if p.is_file() and p.stat().st_mtime > cutoff),
-                   key=lambda p: p.stat().st_mtime, reverse=True)
-    if not newer:
-        return None
-    return (f"frontend/dist is {len(newer)} file(s) behind the source "
-            f"(newest: {newer[0].relative_to(root)})")
+_FRONTEND_DIST = FRONTEND_DIR / "dist"
 
 
 def create_app(db_path: str | None = None, cache_dir: str | None = None) -> FastAPI:
@@ -390,7 +354,7 @@ def create_app(db_path: str | None = None, cache_dir: str | None = None) -> Fast
             login = views.account_header(conn)["login"]
         except RuntimeError as e:
             return JSONResponse({"error": str(e)}, status_code=400)
-        return JSONResponse(api.to_jsonable(views.size_order(
+        return JSONResponse(api.to_jsonable(execute.size_order(
             conn, login, symbol=symbol, entry=entry, sl=sl, tp=tp,
             risk_mode=risk_mode, risk_value=risk_value,
         )))
@@ -436,7 +400,7 @@ def create_app(db_path: str | None = None, cache_dir: str | None = None) -> Fast
         harmless."""
         try:
             login = views.account_header(conn)["login"]
-            sizing = views.size_order(
+            sizing = execute.size_order(
                 conn, login, symbol=symbol, entry=entry, sl=sl, tp=tp,
                 risk_mode=risk_mode, risk_value=risk_value,
             )
@@ -1022,39 +986,9 @@ def create_app(db_path: str | None = None, cache_dir: str | None = None) -> Fast
     ):
         from ..store.db import now_ms
 
-        symbol = body.symbol
-        older_than_days = body.older_than_days
-        cutoff_ms = now_ms() - (older_than_days * 86400 * 1000)
-
-        if symbol and symbol != "all":
-            cur = conn.execute(
-                "DELETE FROM candles WHERE symbol = ? AND time_msc < ?",
-                (symbol, cutoff_ms),
-            )
-            deleted_bars = cur.rowcount
-            conn.execute(
-                "DELETE FROM candle_coverage WHERE symbol = ? AND to_msc < ?",
-                (symbol, cutoff_ms),
-            )
-            conn.execute(
-                "UPDATE candle_coverage SET from_msc = ? WHERE symbol = ? AND from_msc < ? AND to_msc >= ?",
-                (cutoff_ms, symbol, cutoff_ms, cutoff_ms),
-            )
-        else:
-            cur = conn.execute(
-                "DELETE FROM candles WHERE time_msc < ?",
-                (cutoff_ms,),
-            )
-            deleted_bars = cur.rowcount
-            conn.execute(
-                "DELETE FROM candle_coverage WHERE to_msc < ?",
-                (cutoff_ms,),
-            )
-            conn.execute(
-                "UPDATE candle_coverage SET from_msc = ? WHERE from_msc < ? AND to_msc >= ?",
-                (cutoff_ms, cutoff_ms, cutoff_ms),
-            )
-        conn.commit()
+        cutoff_ms = now_ms() - body.older_than_days * 86_400_000
+        symbol = None if body.symbol in (None, "", "all") else body.symbol
+        deleted_bars = cs.prune_before(conn, cutoff_ms, symbol=symbol)
 
         return JSONResponse({"status": "ok", "deleted_bars": deleted_bars})
 
