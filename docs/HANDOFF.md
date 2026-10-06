@@ -71,10 +71,17 @@ commit per item; every bug below was a failing test before it was a patch.
   started a new scenario anyway (uncancelled timer). The stale-bundle check
   watched `tailwind.config.js`; the repo has `.ts`, and postcss was missing.
   `TradeView` arrow-key tests were flaky (raced the neighbor fetch).
+- *Tooling (approved, rule 8).* ruff and mypy are dev deps and run in CI.
+  ruff is pinned to bug-finding rules (F, E4/E7/E9, B). mypy checks 67 of 73
+  modules; six (cli, reconstruct, resample, ingest.live, web.paper,
+  web.training — 96 errors, all Optional adapter fields validated in one
+  function and used in another) are baselined in pyproject.toml. Every
+  None-arithmetic site mypy flagged was read: none was a reachable NULL bug.
 - *Not done.* CandleChart's gesture effects stay together: they share
   mutable refs and capture-phase listener ORDER matters (text tool before
-  measure); splitting them buys little and risks that order. ruff/mypy need
-  the human's OK (rule 8).
+  measure); splitting them buys little and risks that order. The mypy
+  baseline. `lab.store.load_active` ignores its `cache_dir` and opens the
+  stored relative `artifact_path`, so it depends on the working directory.
 
 Gates: `pytest` **1003 passed, 8 skipped**; hygiene with the live-DB arm 3/3;
 `vitest` **411 passed / 53 files**; `tsc -b && vite build` clean; `journal

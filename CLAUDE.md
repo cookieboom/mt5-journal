@@ -95,6 +95,8 @@ uv run journal backup           # snapshot the DB (safe under `live`/`serve`;
 uv run journal restore          # put a snapshot back (newest, or --from FILE);
                                 #   verifies source, refuses under `live`
 uv run pytest                   # all tests, must pass before any commit
+uv run ruff check src tests scripts  # bug-finding lint (rules pinned in pyproject)
+uv run mypy                     # type check; baselined modules listed in pyproject
 uv run pytest -k reconstruct    # the tests that matter most
 ```
 
