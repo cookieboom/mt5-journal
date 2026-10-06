@@ -8,7 +8,7 @@ import {
   type SeriesMarker, type Time,
 } from "lightweight-charts";
 import {
-  toSeconds, isNowVisible, LINE_COLORS, liveLines, barCloseCountdown, timeframeMs,
+  toSeconds, isNowVisible, LINE_COLORS, barCloseCountdown, timeframeMs,
   axisTickLabel, type Sym, type Timeframe,
 } from "../lib/candles";
 import type { ChartSettings } from "../lib/chartPrefs";
@@ -23,8 +23,9 @@ import {
 import CoverageShadeOverlay from "./CoverageShadeOverlay";
 import { classifyGaps } from "../lib/coverage";
 import {
-  resolveDragTarget, ghostTitle, plannedTitle, positionTitle, HIT_THRESHOLD_PX, PLANNED_ID, type DraggablePosition, type LineKind,
+  resolveDragTarget, ghostTitle, HIT_THRESHOLD_PX, PLANNED_ID, type DraggablePosition, type LineKind,
 } from "../lib/sltpDrag";
+import { priceLinesToDraw } from "../lib/priceLines";
 import DrawingOverlay from "./DrawingOverlay";
 import DrawingPalette from "./DrawingPalette";
 import TextDrawingInput from "./TextDrawingInput";
@@ -608,16 +609,9 @@ const CandleChart = forwardRef<ChartHandle, {
     // with no re-fit behind them.
   }, [props.fitToRange, props.candles, props.settings.chartType, sizeTick]);
 
-  // SL/TP/entry overlay lines. Three mutually-exclusive sources, in priority
-  // order: (1) draggablePositions (replay, or any caller building its own
-  // position list) — draws draggable entry/SL/TP lines and records them in
-  // linesMeta for hit-testing; (2) overlayLines — explicit, non-draggable
-  // lines (older replay callers, static views); (3) live positions for the
-  // current symbol, only when "now" is in view (horizontal lines have no
-  // time, so they'd otherwise hang over history where those levels never
-  // existed) — these are ALSO recorded in linesMeta, so live positions become
-  // draggable automatically whenever onSlTpChange is passed, with no need for
-  // the caller to separately build a draggablePositions array for the live case.
+  // SL/TP/entry lines. Which ones, in what order, is `priceLinesToDraw`; this
+  // only tears the old set down and applies the new one. Lines with `meta` are
+  // recorded in linesMeta, which is what the SL/TP drag hit-tests against.
   useEffect(() => {
     const s = series.current;
     if (!s) return;
@@ -633,90 +627,22 @@ const CandleChart = forwardRef<ChartHandle, {
       lastValueVisible: plannedEntry === null || Math.abs(plannedEntry) < 1e-9,
     });
 
-    const addLine = (positionId: number, kind: LineKind, price: number | null,
-                     color: string, title: string, direction: "buy" | "sell",
-                     entryPrice: number | null) => {
-      if (price === null || price === undefined || Math.abs(price) < 1e-9) return;
+    for (const l of priceLinesToDraw({
+      draggablePositions: props.draggablePositions,
+      overlayLines: props.overlayLines,
+      liveOverlay: props.settings.liveOverlay,
+      nowVisible: props.nowVisible,
+      live: props.live,
+      symbol: props.symbol,
+      plannedOrder: props.plannedOrder,
+      entryTitle,
+    })) {
       const line = s.createPriceLine({
-        price, color, lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title,
+        price: l.price, color: l.color, lineWidth: 1, lineStyle: LineStyle.Dashed,
+        axisLabelVisible: true, title: l.title,
       });
       priceLines.current.push(line);
-      linesMeta.current.push({ line, positionId, kind, direction, entryPrice });
-    };
-
-    // Position lines first — the three sources below are mutually exclusive and
-    // each returns early, so this stays a function rather than growing a flag.
-    const drawPositions = () => {
-      if (props.draggablePositions !== undefined) {
-        for (const pos of props.draggablePositions) {
-          addLine(pos.id, "entry", pos.entry_price, LINE_COLORS.entry,
-                  positionTitle("entry", pos.entry_price ?? 0, pos.entry_price), pos.direction, pos.entry_price);
-          addLine(pos.id, "sl", pos.sl, LINE_COLORS.sl,
-                  positionTitle("sl", pos.sl, pos.entry_price), pos.direction, pos.entry_price);
-          addLine(pos.id, "tp", pos.tp, LINE_COLORS.tp,
-                  positionTitle("tp", pos.tp, pos.entry_price), pos.direction, pos.entry_price);
-        }
-        return;
-      }
-
-      // Replay (or any caller) supplies explicit lines → draw exactly those.
-      const explicit = props.overlayLines;
-      if (explicit !== undefined) {
-        for (const line of explicit) {
-          priceLines.current.push(s.createPriceLine({
-            price: line.price, color: line.color, lineWidth: 1,
-            lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: line.title,
-          }));
-        }
-        return;
-      }
-
-      // Live SL/TP/entry overlay — only when the current symbol has open positions
-      // AND "now" is in view (horizontal lines have no time).
-      if (!props.settings.liveOverlay || !props.nowVisible || !props.live || props.live.live.empty) return;
-      const mine = props.live.live.positions.filter((p) => p.symbol === props.symbol);
-      for (const pos of mine) {
-        for (const line of liveLines(pos)) {
-          addLine(pos.position_id, line.kind, line.price, line.color, line.title, pos.direction, pos.open_price);
-        }
-      }
-    };
-    drawPositions();
-    // Whether the chart is now showing a position at all — any of the three
-    // sources above, live or replay. Read off the lines themselves rather than
-    // re-testing each source's conditions, so a fourth source can never drift
-    // out of step with this.
-    const hasPositionLines = priceLines.current.length > 0;
-
-    // The planned order draws LAST, on top of whatever else the chart is
-    // showing: it is not a position yet, so it belongs to none of the sources
-    // above. Order matters because a plan and a position can share a price, and
-    // lightweight-charts paints axis labels in creation order — drawn first, the
-    // plan's label would be buried under the position's.
-    // `direction` is null until the human's stop picks a side; an entry-line
-    // drag then resolves to "sl" by default, which is exactly the gesture that
-    // decides it.
-    if (props.plannedOrder) {
-      const p = props.plannedOrder;
-      const dir = p.direction ?? "buy";
-      // This line sits ON the last close, so its axis label would stack a
-      // second price badge against the series' own last-price label. The badge
-      // has to stay, though: lightweight-charts paints a price line's title
-      // from its price-axis view, which returns early when axisLabelVisible is
-      // false — killing the label kills the title (countdown in live, "harga"
-      // otherwise) with it. So keep this line's label and drop the series' own:
-      // same one badge on the scale, and the title paints.
-      addLine(PLANNED_ID, "entry", p.entry, LINE_COLORS.entry, entryTitle, dir, p.entry);
-      // The planned stops stop drawing the moment a position is on the chart:
-      // the plan has been acted on, and the levels that now govern real money
-      // are the position's own. The entry line above is exempt — it is not a
-      // plan but where price is right now, and it carries the countdown.
-      // p.entry IS that price (Chart.tsx derives it from the last shown close),
-      // so it doubles as the reference for the distance in the titles.
-      if (!hasPositionLines) {
-        if (p.sl !== null) addLine(PLANNED_ID, "sl", p.sl, LINE_COLORS.sl, plannedTitle("sl", p.sl, p.entry), dir, p.entry);
-        if (p.tp !== null) addLine(PLANNED_ID, "tp", p.tp, LINE_COLORS.tp, plannedTitle("tp", p.tp, p.entry), dir, p.entry);
-      }
+      if (l.meta) linesMeta.current.push({ line, ...l.meta });
     }
   }, [props.live, props.nowVisible, props.symbol, props.settings.liveOverlay,
       props.settings.chartType, props.overlayLines, props.draggablePositions, props.plannedOrder]);
