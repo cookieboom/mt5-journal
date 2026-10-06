@@ -112,6 +112,11 @@ def build_weekly(conn: sqlite3.Connection, iso_year: int, iso_week: int) -> Week
 
     # Weekly rates/averages ARE gated by n (§9): a week rarely has 20 trades, so
     # a bare "100% win rate (n=2)" is exactly the misleading figure §9 forbids.
+    win_rate: float | None
+    avg_win: float | None
+    avg_loss: float | None
+    expectancy: float | None
+    profit_factor: float | None
     if n_closed >= _MIN_N:
         win_rate = n_wins / n_closed
         avg_win = (sum(wins) / n_wins) if wins else None

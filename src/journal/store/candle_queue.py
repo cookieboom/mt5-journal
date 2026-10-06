@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from .db import now_ms
+from .db import last_insert_id, now_ms
 from . import candles_store as cs
 
 
@@ -30,7 +30,7 @@ def request_candles(conn: sqlite3.Connection, symbol: str, timeframe: str,
         (symbol, timeframe, from_ms, to_ms, now_ms()),
     )
     conn.commit()
-    return int(cur.lastrowid)
+    return last_insert_id(cur)
 
 
 def claim_next_request(conn: sqlite3.Connection) -> sqlite3.Row | None:

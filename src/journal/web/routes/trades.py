@@ -6,6 +6,7 @@ Pure DB: no bridge (M9 boundary).
 from __future__ import annotations
 
 import sqlite3
+from pathlib import Path
 from datetime import datetime
 
 from fastapi import APIRouter, Body, Depends
@@ -185,7 +186,7 @@ def api_remove_tag(
 
 @router.get("/trades/{position_id}/chart.png")
 def trade_chart(position_id: int, conn: sqlite3.Connection = Depends(get_conn),
-                cache_dir: str = Depends(deps.cache_dir)):
+                cache_dir: Path = Depends(deps.cache_dir)):
     """Render (or reuse the cached) PNG for a closed trade. Charts are cache,
     reproducible from the DB (rule 6). A missing window / open trade is a
     plain 404 with a message — never a silently blank image."""

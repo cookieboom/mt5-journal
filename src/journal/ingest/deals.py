@@ -30,7 +30,7 @@ from datetime import datetime, timezone
 
 from ..adapter.base import Account, DealType, MT5Client
 from ..domain.symbols import to_base
-from ..store.db import now_ms, one_account_login
+from ..store.db import last_insert_id, now_ms, one_account_login
 
 # First backfill takes everything (Trap 8: use datetime(2000,1,1) as `from`), and
 # `sync(full=True)` goes back here on demand.
@@ -206,10 +206,10 @@ def _history_window(conn, login) -> tuple[datetime, int]:
             (login,),
         )
     }
-    got = [marks.get("deals"), marks.get("orders")]
-    if any(m is None or m <= 0 for m in got):
+    deals_ms, orders_ms = marks.get("deals"), marks.get("orders")
+    if deals_ms is None or orders_ms is None or deals_ms <= 0 or orders_ms <= 0:
         return _EPOCH_FROM, 0
-    from_ms = min(got) - _LOOKBACK_MS
+    from_ms = min(deals_ms, orders_ms) - _LOOKBACK_MS
     return datetime.fromtimestamp(from_ms / 1000, tz=timezone.utc), from_ms
 
 
@@ -535,4 +535,4 @@ def add_reconciliation(
         (account_login, amount, effective_msc, reason, evidence, ts),
     )
     conn.commit()
-    return int(cur.lastrowid)
+    return last_insert_id(cur)

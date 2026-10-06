@@ -8,6 +8,7 @@ the routes live in their own modules.
 from __future__ import annotations
 
 import sqlite3
+from pathlib import Path
 from typing import Iterator
 
 from fastapi import Request
@@ -30,5 +31,5 @@ def db_path(request: Request) -> str:
     return request.app.state.db_path
 
 
-def cache_dir(request: Request) -> str:
-    return request.app.state.cache_dir
+def cache_dir(request: Request) -> Path:
+    return Path(request.app.state.cache_dir)

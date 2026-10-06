@@ -23,7 +23,7 @@ router = APIRouter()
 def api_storage_overview(
     conn: sqlite3.Connection = Depends(get_conn),
     db_path: str = Depends(deps.db_path),
-    cache_dir: str = Depends(deps.cache_dir),
+    cache_dir: Path = Depends(deps.cache_dir),
 ):
     p = Path(db_path)
     db_size_bytes = p.stat().st_size if p.is_file() else 0
@@ -54,7 +54,7 @@ def api_storage_overview(
 
 
 @router.post("/api/storage/maintenance/clear-cache")
-def api_storage_clear_cache(cache_dir: str = Depends(deps.cache_dir)):
+def api_storage_clear_cache(cache_dir: Path = Depends(deps.cache_dir)):
     cache_p = Path(cache_dir)
     models = cache_p / "models"
     cleared_files = 0

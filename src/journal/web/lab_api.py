@@ -10,6 +10,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+from ..adapter.base import Candle
 from ..lab.features import PRICE_FEATURES, bars_to_frame, build_features, usable_columns
 from ..lab.labels import LabelConfig
 from ..lab.score import score_bars
@@ -46,6 +47,14 @@ def _positive(value, name: str, cast):
         raise LabRequestError(f"{name} must be greater than 0, got {out}")
     return out
 
+
+
+def _bar_ms(bar: Candle) -> int:
+    """A stored bar's open time. `candles.time_msc` is NOT NULL, so None here
+    would mean the bars did not come from the store — refuse, never guess 0."""
+    if bar.time_msc is None:
+        raise LabRequestError("bar without time_msc — candles must come from the store")
+    return bar.time_msc
 
 def train(conn: sqlite3.Connection, body: dict, cache_dir: Path) -> dict:
     symbol = str(body["symbol"])
@@ -101,7 +110,7 @@ def train(conn: sqlite3.Connection, body: dict, cache_dir: Path) -> dict:
     }
     ids = save_models(
         conn, symbol=symbol, timeframe=timeframe, config=config, models=models,
-        train_from_ms=int(bars[0].time_msc), train_to_ms=int(bars[-1].time_msc),
+        train_from_ms=_bar_ms(bars[0]), train_to_ms=_bar_ms(bars[-1]),
         cache_dir=cache_dir,
     )
     rows = {r["id"]: r for r in list_models(conn, symbol, timeframe)}

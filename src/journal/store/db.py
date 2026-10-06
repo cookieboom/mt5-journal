@@ -28,6 +28,13 @@ def now_ms() -> int:
     return int(time.time() * 1000)
 
 
+def last_insert_id(cur: sqlite3.Cursor) -> int:
+    """The rowid an INSERT just created. `lastrowid` is typed Optional because a
+    non-INSERT leaves it None; after an INSERT it never is."""
+    assert cur.lastrowid is not None, "last_insert_id() after a statement that inserted nothing"
+    return cur.lastrowid
+
+
 def one_account_login(conn: sqlite3.Connection) -> int:
     """The single source of the 'exactly one account' guard. Returns that account's
     login or raises RuntimeError. Three call sites (rebuild, verify, the CLI) used to

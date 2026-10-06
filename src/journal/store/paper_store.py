@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from .db import now_ms
+from .db import last_insert_id, now_ms
 
 
 def create_account(conn: sqlite3.Connection, *, name: str, initial_balance: float,
@@ -25,7 +25,7 @@ def create_account(conn: sqlite3.Connection, *, name: str, initial_balance: floa
     except sqlite3.IntegrityError as e:
         raise ValueError(f"Nama akun '{name}' sudah dipakai.") from e
     conn.commit()
-    return int(cur.lastrowid)
+    return last_insert_id(cur)
 
 
 def get_account(conn: sqlite3.Connection, account_id: int) -> sqlite3.Row | None:
@@ -77,7 +77,7 @@ def insert_position(conn: sqlite3.Connection, *, account_id: int, symbol: str,
          expires_msc, status, ts, entry_msc, entry_price, ts),
     )
     conn.commit()
-    return int(cur.lastrowid)
+    return last_insert_id(cur)
 
 
 def list_positions(conn: sqlite3.Connection, account_id: int,
@@ -191,4 +191,4 @@ def split_for_partial(conn: sqlite3.Connection, position_id: int,
         (volume, position_id),
     )
     conn.commit()
-    return int(cur.lastrowid)
+    return last_insert_id(cur)

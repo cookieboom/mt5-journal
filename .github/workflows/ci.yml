@@ -39,6 +39,8 @@ jobs:
       # Bug-finding rules only (pyflakes, pycodestyle errors, bugbear); the
       # rule set is pinned in pyproject.toml so no machine config can change it.
       - run: uv run ruff check src tests scripts
+      # Type check; the modules not yet clean are listed in pyproject.toml.
+      - run: uv run mypy
       - run: uv run pytest -q
 
   frontend:

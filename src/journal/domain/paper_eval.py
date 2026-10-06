@@ -255,9 +255,10 @@ def resolve_stopout(positions: list[PaperPos], quotes: dict[str, Quote],
             return events
 
         open_now = [p for p in positions if p.status == "open"]
+        # account_state returned above if any open P&L were None.
         losses = [
-            (floating_usc(p, quotes[p.symbol], specs_by_symbol[p.symbol]), p)
-            for p in open_now
+            (f, p) for p in open_now
+            if (f := floating_usc(p, quotes[p.symbol], specs_by_symbol[p.symbol])) is not None
         ]
         if not losses:
             return events

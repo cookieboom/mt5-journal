@@ -13,6 +13,8 @@ here imports the MT5 adapter (CLAUDE.md rules 1 & 12). Trades are addressed by
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Mapping
+from typing import Any
 
 from .. import execute
 from ..analytics.report import build_report
@@ -74,7 +76,7 @@ def level_word(level: float | None) -> str:
 
 
 def _intent_text(
-    kind: str, pos: sqlite3.Row, *,
+    kind: str, pos: sqlite3.Row | Mapping[str, Any], *,
     sl: float | None, tp: float | None, volume: float | None,
 ) -> str:
     """Plain-Indonesian description of exactly what will be queued — the sentence

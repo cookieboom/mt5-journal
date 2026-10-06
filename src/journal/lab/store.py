@@ -15,7 +15,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from ..store.db import now_ms
+from ..store.db import last_insert_id, now_ms
 from .train import TrainedModel
 
 
@@ -60,7 +60,7 @@ def save_models(conn: sqlite3.Connection, *, symbol: str, timeframe: str,
              json.dumps(model.metrics), train_from_ms, train_to_ms,
              model.n_rows, int(model.pooled), ""),
         )
-        model_id = int(cur.lastrowid)
+        model_id = last_insert_id(cur)
         final_path = models_dir / f"{model_id}.joblib"
         tmp_path.rename(final_path)
         conn.execute("UPDATE lab_models SET artifact_path = ? WHERE id = ?",

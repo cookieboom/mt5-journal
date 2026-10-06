@@ -54,3 +54,26 @@ extend-immutable-calls = [
 # OHLC tuples name the low `l`; test modules import per section on purpose and
 # write fixture rows compactly, several statements to a line.
 "tests/*" = ["E741", "E402", "E702"]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["src/journal"]
+# mplfinance, siliconmetatrader5, lightgbm, joblib and friends ship no stubs.
+ignore_missing_imports = true
+
+# Baseline, 2026-10-06: 96 errors, almost all one shape — an Optional field on
+# an adapter dataclass (Deal.time_msc, Candle.time_msc, ...) that is validated
+# in one function and used in another, which mypy cannot follow. Fixing them
+# means tightening the adapter types, and reconstruct.py is read-before-edit
+# territory (docs/mt5-deal-model.md). Every other module is checked; shrink
+# this list, never grow it.
+[[tool.mypy.overrides]]
+module = [
+    "journal.cli",
+    "journal.domain.reconstruct",
+    "journal.domain.resample",
+    "journal.ingest.live",
+    "journal.web.paper",
+    "journal.web.training",
+]
+ignore_errors = true

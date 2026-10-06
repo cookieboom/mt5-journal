@@ -7,6 +7,7 @@ write), not concurrency here.
 from __future__ import annotations
 
 import sqlite3
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -29,7 +30,7 @@ def _lab(fn, *args, **kwargs):
 @router.post("/api/lab/train")
 def api_lab_train(body: schemas.LabTrainRequest,
                   conn: sqlite3.Connection = Depends(get_conn),
-                  cache_dir: str = Depends(deps.cache_dir)):
+                  cache_dir: Path = Depends(deps.cache_dir)):
     return _lab(lab_api.train, conn, body.model_dump(), cache_dir)
 
 
@@ -49,13 +50,13 @@ def api_lab_activate(model_id: int,
 def api_lab_score(symbol: str, timeframe: str,
                   bars: int = lab_api.DEFAULT_SCORE_BARS,
                   conn: sqlite3.Connection = Depends(get_conn),
-                  cache_dir: str = Depends(deps.cache_dir)):
+                  cache_dir: Path = Depends(deps.cache_dir)):
     return lab_api.score_payload(conn, symbol, timeframe, bars, cache_dir)
 
 
 @router.get("/api/lab/regimes")
 def api_lab_regimes(symbol: str, timeframe: str, from_ms: int, to_ms: int,
                     conn: sqlite3.Connection = Depends(get_conn),
-                    cache_dir: str = Depends(deps.cache_dir)):
+                    cache_dir: Path = Depends(deps.cache_dir)):
     return lab_api.regimes_payload(conn, symbol, timeframe, from_ms, to_ms,
                                    cache_dir)

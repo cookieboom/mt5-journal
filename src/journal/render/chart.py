@@ -25,7 +25,7 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Sequence
+from typing import Any, Sequence
 
 import matplotlib
 
@@ -67,9 +67,9 @@ class RenderOpts:
         return hashlib.sha1(raw.encode()).hexdigest()[:8]
 
 
-def _clamp_pad(v: object) -> int:
+def _clamp_pad(v: Any) -> int:
     try:
-        n = int(v)  # type: ignore[arg-type]
+        n = int(v)
     except (TypeError, ValueError):
         return PAD_BARS
     return max(PAD_MIN, min(PAD_MAX, n))

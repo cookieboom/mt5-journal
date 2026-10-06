@@ -25,13 +25,14 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from typing import Any
 
 from .adapter.base import TradeResult
 from .domain import risk
 from .domain.commands import CommandError, classify, validate
 from .domain.risk import risk_amount
 from .store import live_store
-from .store.db import now_ms
+from .store.db import last_insert_id, now_ms
 
 # How old the evidence that the price feed is moving may be before an open is
 # refused. Matches `api.live_status_payload`'s own staleness window, so the dot
@@ -125,7 +126,7 @@ def enqueue(
         (login, position_id, kind, sl, tp, volume, now_ms()),
     )
     conn.commit()
-    return int(cur.lastrowid)
+    return last_insert_id(cur)
 
 
 def account_balance(conn: sqlite3.Connection, login: int) -> float | None:
@@ -141,7 +142,7 @@ def account_balance(conn: sqlite3.Connection, login: int) -> float | None:
 
 
 def load_open_context(
-    conn: sqlite3.Connection, login: int, symbol: str, direction: str, price: float,
+    conn: sqlite3.Connection, login: int, symbol: str, direction: str, price: float | None,
 ) -> tuple[dict, sqlite3.Row]:
     """The (position, spec) pair for an OPEN, where no position exists yet.
 
@@ -275,7 +276,7 @@ def enqueue_open(
         (login, symbol, direction, price_ref, sl, tp, volume, now_ms()),
     )
     conn.commit()
-    return int(cur.lastrowid)
+    return last_insert_id(cur)
 
 
 # ---------------------------------------------------------------- risk sizing
@@ -300,7 +301,7 @@ def size_order(
     This is arithmetic on numbers the human supplied. It does not choose the
     symbol, the side, the stop, or the moment (rule 9).
     """
-    out = {
+    out: dict[str, Any] = {
         "volume": None, "risk_usc": None, "risk_pct": None,
         "distance": None, "rr": None, "direction": None, "error": None,
     }
@@ -322,6 +323,7 @@ def size_order(
             "tarik garisnya menjauh dari harga."
         )
         return out
+    assert entry is not None and sl is not None  # direction_for_sl answers only then
     out["direction"] = direction
     out["distance"] = abs(entry - sl)
 
@@ -381,6 +383,7 @@ def size_order(
         return out
 
     realised = risk_amount(entry, sl, spec["tick_size"], spec["tick_value"], volume)
+    assert realised is not None  # the same spec fields just sized `volume`
     out["volume"] = volume
     out["risk_usc"] = realised
     out["risk_pct"] = (realised / balance * 100.0) if balance else None

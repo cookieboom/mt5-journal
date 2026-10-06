@@ -19,7 +19,7 @@ from __future__ import annotations
 import sqlite3
 
 from ..domain.sim_stats import summary as _summary
-from .db import now_ms
+from .db import last_insert_id, now_ms
 
 
 def create_session(conn: sqlite3.Connection, *, symbol: str, symbol_base: str,
@@ -34,7 +34,7 @@ def create_session(conn: sqlite3.Connection, *, symbol: str, symbol_base: str,
          cursor_msc, now_ms()),
     )
     conn.commit()
-    return int(cur.lastrowid)
+    return last_insert_id(cur)
 
 
 def get_session(conn: sqlite3.Connection, session_id: int) -> sqlite3.Row | None:
@@ -83,7 +83,7 @@ def insert_position(conn: sqlite3.Connection, *, session_id: int, direction: str
         (session_id, direction, volume, decision_msc, sl, tp, now_ms()),
     )
     conn.commit()
-    return int(cur.lastrowid)
+    return last_insert_id(cur)
 
 
 def list_positions(conn: sqlite3.Connection, session_id: int) -> list[sqlite3.Row]:
