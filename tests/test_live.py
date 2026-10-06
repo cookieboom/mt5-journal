@@ -1485,3 +1485,28 @@ def test_position_loop_and_symbol_loop_share_a_locked_client_without_deadlock(co
     # The point of the test: both threads actually contended for `client._lock`,
     # not just looped independently on the same object.
     assert inner.rates_calls > 0
+
+
+def test_run_daemon_one_loop_failing_stops_the_other_and_reraises(monkeypatch):
+    """If only the failing thread died, the survivor would loop forever and the
+    reason the daemon stopped would never reach the terminal."""
+    import threading as _t
+    from journal.ingest import live as live_mod
+
+    survivor_stopped = _t.Event()
+
+    def _position_loop(client, conn, login, q, *, stop_event, **k):
+        assert stop_event.wait(timeout=5), "position loop was never told to stop"
+        survivor_stopped.set()
+        return live_mod.PositionLoopReport(cycles=1, stopped_by="interrupt")
+
+    def _symbol_loop(client, conn, q, **k):
+        raise RuntimeError("symbol side blew up")
+
+    monkeypatch.setattr(live_mod, "position_loop", _position_loop)
+    monkeypatch.setattr(live_mod, "symbol_loop", _symbol_loop)
+
+    with pytest.raises(RuntimeError, match="symbol side blew up"):
+        live_mod.run_daemon(object(), None, None, 0, interval_positions=1,
+                            interval_symbols=1, trading=False)
+    assert survivor_stopped.is_set()

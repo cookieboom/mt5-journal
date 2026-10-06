@@ -764,11 +764,9 @@ def live(
     command is pending, never fatal) — `--no-auto-backup` turns that off.
     """
     import logging
-    import queue as queue_mod
-    import threading
 
     from .adapter.select import get_client
-    from .ingest.live import position_loop, symbol_loop
+    from .ingest.live import run_daemon
     from .ingest.locked_client import LockedMT5Client
 
     # The package logs but nothing ever configured a handler, so every `log.info`
@@ -830,17 +828,12 @@ def live(
             f"tunggu beberapa detik…"
         )
 
-    # One connection per loop: SQLite connections are not shared across threads,
-    # and each loop's rollback-on-failure must not touch the other's transaction.
+    # One connection per loop (`run_daemon` explains why), one bridge session
+    # for both: every call serialized behind `LockedMT5Client`.
     conn_positions = connect(db)
     conn_symbols = connect(db)
-    position_report_holder: list = []
-    symbol_report_holder: list = []
     try:
         login = _one_account_login(conn_positions)  # friendly exit if `sync` never ran
-        # ONE bridge connection for both loops, every call serialized behind a
-        # lock — two sessions on one terminal is exactly what this process exists
-        # to prevent.
         client = LockedMT5Client(get_client())
         mode = "TRADING ON — will send real orders" if trading else "ingest only (--no-trading)"
         typer.echo(
@@ -849,63 +842,14 @@ def live(
             + ("; auto-backup off" if no_auto_backup else "; daily auto-backup")
             + ("" if once else " — Ctrl+C to stop" + (f", max {duration}s" if duration else ""))
         )
-
-        closed_queue: queue_mod.Queue = queue_mod.Queue()
-        stop_event = threading.Event()
-
-        # A raise inside a Thread target does NOT reach the main thread, and the
-        # "locked" refusal below is the one exception that MUST get out. Each
-        # target parks either its report or its exception; the main thread
-        # re-raises after both have joined.
-        def _run_position_loop() -> None:
-            try:
-                position_report_holder.append(position_loop(
-                    client, conn_positions, login, closed_queue,
-                    interval_idle=interval_positions, trading=trading,
-                    once=once, duration=duration,
-                    backup_every_s=None if no_auto_backup else 86_400.0,
-                    on_cycle=_echo_cycle, on_closing=_echo_closing,
-                    stop_event=stop_event,
-                ))
-            except Exception as e:                      # noqa: BLE001 — re-raised below
-                position_report_holder.append(e)
-
-        def _run_symbol_loop() -> None:
-            try:
-                symbol_report_holder.append(symbol_loop(
-                    client, conn_symbols, closed_queue,
-                    interval=interval_symbols, once=once, duration=duration,
-                    on_cycle=_echo_symbol_cycle,
-                    stop_event=stop_event,
-                ))
-            except Exception as e:                      # noqa: BLE001 — re-raised below
-                symbol_report_holder.append(e)
-
-        t_position = threading.Thread(target=_run_position_loop, name="position_loop")
-        t_symbol = threading.Thread(target=_run_symbol_loop, name="symbol_loop")
-        t_position.start()
-        t_symbol.start()
-        try:
-            while t_position.is_alive() or t_symbol.is_alive():
-                t_position.join(timeout=0.5)
-                t_symbol.join(timeout=0.5)
-                # One loop escaping (a locked DB does, on purpose) must bring the
-                # other down too — otherwise the survivor keeps looping forever
-                # and the message explaining the exit never prints.
-                if any(h and isinstance(h[0], Exception)
-                       for h in (position_report_holder, symbol_report_holder)):
-                    stop_event.set()
-        except KeyboardInterrupt:
-            # Only the main thread ever sees this; the loops learn about it here.
-            # Join without a timeout: a connection must never be closed while its
-            # own thread is still mid-cycle.
-            stop_event.set()
-            t_position.join()
-            t_symbol.join()
-
-        for holder in (position_report_holder, symbol_report_holder):
-            if holder and isinstance(holder[0], Exception):
-                raise holder[0]
+        r, rs = run_daemon(
+            client, conn_positions, conn_symbols, login,
+            interval_positions=interval_positions, interval_symbols=interval_symbols,
+            trading=trading, once=once, duration=duration,
+            backup_every_s=None if no_auto_backup else 86_400.0,
+            on_cycle=_echo_cycle, on_symbol_cycle=_echo_symbol_cycle,
+            on_closing=_echo_closing,
+        )
     except sqlite3.OperationalError as e:
         # WAL + busy_timeout (store/db.py) makes this rare, but two `journal live`
         # processes on one DB still contend past the timeout. Only ONE live loop
@@ -923,8 +867,6 @@ def live(
         conn_positions.close()
         conn_symbols.close()
 
-    r = position_report_holder[0] if position_report_holder else None
-    rs = symbol_report_holder[0] if symbol_report_holder else None
     typer.echo("== live ==")
     if r is not None:
         typer.echo(f"position cycles: {r.cycles}")

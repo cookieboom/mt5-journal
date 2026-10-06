@@ -941,3 +941,86 @@ def symbol_loop(
             sleep(interval)
     except KeyboardInterrupt:
         return _report("interrupt")
+
+
+def run_daemon(
+    client: MT5Client,
+    conn_positions: sqlite3.Connection,
+    conn_symbols: sqlite3.Connection,
+    login: int,
+    *,
+    interval_positions: float,
+    interval_symbols: float,
+    trading: bool,
+    once: bool = False,
+    duration: float | None = None,
+    backup_every_s: float | None = 86_400.0,
+    on_cycle=None,
+    on_symbol_cycle=None,
+    on_closing=None,
+) -> tuple[PositionLoopReport | None, SymbolLoopReport | None]:
+    """Run `position_loop` and `symbol_loop` on two threads until both stop.
+
+    `client` must already be serialized for two threads (`LockedMT5Client`):
+    one bridge session, shared. Each loop gets its own connection, because
+    SQLite connections are not shared across threads and one loop's
+    rollback-on-failure must not touch the other's transaction.
+
+    A close found by the position loop reaches the symbol loop through an
+    in-memory queue. Ctrl+C only ever reaches the main thread — this one — so
+    it sets the stop event both loops check and joins them without a timeout:
+    a connection must never be closed while its own thread is mid-cycle.
+
+    An exception inside either loop (a locked DB is the one that matters) stops
+    the other loop too and is re-raised here, on the caller's thread.
+    """
+    closed_queue: queue_mod.Queue = queue_mod.Queue()
+    stop_event = threading.Event()
+    # A raise inside a Thread target does NOT reach the main thread. Each
+    # target parks either its report or its exception for the join below.
+    position_out: list = []
+    symbol_out: list = []
+
+    def _run_position_loop() -> None:
+        try:
+            position_out.append(position_loop(
+                client, conn_positions, login, closed_queue,
+                interval_idle=interval_positions, trading=trading,
+                once=once, duration=duration, backup_every_s=backup_every_s,
+                on_cycle=on_cycle, on_closing=on_closing, stop_event=stop_event,
+            ))
+        except Exception as e:                      # noqa: BLE001 — re-raised below
+            position_out.append(e)
+
+    def _run_symbol_loop() -> None:
+        try:
+            symbol_out.append(symbol_loop(
+                client, conn_symbols, closed_queue,
+                interval=interval_symbols, once=once, duration=duration,
+                on_cycle=on_symbol_cycle, stop_event=stop_event,
+            ))
+        except Exception as e:                      # noqa: BLE001 — re-raised below
+            symbol_out.append(e)
+
+    t_position = threading.Thread(target=_run_position_loop, name="position_loop")
+    t_symbol = threading.Thread(target=_run_symbol_loop, name="symbol_loop")
+    t_position.start()
+    t_symbol.start()
+    try:
+        while t_position.is_alive() or t_symbol.is_alive():
+            t_position.join(timeout=0.5)
+            t_symbol.join(timeout=0.5)
+            # One loop escaping must bring the other down too — otherwise the
+            # survivor keeps looping forever and the exit is never explained.
+            if any(out and isinstance(out[0], Exception) for out in (position_out, symbol_out)):
+                stop_event.set()
+    except KeyboardInterrupt:
+        stop_event.set()
+        t_position.join()
+        t_symbol.join()
+
+    for out in (position_out, symbol_out):
+        if out and isinstance(out[0], Exception):
+            raise out[0]
+    return (position_out[0] if position_out else None,
+            symbol_out[0] if symbol_out else None)
