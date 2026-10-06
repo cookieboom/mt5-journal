@@ -39,7 +39,7 @@ describe("format", () => {
     expect(price(100000.5)).toBe("100000.5");   // not %g's 100000
   });
 
-  it("dur: mirrors web/format.py (null=—, s/m/h ladder with zero-pad)", () => {
+  it("dur: null=— (, s/m/h ladder with zero-pad)", () => {
     expect(dur(null)).toBe("—");
     expect(dur(45)).toBe("45s");
     expect(dur(720)).toBe("12m");        // 12m exactly, seconds 0 → no s

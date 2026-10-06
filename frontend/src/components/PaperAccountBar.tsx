@@ -20,7 +20,7 @@ function Figure(props: { label: string; value: string; tone?: string }) {
 }
 
 /** Balance, equity and margin for one virtual account. Every money figure goes
- *  through `money()` — the same mirror of `web/format.py` the rest of the app
+ *  through `money()` — the same formatter the rest of the app
  *  uses — so an unknown reads as `n/a` and never as a wiped 0, and the USC unit
  *  is never implied (CLAUDE.md rule 4, and the account currency rule). */
 export default function PaperAccountBar(props: {

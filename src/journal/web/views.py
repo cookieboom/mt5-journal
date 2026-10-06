@@ -22,8 +22,8 @@ from ..annotate import get_annotation, list_tags
 from ..domain import risk
 from ..domain.commands import CommandError, build_request, validate
 from ..domain.risk import risk_amount
+from ..render.chart import _server_offset_s
 from ..store.db import now_ms, one_account_login
-from . import format as fmt
 
 # ~15s = 3× the 5s idle interval `journal live` polls at. A snapshot older than
 # this means the live process is probably not running; the view flags itself
@@ -55,24 +55,25 @@ def _retcode_name(code: int | None) -> str | None:
     return _RETCODE_NAMES.get(int(code), f"retcode {code}")
 
 
-def _opt_float(s: str | None) -> float | None:
-    """Parse an optional numeric form field, preserving rule 4 to the letter.
-
-    EMPTY / whitespace → `None` ("leave this level unchanged"). An explicit "0" or
-    "0.0" → `0.0` ("clear this level"). These are DIFFERENT and the difference must
-    survive: collapsing "" into 0.0 would silently clear a stop the human meant to
-    leave; coercing None→0 would do the same. So the two are never merged here.
-    """
-    if s is None or not s.strip():
-        return None
-    return float(s)
+def price(x: float | None) -> str:
+    """A price (SL/TP/entry/exit). `None` = unknown → "unknown" (rule 4: never 0).
+    A real 0.0 is a confirmed 'none set' and is shown as-is."""
+    if x is None:
+        return "unknown"
+    return f"{x:g}"
 
 
-def _level_word(level: float | None) -> str:
-    """Thin alias kept for callers here; the definition now lives in `format.py`
-    so templates (the audit log) and this intent string render a modify level the
-    SAME way — `None`='(tetap)', not 'unknown'."""
-    return fmt.level_word(level)
+def level_word(level: float | None) -> str:
+    """An SL/TP level ON A MODIFY COMMAND. Different rule-4 meaning from `price`:
+    here `None` = "leave unchanged" ('(tetap)'), NOT "unknown"; `0.0` = "clear"
+    ('(hapus)'); else the price. A modify carries an INTENT about a level, so a
+    blank field means the human chose not to touch it — showing "unknown" (as a
+    bare `price` filter does) would misreport that deliberate choice as ignorance."""
+    if level is None:
+        return "(tetap)"
+    if abs(level) < 1e-9:
+        return "(hapus)"
+    return price(level)
 
 
 def _intent_text(
@@ -85,7 +86,7 @@ def _intent_text(
     position_id = pos["position_id"]
     if kind == "modify_sltp":
         return (
-            f"Ubah SL→{_level_word(sl)}, TP→{_level_word(tp)} "
+            f"Ubah SL→{level_word(sl)}, TP→{level_word(tp)} "
             f"pada posisi {position_id} ({symbol})"
         )
     if kind == "close":
@@ -100,7 +101,7 @@ def _intent_text(
         direction = pos["direction"].upper()
         return (
             f"BUKA {direction} {volume} lot {symbol} di harga pasar, "
-            f"SL {_level_word(sl)}, TP {_level_word(tp)}"
+            f"SL {level_word(sl)}, TP {level_word(tp)}"
         )
     # add_volume — a hedging account opens a SECOND position, not a bigger one.
     return (
@@ -120,7 +121,7 @@ def account_header(conn: sqlite3.Connection) -> dict:
     return {
         "login": login,
         "currency": currency,
-        "offset_s": fmt.server_offset_s(conn, login),
+        "offset_s": _server_offset_s(conn, login),
     }
 
 

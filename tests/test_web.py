@@ -1,4 +1,4 @@
-"""M7 web dashboard — pure formatters (`web/format.py`) and the DB→context
+"""M7 web dashboard — the DB→context
 builders (`web/views.py`). Tested without an HTTP layer (no httpx/TestClient
 dependency): the builders are deliberately separated from the FastAPI routes so
 they can be exercised against a seeded DB, exactly as the analytics tests call
@@ -20,7 +20,6 @@ from journal import execute
 from journal.analytics.report import build_report
 from journal.store import live_store
 from journal.store.db import connect, now_ms
-from journal.web import format as fmt
 from journal.web import views
 
 _LOGIN = 0
@@ -67,66 +66,20 @@ def _seed_trade(
 # --------------------------------------------------------------- formatters
 
 
-def test_money_carries_currency_and_never_bare_dollar():
-    assert fmt.money(1250.0, "USC") == "1,250.00 USC"
-    assert fmt.money(-3.75, "USC", sign=True) == "-3.75 USC"
-    assert "$" not in fmt.money(9.92, "USC")
-
-
-def test_money_none_is_na_not_zero():
-    # rule 4: unknown must never render as a real 0.
-    assert fmt.money(None, "USC") == "n/a"
-    assert fmt.money(0.0, "USC") == "0.00 USC"  # a genuine zero still shows
-
-
-def test_pct_rmult_num_none():
-    assert fmt.pct(0.347) == "34.7%"
-    assert fmt.pct(None) == "n/a"
-    assert fmt.rmult(1.35) == "1.35R"
-    assert fmt.rmult(None) == "n/a"
-    assert fmt.num(1.41) == "1.41"
-    assert fmt.num(None) == "n/a"
-
-
-def test_gated_below_20_explains_itself():
-    # §9: a withheld average says WHY, with its n — never a silent blank/0.
-    assert fmt.gated(6, None) == "n/a (n=6, perlu ≥20)"
-    assert fmt.gated(25, 1.2, unit="R") == "1.20R  (n=25)"
-    assert fmt.is_gated(6, None) is True
-    assert fmt.is_gated(25, 1.2) is False
-
-
 def test_price_unknown_vs_zero():
     # rule 4 again, on SL/TP: NULL=unknown, 0.0=confirmed none.
-    assert fmt.price(None) == "unknown"
-    assert fmt.price(0.0) == "0"
-    assert fmt.price(3987.5) == "3987.5"
+    assert views.price(None) == "unknown"
+    assert views.price(0.0) == "0"
+    assert views.price(3987.5) == "3987.5"
 
 
 def test_level_word_on_a_modify_is_leave_not_unknown():
     # A modify carries INTENT about a level, so a blank field is a deliberate
     # "leave it", not ignorance — it must NOT read "unknown" (the audit log did).
-    assert fmt.level_word(None) == "(tetap)"     # leave unchanged
-    assert fmt.level_word(0.0) == "(hapus)"      # clear it
-    assert fmt.level_word(4085.0) == "4085"      # set it
-    assert fmt.level_word(None) != fmt.price(None)  # the whole point of the fix
-
-
-def test_wib_converts_and_handles_none():
-    # 2026-01-15 02:00 UTC + WIB(UTC+7) = 09:00 WIB, offset 0.
-    ms = _ms(2)
-    assert fmt.wib(ms, 0) == "2026-01-15 09:00 WIB"
-    assert fmt.wib(None) == "—"
-
-
-def test_dur_human():
-    assert fmt.dur(45) == "45s"
-    assert fmt.dur(90) == "1m30s"
-    assert fmt.dur(3720) == "1h02m"
-    assert fmt.dur(None) == "—"
-
-
-# --------------------------------------------------------------- builders
+    assert views.level_word(None) == "(tetap)"     # leave unchanged
+    assert views.level_word(0.0) == "(hapus)"      # clear it
+    assert views.level_word(4085.0) == "4085"      # set it
+    assert views.level_word(None) != views.price(None)  # the whole point of the fix
 
 
 def test_dashboard_context_agrees_with_build_report(conn):
@@ -347,15 +300,6 @@ def test_enqueue_inserts_exactly_one_pending_row_no_bridge(conn):
         "SELECT count(*) FROM trade_commands WHERE status='sent'"
     ).fetchone()[0]
     assert n_sent == 0
-
-
-def test_opt_float_preserves_rule4_distinction():
-    # "" ≠ "0": empty means leave unchanged (None); an explicit 0 means clear it.
-    assert views._opt_float("") is None
-    assert views._opt_float("   ") is None
-    assert views._opt_float("0") == 0.0
-    assert views._opt_float("0.0") == 0.0
-    assert views._opt_float("2000.5") == 2000.5
 
 
 def test_commands_context_maps_retcode_name_and_shows_error(conn):

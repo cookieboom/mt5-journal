@@ -1,4 +1,4 @@
-// Client mirror of web/format.py. Money always carries its currency (USC);
+// Display formatters. Money always carries its currency (USC);
 // null is "n/a", never 0 (rule 4). *_msc are broker SERVER time; WIB = UTC+7 at
 // display only (rule 3). R is unit-free.
 
@@ -42,7 +42,7 @@ export function isGated(n: number, avg: number | null): boolean {
 
 export function price(x: number | null): string {
   // rule 4: null = unknown, never 0. A genuine 0.0 ("none set") shows as "0".
-  // Deliberately shows FULL precision (String(x)), NOT web/format.py's `%g`
+  // Deliberately shows FULL precision (String(x)), not `%g`
   // 6-significant-figure truncation — a trading journal must not drop a price
   // digit (XAUUSDc tick size is 0.001, so 4010.123 must stay 4010.123). This is
   // an intentional, approved divergence from the legacy Jinja formatter.
@@ -51,7 +51,7 @@ export function price(x: number | null): string {
 }
 
 export function dur(seconds: number | null): string {
-  // Mirrors web/format.py:dur. null = unknown → "—".
+  // null = unknown → "—".
   if (seconds === null || seconds === undefined) return "—";
   if (seconds < 60) return `${seconds}s`;
   const m = Math.floor(seconds / 60);
@@ -64,7 +64,6 @@ export function dur(seconds: number | null): string {
 
 export function gatedR(n: number, avg: number | null): string {
   // §9 sample-size honesty for an R statistic: when the average was withheld
-  // (null under n<20) say why with the count; otherwise the R value. The one
-  // R-gating formatter — mirrors web/format.py:gated for R. rule 4 / docs §9.
+  // (null under n<20) say why with the count; otherwise the R value.
   return isGated(n, avg) ? `n=${n} (perlu ≥20)` : rmult(avg);
 }

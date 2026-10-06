@@ -22,13 +22,6 @@ export async function getSession(id: number): Promise<SessionView | null> {
   return (await r.json()) as SessionView;
 }
 
-export async function listSessions(status?: "active" | "ended"): Promise<TrainingSession[]> {
-  const q = status ? `?status=${status}` : "";
-  const r = await fetch(`/api/training/sessions${q}`);
-  if (!r.ok) throw new Error(`HTTP ${r.status}`);
-  return (await r.json()) as TrainingSession[];
-}
-
 export async function deleteSession(id: number): Promise<boolean> {
   const r = await fetch(`/api/training/sessions/${id}`, { method: "DELETE" });
   return r.ok;
@@ -54,10 +47,4 @@ export function modifySltp(pid: number, body: { sl?: number; tp?: number }) {
 
 export function endSession(id: number) {
   return postJson<SessionView>(`/api/training/sessions/${id}/end`, {});
-}
-
-export async function getSummary(): Promise<TrainingSummary> {
-  const r = await fetch("/api/training/summary");
-  if (!r.ok) throw new Error(`HTTP ${r.status}`);
-  return (await r.json()) as TrainingSummary;
 }
