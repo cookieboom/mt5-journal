@@ -16,10 +16,7 @@ import { useLiveCommand } from "../hooks/useLiveCommand";
 import { useRiskSizing } from "../hooks/useRiskSizing";
 import { usePaperAccount } from "../hooks/usePaperAccount";
 import { usePaperPrefs } from "../hooks/usePaperPrefs";
-import {
-  cancelPending, closeAll, closePosition, listAccounts, modifySltp,
-  reversePosition,
-} from "../lib/paperApi";
+import { listAccounts, modifySltp } from "../lib/paperApi";
 import type { PaperAccount } from "../lib/types";
 import SltpConfirmDialog from "../components/SltpConfirmDialog";
 import ConfirmModal from "../components/ConfirmModal";
@@ -34,10 +31,10 @@ import ReplayControls from "../components/ReplayControls";
 import ReplayPositions from "../components/ReplayPositions";
 import ReplaySummary from "../components/ReplaySummary";
 import RiskSizePanel from "../components/RiskSizePanel";
-import PaperAccountBar from "../components/PaperAccountBar";
 import PaperAccountDialog from "../components/PaperAccountDialog";
-import PaperOrderPanel from "../components/PaperOrderPanel";
-import PaperPositions from "../components/PaperPositions";
+import PaperSidePanel from "../components/PaperSidePanel";
+import ScenarioEvalOverlay from "../components/ScenarioEvalOverlay";
+import { ChartLoadBanner, ChartPlaceholder } from "../components/ChartLoadState";
 import Sheet from "../components/Sheet";
 import { useChartData } from "../hooks/useChartData";
 import { useDrawings } from "../hooks/useDrawings";
@@ -308,37 +305,13 @@ export default function Chart() {
   // One definition, two containers: the lg column and the sheet below it. Only
   // one of them renders it at a time — RiskSizePanel must not exist twice.
   const paperPanel = (
-    <>
-      {paper.view ? (
-        <>
-          <PaperAccountBar header={paper.view.header} name={paper.view.account.name}
-                           live={liveStatus?.live ?? false} />
-          <PaperOrderPanel accountId={paper.view.account.id} symbol={symbol}
-                           lastPrice={currentClose} onPlaced={paper.refresh} />
-          <PaperPositions
-            view={paper.view}
-            chartSymbol={symbol}
-            onClose={(id) => void closePosition(id).then(paper.refresh)}
-            onPartial={(id) => {
-              const held = paper.view?.open.find((p) => p.id === id)?.volume ?? 0;
-              const half = Math.round((held / 2) * 100) / 100;
-              if (half > 0) void closePosition(id, half).then(paper.refresh);
-            }}
-            onReverse={(id) => void reversePosition(id).then(paper.refresh)}
-            onCancel={(id) => void cancelPending(id).then(paper.refresh)}
-            onCloseAll={() => void closeAll(paper.view!.account.id).then(paper.refresh)}
-          />
-        </>
-      ) : (
-        <div className="glass p-3 text-body text-muted">
-          {paper.error ?? "Belum ada akun paper dipilih."}
-        </div>
-      )}
-      <button className="glass px-3 py-1 text-body text-muted hover:text-ink"
-              onClick={() => { loadAccounts(); setAccountsOpen(true); }}>
-        Akun paper…
-      </button>
-    </>
+    <PaperSidePanel
+      paper={paper}
+      symbol={symbol}
+      lastPrice={currentClose}
+      live={liveStatus?.live ?? false}
+      onAccounts={() => { loadAccounts(); setAccountsOpen(true); }}
+    />
   );
 
   const sidePanel = paperMode ? paperPanel : replayOpen ? (
@@ -514,37 +487,12 @@ export default function Chart() {
               drawings={drawingsProp}
             />
           ) : (
-            <div className="glass h-full flex items-center justify-center text-muted text-body">
-              {data.status === "loading" || data.status === "polling" ? (
-                <span>Memuat data {symbol} {tf}…</span>
-              ) : data.status === "gaveup" ? (
-                <div className="text-center">
-                  <div>Belum ada data ter-cache untuk rentang ini.</div>
-                  <div className="mt-1">Jalankan <code>journal live</code> untuk mengisi cache.</div>
-                  <button onClick={data.retry} className="glass mt-2 px-3 py-1 text-cyan">Coba lagi</button>
-                </div>
-              ) : (
-                <span className="text-neg">Gagal memuat: {data.error}</span>
-              )}
-            </div>
+            <ChartPlaceholder status={data.status} error={data.error} onRetry={data.retry}
+                              symbol={symbol} tf={tf} />
           )}
 
           {/* Non-blocking banners while bars are already shown */}
-          {hasBars && (data.status === "loading" || data.status === "polling") && (
-            <div className="glass absolute top-2 left-2 px-2 py-1 text-meta text-muted">memuat data…</div>
-          )}
-          {hasBars && data.status === "gaveup" && (
-            <div className="glass absolute top-2 left-2 px-2 py-1 text-meta text-muted flex items-center gap-2">
-              <span>Data belum lengkap — jalankan <code>journal live</code>.</span>
-              <button onClick={data.retry} className="text-cyan">Coba lagi</button>
-            </div>
-          )}
-          {hasBars && data.status === "error" && (
-            <div className="glass absolute top-2 left-2 px-2 py-1 text-meta text-neg flex items-center gap-2">
-              <span>Gagal memuat: {data.error}</span>
-              <button onClick={data.retry} className="text-cyan">Coba lagi</button>
-            </div>
-          )}
+          {hasBars && <ChartLoadBanner status={data.status} error={data.error} onRetry={data.retry} />}
 
           {!replayOpen && hasBars && (() => {
             const coverageWindow: [number, number] = [
@@ -565,21 +513,7 @@ export default function Chart() {
             );
           })()}
 
-          {comp.evalPause && (
-            <div className="absolute inset-0 bg-black/80 flex flex-col items-center justify-center z-50 text-center">
-               {comp.evalPause.isSkip ? (
-                 <h2 className="text-display font-bold text-muted">Mencari Skenario Baru...</h2>
-               ) : (
-                 <>
-                   <h2 className="text-display font-bold mb-2">Evaluasi Skenario {comp.round}</h2>
-                   <div className={`text-4xl font-bold ${comp.evalPause.pnl >= 0 ? 'text-up' : 'text-down'}`}>
-                     {comp.evalPause.pnl > 0 ? '+' : ''}{comp.evalPause.pnl.toFixed(2)}R
-                   </div>
-                   <div className="text-muted mt-4">Bersiap untuk skenario berikutnya...</div>
-                 </>
-               )}
-            </div>
-          )}
+          {comp.evalPause && <ScenarioEvalOverlay pause={comp.evalPause} round={comp.round} />}
         </div>
         <aside className="w-[240px] shrink-0 hidden lg:flex lg:flex-col gap-3 overflow-y-auto">
           {!panelOpen && sidePanel}
