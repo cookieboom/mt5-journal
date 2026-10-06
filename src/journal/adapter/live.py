@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from siliconmetatrader5 import MetaTrader5  # noqa: the one permitted import
+from siliconmetatrader5 import MetaTrader5  # the one permitted import
 
 from .base import (
     Account,

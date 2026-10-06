@@ -471,9 +471,9 @@ def test_connect_refuses_a_store_newer_than_this_code(tmp_path):
                  (SCHEMA_VERSION + 1,))
     conn.commit()
     conn.close()
-    for migrate in (True, False):
+    for apply in (True, False):
         with pytest.raises(RuntimeError, match="newer than this code"):
-            connect(db, migrate=migrate)
+            connect(db, migrate=apply)
 
 
 def test_the_web_migrates_once_at_startup_not_per_request(tmp_path, monkeypatch):

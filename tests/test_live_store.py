@@ -1,4 +1,3 @@
-import sqlite3
 import pytest
 from journal.store.db import connect
 from journal.store import live_store as ls

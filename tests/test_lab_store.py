@@ -2,7 +2,6 @@
 must leave the rows intact and produce a clear retrain signal, not a crash."""
 from __future__ import annotations
 
-import json
 
 import pytest
 

@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-import MetaTrader5 as mt5  # noqa: the other permitted import (see module docstring)
+import MetaTrader5 as mt5  # the other permitted import (see module docstring)
 
 from ._mt5_common import _build, _from_bridge_result, _to_bridge_request
 from .base import (

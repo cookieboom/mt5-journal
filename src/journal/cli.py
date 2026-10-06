@@ -434,7 +434,7 @@ def backup(
         s = snapshot(db, dest=dest, keep=keep)
     except BackupError as e:
         typer.echo(f"== backup ==\nsource:    {db}\nERROR:     {e}")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
     typer.echo("== backup ==")
     typer.echo(f"source:    {db} ({Path(db).stat().st_size / 1e6:.1f} MB)")
@@ -497,7 +497,7 @@ def restore(
         r = do_restore(db, source)
     except BackupError as e:
         typer.echo(f"ERROR:     {e}")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
     if r.replaced is not None:
         typer.echo(f"kept:      {r.replaced.name}   # the store that was there; delete "
@@ -636,7 +636,7 @@ def chart(
             )
         except (TradeNotFoundError, NoCandlesError) as e:
             typer.echo(str(e))
-            raise typer.Exit(code=1)
+            raise typer.Exit(code=1) from None
     finally:
         conn.close()
 
@@ -861,7 +861,7 @@ def live(
                 "(satu proses saja yang boleh memegang bridge). `journal serve` boleh "
                 "jalan bersamaan."
             )
-            raise typer.Exit(1)
+            raise typer.Exit(1) from None
         raise
     finally:
         conn_positions.close()
@@ -1006,7 +1006,7 @@ def _parse_iso_week(s: str) -> tuple[int, int]:
         dt = datetime.strptime(f"{s}-1", "%G-W%V-%u")  # -1 = Monday of that ISO week
     except ValueError as e:
         typer.echo(f"--week must be ISO 'YYYY-Www' (e.g. 2026-W28): {e}")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
     y, w, _ = dt.isocalendar()
     return y, w
 
@@ -1155,7 +1155,7 @@ def _one_account_login(conn: sqlite3.Connection) -> int:
         return one_account_login(conn)
     except RuntimeError as e:
         typer.echo(str(e))
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
 
 def _parse_effective(s: str) -> int:
@@ -1164,7 +1164,7 @@ def _parse_effective(s: str) -> int:
         dt = datetime.strptime(s, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
     except ValueError as e:
         typer.echo(f"--effective must be 'YYYY-MM-DD HH:MM:SS' (UTC): {e}")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
     return int(dt.timestamp() * 1000)
 
 
@@ -1268,7 +1268,7 @@ def annotate(
             )
         except AnnotateError as e:
             typer.echo(str(e))
-            raise typer.Exit(code=1)
+            raise typer.Exit(code=1) from None
     finally:
         conn.close()
 
@@ -1305,7 +1305,7 @@ def tag_add(
             pairs = add_tag(conn, position_id, tag)
         except AnnotateError as e:
             typer.echo(str(e))
-            raise typer.Exit(code=1)
+            raise typer.Exit(code=1) from None
     finally:
         conn.close()
     typer.echo(f"== tag add: {position_id} ==")

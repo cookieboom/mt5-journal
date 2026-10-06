@@ -174,7 +174,7 @@ def _score(est, stage: str, x, y, r_net, cfg: TrainConfig) -> dict:
 
 def _confusion(y_true, y_pred) -> dict:
     out: dict[str, dict[str, int]] = {a: {b: 0 for b in REGIMES} for a in REGIMES}
-    for a, b in zip(y_true, y_pred):
+    for a, b in zip(y_true, y_pred, strict=True):
         if a in out and b in out[a]:
             out[a][b] += 1
     return out

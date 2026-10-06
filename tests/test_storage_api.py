@@ -196,9 +196,7 @@ def test_storage_candles_fill_gaps(client: TestClient, db_path: Path):
 
 def test_storage_candles_prune(client: TestClient, db_path: Path):
     conn = connect(db_path)
-    # Insert old candle (older than 180 days, e.g. 200 days ago)
-    old_time = 1000
-    # Insert newer candle (e.g. now_ms - 1 day)
+    # The fixture already holds an old XAUUSDc bar; add one from yesterday.
     from journal.store.db import now_ms
     new_time = now_ms() - 86400 * 1000
 

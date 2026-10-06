@@ -365,8 +365,8 @@ def size_order(
     if volume <= 1e-9:
         vmin = spec["volume_min"]
         out["error"] = (
-            f"Budget risiko terlalu kecil untuk jarak SL ini — ukuran lot "
-            f"dibulatkan ke bawah menjadi 0"
+            "Budget risiko terlalu kecil untuk jarak SL ini — ukuran lot "
+            "dibulatkan ke bawah menjadi 0"
             + (f" (di bawah volume minimum broker {vmin:g} lot)." if vmin else ".")
         )
         return out

@@ -72,7 +72,7 @@ def save_models(conn: sqlite3.Connection, *, symbol: str, timeframe: str,
         # Activate the LightGBM row of each group by default; the UI can switch
         # to logreg afterwards. One transaction per group keeps the partial
         # unique index satisfied at every commit point.
-        for model, model_id in zip(models, ids):
+        for model, model_id in zip(models, ids, strict=True):
             if model.kind == "lgbm":
                 activate(conn, model_id)
     return ids

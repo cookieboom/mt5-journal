@@ -41,10 +41,9 @@ wider bar.
 
 from __future__ import annotations
 
-import json
 import logging
 import sqlite3
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from ..adapter.base import Deal, DealEntry, DealType, Order
 from .trade_window import choose_timeframe, window_for

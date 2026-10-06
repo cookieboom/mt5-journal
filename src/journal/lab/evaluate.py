@@ -97,7 +97,7 @@ def _auc(y_true: np.ndarray, proba: np.ndarray) -> float | None:
 def _calibration(y_true: np.ndarray, proba: np.ndarray) -> list[dict]:
     edges = np.linspace(0.0, 1.0, _CALIBRATION_BUCKETS + 1)
     out: list[dict] = []
-    for lo, hi in zip(edges[:-1], edges[1:]):
+    for lo, hi in zip(edges[:-1], edges[1:], strict=True):
         mask = (proba >= lo) & (proba < hi if hi < 1.0 else proba <= hi)
         n = int(mask.sum())
         if n == 0:

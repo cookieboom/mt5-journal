@@ -9,7 +9,6 @@ error (not a raw sqlite IntegrityError) on a bad confidence.
 
 from __future__ import annotations
 
-import sqlite3
 
 import pytest
 

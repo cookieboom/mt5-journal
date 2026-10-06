@@ -18,6 +18,8 @@ Nothing here talks to a bridge. Nothing here may ever talk to a bridge.
 
 from __future__ import annotations
 
+import dataclasses
+
 import pytest
 
 from journal.adapter.base import (
@@ -160,7 +162,7 @@ def test_trade_request_carries_our_enums_not_mt5_ints():
 def test_trade_request_is_frozen():
     """An intent must not be mutated between validation and sending."""
     req = TradeRequest(action=TradeAction.DEAL, symbol="XAUUSDc")
-    with pytest.raises(Exception):
+    with pytest.raises(dataclasses.FrozenInstanceError):
         req.symbol = "BTCUSDc"
 
 

@@ -46,7 +46,6 @@ def test_connection_usable_from_another_thread(tmp_path):
 def test_migration_009_allows_an_open_command(tmp_path):
     """The audit trail of real orders must survive a table rebuild, and the new
     shape must accept exactly the rows the open path needs."""
-    import sqlite3
     from journal.store.db import SCHEMA_VERSION, connect, current_version
 
     db = tmp_path / "m009.db"

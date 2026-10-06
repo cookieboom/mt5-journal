@@ -36,6 +36,9 @@ jobs:
       # drifted apart, which is the one dependency question this project has
       # actually had ("is httpx really declared?") and had to answer by hand.
       - run: uv sync --locked
+      # Bug-finding rules only (pyflakes, pycodestyle errors, bugbear); the
+      # rule set is pinned in pyproject.toml so no machine config can change it.
+      - run: uv run ruff check src tests scripts
       - run: uv run pytest -q
 
   frontend:
