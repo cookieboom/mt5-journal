@@ -18,7 +18,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Iterator
 
-from fastapi import Body, Depends, FastAPI, HTTPException, Query
+from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
@@ -34,6 +37,7 @@ from . import api
 from . import lab_api
 from . import local_only
 from . import paper
+from . import schemas
 from . import training
 
 # URL path segment → command kind. The URL uses hyphens; the kind uses
@@ -104,6 +108,22 @@ def create_app(db_path: str | None = None, cache_dir: str | None = None) -> Fast
 
     app = FastAPI(title="mt5-journal")
     app.middleware("http")(local_only.guard)
+
+    # The SPA reads `error` off every failed response (`postJson`); FastAPI's
+    # own errors carry only `detail`, so they surfaced as a bare "HTTP 422".
+    @app.exception_handler(RequestValidationError)
+    async def _invalid_body(_request: Request, exc: RequestValidationError):
+        errors = exc.errors()
+        msg = "; ".join(
+            f"{'.'.join(str(p) for p in e['loc'] if p != 'body') or 'body'}: {e['msg']}"
+            for e in errors)
+        return JSONResponse({"error": msg, "detail": jsonable_encoder(errors)},
+                            status_code=422)
+
+    @app.exception_handler(StarletteHTTPException)  # FastAPI's subclasses it
+    async def _http_error(_request: Request, exc: StarletteHTTPException):
+        return JSONResponse({"error": str(exc.detail), "detail": exc.detail},
+                            status_code=exc.status_code, headers=exc.headers)
 
     def get_conn() -> Iterator[sqlite3.Connection]:
         conn = connect(db_path)
@@ -182,7 +202,7 @@ def create_app(db_path: str | None = None, cache_dir: str | None = None) -> Fast
 
     @app.put("/api/trades/png-prefs")
     def api_put_trade_png_prefs(
-        prefs=Body(...), conn: sqlite3.Connection = Depends(get_conn),
+        prefs: dict = Body(...), conn: sqlite3.Connection = Depends(get_conn),
     ):
         """Upsert the trade-PNG settings blob under key 'trade_png'."""
         ts = prefs_store.set_trade_png_prefs(conn, prefs)
@@ -260,21 +280,20 @@ def create_app(db_path: str | None = None, cache_dir: str | None = None) -> Fast
         return JSONResponse(api.coverage_payload(conn, symbol, timeframe, from_ms, to_ms))
 
     @app.post("/api/watch")
-    def api_watch(body=Body(...), conn: sqlite3.Connection = Depends(get_conn)):
+    def api_watch(body: schemas.WatchRequest, conn: sqlite3.Connection = Depends(get_conn)):
         """Web upserts a demand-driven live watch; `journal live` serves it."""
         try:
-            return JSONResponse(api.register_watch(conn, body["symbol"], body["timeframe"]))
-        except (KeyError, ValueError) as e:
+            return JSONResponse(api.register_watch(conn, body.symbol, body.timeframe))
+        except ValueError as e:
             return JSONResponse({"error": str(e)}, status_code=400)
 
     @app.post("/api/backfill")
-    def api_backfill(body=Body(...), conn: sqlite3.Connection = Depends(get_conn)):
+    def api_backfill(body: schemas.RangeRequest, conn: sqlite3.Connection = Depends(get_conn)):
         try:
             return JSONResponse(api.backfill(
-                conn, body["symbol"], body["timeframe"],
-                int(body["from_ms"]), int(body["to_ms"]),
+                conn, body.symbol, body.timeframe, body.from_ms, body.to_ms,
             ))
-        except (KeyError, ValueError) as e:
+        except ValueError as e:
             return JSONResponse({"error": str(e)}, status_code=400)
 
     @app.get("/api/chart/prefs")
@@ -286,7 +305,7 @@ def create_app(db_path: str | None = None, cache_dir: str | None = None) -> Fast
 
     @app.put("/api/chart/prefs")
     def api_put_chart_prefs(
-        prefs=Body(...),
+        prefs: dict = Body(...),
         conn: sqlite3.Connection = Depends(get_conn),
     ):
         """Upsert the chart settings blob under key 'chart'. The server stamps
@@ -303,7 +322,7 @@ def create_app(db_path: str | None = None, cache_dir: str | None = None) -> Fast
 
     @app.put("/api/replay/prefs")
     def api_put_replay_prefs(
-        prefs=Body(...),
+        prefs: dict = Body(...),
         conn: sqlite3.Connection = Depends(get_conn),
     ):
         """Upsert the replay-config prefs blob under key 'replay'. The server
@@ -437,7 +456,7 @@ def create_app(db_path: str | None = None, cache_dir: str | None = None) -> Fast
 
     @app.put("/api/risk-prefs")
     def api_put_risk_prefs(
-        prefs=Body(...), conn: sqlite3.Connection = Depends(get_conn),
+        prefs: dict = Body(...), conn: sqlite3.Connection = Depends(get_conn),
     ):
         ts = prefs_store.set_risk_prefs(conn, prefs)
         return JSONResponse({"ok": True, "updated_ms": ts})
@@ -800,8 +819,9 @@ def create_app(db_path: str | None = None, cache_dir: str | None = None) -> Fast
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.post("/api/lab/train")
-    def api_lab_train(body=Body(...), conn: sqlite3.Connection = Depends(get_conn)):
-        return _lab(lab_api.train, conn, body, cache_dir)
+    def api_lab_train(body: schemas.LabTrainRequest,
+                      conn: sqlite3.Connection = Depends(get_conn)):
+        return _lab(lab_api.train, conn, body.model_dump(), cache_dir)
 
     @app.get("/api/lab/models")
     def api_lab_models(symbol: str | None = None, timeframe: str | None = None,
@@ -961,34 +981,23 @@ def create_app(db_path: str | None = None, cache_dir: str | None = None) -> Fast
 
     @app.post("/api/storage/candles/fetch")
     def api_storage_candles_fetch(
-        body=Body(...),
+        body: schemas.StorageFetchRequest,
         conn: sqlite3.Connection = Depends(get_conn),
     ):
         from ..store import candle_queue
 
-        symbol = body.get("symbol")
-        timeframe = body.get("timeframe") or body.get("tf") or "M1"
-        from_ms = int(body["from_ms"])
-        to_ms = int(body["to_ms"])
-
-        if not symbol:
-            return JSONResponse({"error": "symbol required"}, status_code=400)
-
-        rid = candle_queue.request_candles(conn, symbol, timeframe, from_ms, to_ms)
+        rid = candle_queue.request_candles(
+            conn, body.symbol, body.timeframe, body.from_ms, body.to_ms)
         return JSONResponse({"status": "queued", "request_id": rid})
 
     @app.post("/api/storage/candles/fill-gaps")
     def api_storage_candles_fill_gaps(
-        body=Body(...),
+        body: schemas.StorageFillGapsRequest,
         conn: sqlite3.Connection = Depends(get_conn),
     ):
         from ..store import candle_queue
 
-        symbol = body.get("symbol")
-        timeframe = body.get("timeframe") or body.get("tf") or "M1"
-
-        if not symbol:
-            return JSONResponse({"error": "symbol required"}, status_code=400)
+        symbol, timeframe = body.symbol, body.timeframe
 
         covered = cs.read_coverage(conn, symbol, timeframe)
         if not covered:
@@ -1008,13 +1017,13 @@ def create_app(db_path: str | None = None, cache_dir: str | None = None) -> Fast
 
     @app.post("/api/storage/candles/prune")
     def api_storage_candles_prune(
-        body=Body(...),
+        body: schemas.StoragePruneRequest,
         conn: sqlite3.Connection = Depends(get_conn),
     ):
         from ..store.db import now_ms
 
-        symbol = body.get("symbol")
-        older_than_days = int(body.get("older_than_days", 180))
+        symbol = body.symbol
+        older_than_days = body.older_than_days
         cutoff_ms = now_ms() - (older_than_days * 86400 * 1000)
 
         if symbol and symbol != "all":
