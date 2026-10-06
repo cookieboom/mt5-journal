@@ -48,7 +48,7 @@ def db_path(tmp_path) -> Path:
 @pytest.fixture
 def client(db_path: Path) -> TestClient:
     app = create_app(str(db_path))
-    return TestClient(app)
+    return TestClient(app, base_url="http://127.0.0.1")
 
 
 def test_storage_overview(client: TestClient, db_path: Path):

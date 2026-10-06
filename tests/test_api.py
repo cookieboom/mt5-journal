@@ -506,7 +506,7 @@ def test_training_routes_smoke(tmp_path):
     from fastapi.testclient import TestClient
     from journal.web.app import create_app
     db = tmp_path / "journal.db"
-    client = TestClient(create_app(str(db)))
+    client = TestClient(create_app(str(db)), base_url="http://127.0.0.1")
     r = client.post("/api/training/sessions", json={
         "symbol": "XAUUSDc", "timeframe": "M15",
         "range_start_msc": 1000, "range_end_msc": 9000, "cursor_start_msc": 1000,

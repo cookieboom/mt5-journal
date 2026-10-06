@@ -42,7 +42,8 @@ def client(db_path, tmp_path) -> TestClient:
     # cache_dir isolated under tmp_path, not the repo's real cache/models/ —
     # training writes real .joblib artifacts, and the sibling lab test files
     # (test_lab_store.py, test_lab_score.py) already isolate the same way.
-    return TestClient(create_app(str(db_path), cache_dir=str(tmp_path / "cache")))
+    return TestClient(create_app(str(db_path), cache_dir=str(tmp_path / "cache")),
+                      base_url="http://127.0.0.1")
 
 
 def _seed_candles(conn, n=1500, symbol="XAUUSDc", timeframe="H1"):

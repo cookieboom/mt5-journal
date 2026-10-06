@@ -403,7 +403,7 @@ def test_dashboard_context_carries_live_and_equity(conn):
 
 
 def test_is_loopback():
-    from journal.cli import _is_loopback
+    from journal.web.local_only import is_loopback as _is_loopback
 
     assert _is_loopback("127.0.0.1") is True
     assert _is_loopback("::1") is True

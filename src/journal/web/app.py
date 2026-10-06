@@ -32,6 +32,7 @@ from ..store.db import connect
 from . import views
 from . import api
 from . import lab_api
+from . import local_only
 from . import paper
 from . import training
 
@@ -102,6 +103,7 @@ def create_app(db_path: str | None = None, cache_dir: str | None = None) -> Fast
     cache_dir = cache_dir or os.environ.get("JOURNAL_CACHE_DIR", _CACHE_DIR)
 
     app = FastAPI(title="mt5-journal")
+    app.middleware("http")(local_only.guard)
 
     def get_conn() -> Iterator[sqlite3.Connection]:
         conn = connect(db_path)
