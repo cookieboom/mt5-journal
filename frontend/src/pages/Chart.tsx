@@ -5,9 +5,10 @@ import { clampBars, parseSelection } from "../lib/chartPrefs";
 import { useChartPrefs } from "../hooks/useChartPrefs";
 import { mergeForming, staleEntryReason, type Sym, type Timeframe, timeframeMs } from "../lib/candles";
 import type { HoverBar, LiveData } from "../lib/types";
-import { clipToCursor, outcomeCounts, summarize, type TrainingPosition, type TrainingSummary } from "../lib/replay";
+import { clipToCursor, outcomeCounts, type TrainingSummary } from "../lib/replay";
 import { useReplaySession, type ReplayConfig } from "../hooks/useReplaySession";
 import { useReplayPrefs } from "../hooks/useReplayPrefs";
+import { useCompetitiveReplay } from "../hooks/useCompetitiveReplay";
 import type { ReplayFormPrefs } from "../lib/replayPrefs";
 import { useLiveStatus } from "../hooks/useLiveStatus";
 import { useLiveForming } from "../hooks/useLiveForming";
@@ -98,13 +99,6 @@ export default function Chart() {
   const drawingsReady = !replayOpen || replay.session != null;
   const drawings = useDrawings(symbol, drawingSession, drawingsReady);
 
-  const [compRound, setCompRound] = useState(1);
-  // Closed positions of the FINISHED scenarios. Each round is its own backend
-  // session, so without this the stats card would reset every scenario.
-  const [compClosed, setCompClosed] = useState<TrainingPosition[]>([]);
-  const [evalPause, setEvalPause] = useState<{ pnl: number; isSkip: boolean } | null>(null);
-  const prevPosCount = useRef(0);
-
   // Clamp at consumption: drawer inputs can transiently hold an out-of-range
   // or empty (Number("")===0) value mid-typing, which must never reach the hook.
   const bars = clampBars(settings);
@@ -134,7 +128,7 @@ export default function Chart() {
   const exitReplay = async () => {
     await replay.discard();
     setReplayOpen(false); setConfigOpen(false);
-    setEvalPause(null);
+    comp.reset();
     setParams(new URLSearchParams(snapshotRef.current), { replace: true }); // restore prior view
   };
   const onStart = (cfg: ReplayConfig, form: ReplayFormPrefs) => {
@@ -142,68 +136,11 @@ export default function Chart() {
     // Point the chart at the replay symbol/tf so CandleChart fetches the right series.
     setParams(new URLSearchParams({ symbol: cfg.symbol, tf: cfg.timeframe }), { replace: true });
     replayPrefs.save(form);   // remember these specs for next time
-    setCompRound(1);
-    setCompClosed([]);
-    setEvalPause(null);
-    prevPosCount.current = 0;
+    comp.reset();
     replay.start(cfg);
   };
 
-  const nextCompetitiveRound = useCallback((isSkip = false) => {
-    const prefs = replayPrefs.prefs;
-    if (!isSkip && prefs.competitiveRounds > 0 && compRound >= prefs.competitiveRounds) {
-       exitReplay();
-       return;
-    }
-    
-    // Carry this scenario's result into the run total before the session is
-    // replaced (position ids are globally unique, so no dedupe needed).
-    const done = replay.positions.filter((p) => p.status === "closed");
-    if (done.length) setCompClosed((prev) => [...prev, ...done]);
-
-    // Generate new random date
-    const endMs = Date.now() - 14 * 24 * 3600 * 1000;
-    const startMs = Date.now() - 2 * 365 * 24 * 3600 * 1000;
-    const cursor = Math.floor(startMs + Math.random() * (endMs - startMs));
-    const range_start_msc = cursor - timeframeMs(prefs.timeframe) * prefs.historyBars;
-    
-    const newCfg: ReplayConfig = {
-      symbol: prefs.symbol,
-      timeframe: prefs.timeframe,
-      range_start_msc,
-      range_end_msc: Date.now(),
-      cursor_start_msc: cursor,
-      speed: prefs.speed,
-    };
-    
-    if (!isSkip) setCompRound(r => r + 1);
-    
-    if (isSkip) {
-       setEvalPause({ pnl: 0, isSkip: true });
-       setTimeout(() => {
-         setEvalPause(null);
-         prevPosCount.current = 0;
-         replay.start(newCfg);
-       }, 1000);
-    } else {
-       setEvalPause(null);
-       prevPosCount.current = 0;
-       replay.start(newCfg);
-    }
-  }, [replayPrefs.prefs, compRound, replay, exitReplay]);
-
-  useEffect(() => {
-    if (!replayOpen || !replayPrefs.prefs.competitiveMode) return;
-    const count = replay.positions.filter((p) => p.status !== "closed").length;
-    if (prevPosCount.current > 0 && count === 0 && !evalPause) {
-      // all positions closed, trigger evaluation pause
-      setEvalPause({ pnl: replay.sessionSummary?.total_r || 0, isSkip: false });
-      setTimeout(() => {
-        nextCompetitiveRound();
-      }, 3000);
-    }
-    prevPosCount.current = count;
-  }, [replay.positions, replayOpen, replayPrefs.prefs.competitiveMode, evalPause, nextCompetitiveRound, replay.sessionSummary]);
+  const comp = useCompetitiveReplay(replay, replayPrefs.prefs, replayOpen, exitReplay);
 
   const cursor = replay.cursorMsc;
   // Keep loaded bars ahead of the advancing reveal cursor (no-op once covered).
@@ -363,13 +300,10 @@ export default function Chart() {
   const { data: career } = useApi<TrainingSummary>(
     "/api/training/summary", replayOpen && !competitive ? 3000 : undefined,
   );
+  const replayCounts = useMemo(() => outcomeCounts(replay.positions), [replay.positions]);
   // Competitive: stats span the whole run (finished scenarios + current one).
-  const statPositions = useMemo(
-    () => (competitive ? [...compClosed, ...replay.positions] : replay.positions),
-    [competitive, compClosed, replay.positions],
-  );
-  const sessionCounts = useMemo(() => outcomeCounts(statPositions), [statPositions]);
-  const sessionSummary = competitive ? summarize(statPositions) : replay.sessionSummary;
+  const sessionCounts = competitive ? comp.counts : replayCounts;
+  const sessionSummary = competitive ? comp.summary : replay.sessionSummary;
 
   // One definition, two containers: the lg column and the sheet below it. Only
   // one of them renders it at a time — RiskSizePanel must not exist twice.
@@ -436,7 +370,7 @@ export default function Chart() {
           is the score that matters there. */}
       {!competitive && <ReplaySummary title="Kumulatif" s={career ?? null} />}
       <ReplaySummary
-        title={competitive ? `Kompetitif · Skenario ${compRound}` : "Sesi ini"}
+        title={competitive ? `Kompetitif · Skenario ${comp.round}` : "Sesi ini"}
         s={sessionSummary}
         counts={sessionCounts}
       />
@@ -537,9 +471,9 @@ export default function Chart() {
           {replayPrefs.prefs.competitiveMode && (
             <div className="flex items-center gap-4 text-body font-semibold">
                <span className="text-warn">
-                 Skenario {compRound} {replayPrefs.prefs.competitiveRounds > 0 ? `/ ${replayPrefs.prefs.competitiveRounds}` : ''}
+                 Skenario {comp.round} {replayPrefs.prefs.competitiveRounds > 0 ? `/ ${replayPrefs.prefs.competitiveRounds}` : ''}
                </span>
-               <button className="glass px-3 py-1 text-cyan hover:bg-cyan/10" onClick={() => nextCompetitiveRound(true)}>
+               <button className="glass px-3 py-1 text-cyan hover:bg-cyan/10" onClick={() => comp.next(true)}>
                  Skip ⏭
                </button>
             </div>
@@ -631,15 +565,15 @@ export default function Chart() {
             );
           })()}
 
-          {evalPause && (
+          {comp.evalPause && (
             <div className="absolute inset-0 bg-black/80 flex flex-col items-center justify-center z-50 text-center">
-               {evalPause.isSkip ? (
+               {comp.evalPause.isSkip ? (
                  <h2 className="text-display font-bold text-muted">Mencari Skenario Baru...</h2>
                ) : (
                  <>
-                   <h2 className="text-display font-bold mb-2">Evaluasi Skenario {compRound}</h2>
-                   <div className={`text-4xl font-bold ${evalPause.pnl >= 0 ? 'text-up' : 'text-down'}`}>
-                     {evalPause.pnl > 0 ? '+' : ''}{evalPause.pnl.toFixed(2)}R
+                   <h2 className="text-display font-bold mb-2">Evaluasi Skenario {comp.round}</h2>
+                   <div className={`text-4xl font-bold ${comp.evalPause.pnl >= 0 ? 'text-up' : 'text-down'}`}>
+                     {comp.evalPause.pnl > 0 ? '+' : ''}{comp.evalPause.pnl.toFixed(2)}R
                    </div>
                    <div className="text-muted mt-4">Bersiap untuk skenario berikutnya...</div>
                  </>
