@@ -33,6 +33,56 @@ home each, and a second copy is a future lie. Point, never duplicate.
 
 **Last updated:** 2026-10-06
 
+**2026-10-06 — architecture cleanup: web hardening, layering, file size
+(`refactor/architecture-cleanup`, spec
+`docs/superpowers/specs/2026-10-06-architecture-cleanup-design.md`).** One
+commit per item; every bug below was a failing test before it was a patch.
+
+- *Security.* The web answered any `Host`, so a DNS-rebinding page could reach
+  every route, `/api/live/open` (a real order) included — reproduced, 200.
+  `web/local_only.guard`: non-loopback `Host` → 403; a write whose `Origin`
+  is present and not loopback → 403.
+- *Validation.* Untyped `Body(...)` routes 500'd on a non-JSON body and the
+  prefs routes stored arrays/strings verbatim. Pydantic models
+  (`web/schemas.py`, no new dependency); every error response now carries
+  `error` (the SPA showed a bare "HTTP 4xx" for lab and validation errors);
+  prune refuses `older_than_days < 1`.
+- *Lab models are gone — retrain them.* The storage routes read the constant
+  `cache` instead of the app's cache dir, so `tests/test_storage_api.py`
+  wiped the REAL `cache/` on every `pytest` run in the main checkout. All 24
+  `lab_models` rows (4 active: 18, 20, 22, 24) point at `.joblib` files that
+  do not exist; `cache/models/` last changed 2026-08-13. Fixed: cache routes
+  use the app's `cache_dir`, and clear-cache spares `cache/models/`.
+- *Layering.* `domain/`, `store/`, `adapter/` import nothing above them.
+  `domain/trade_window.py` (TF ladder, was in `render/chart.py`),
+  `domain.MIN_N`, `store/health.py` → `journal/health.py` (an aggregator; it
+  imported `web.app` and `ingest`), `execute.size_order` (was a web view),
+  `candles_store.prune_before` and `training_store` helpers (the web layer
+  held INSERT/UPDATE/DELETE).
+- *Structure.* `web/app.py` 1,125 → 92 lines: routes in `web/routes/*.py`,
+  one APIRouter per area; OpenAPI schema identical before/after for all 62
+  paths. `journal live`'s thread orchestration → `ingest.live.run_daemon`.
+  The web migrates once at startup; a store at any other version than the
+  code's is refused (newer = a process running old code). `Chart.tsx`
+  696 → 564 (`useCompetitiveReplay`, `PaperSidePanel`, `ChartLoadState`,
+  `ScenarioEvalOverlay`); CandleChart's line selection →
+  `lib/priceLines.ts` (pure, tested).
+- *Other bugs fixed.* Leaving competitive replay during the result pause
+  started a new scenario anyway (uncancelled timer). The stale-bundle check
+  watched `tailwind.config.js`; the repo has `.ts`, and postcss was missing.
+  `TradeView` arrow-key tests were flaky (raced the neighbor fetch).
+- *Not done.* CandleChart's gesture effects stay together: they share
+  mutable refs and capture-phase listener ORDER matters (text tool before
+  measure); splitting them buys little and risks that order. ruff/mypy need
+  the human's OK (rule 8).
+
+Gates: `pytest` **1003 passed, 8 skipped**; hygiene with the live-DB arm 3/3;
+`vitest` **411 passed / 53 files**; `tsc -b && vite build` clean; `journal
+rebuild` on a snapshot of the live store: 132 trades, identities 1 and 2 PASS;
+`journal serve` smoke-tested on the same snapshot. The first `journal live`
+after merge will report `health.py` as changed code (the module moved) — one
+restart clears it.
+
 **2026-10-06 — repo cleanup; local `main` diverged from `origin/main`; the daemon has
 been down since 2026-09-21.**
 
