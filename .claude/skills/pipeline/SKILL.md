@@ -9,9 +9,12 @@ Run the superpowers skills, in order. They carry the how; this lists the when.
 
 ## New feature (anything touching more than one file)
 
-1. `brainstorming` → spec in `docs/specs/<name>.md`. No code yet. You can ask
-   plenty of questions to ensure the implementation aligns with what is desired.
-2. `writing-plans` → numbered tasks, one task = one commit-able unit.
+1. `brainstorming` → spec in `docs/superpowers/specs/<date>-<name>-design.md`.
+   No code yet. You can ask plenty of questions to ensure the implementation
+   aligns with what is desired.
+2. `writing-plans` → numbered tasks, one task = one commit-able unit, in
+   `docs/superpowers/plans/`. The plan is scaffolding: delete it in the
+   branch's last commit before merge (git history keeps it; the spec stays).
 3. `using-git-worktrees` → branch + worktree per spec. Never build on `main`.
 4. `executing-plans`, and inside each task `test-driven-development` (hard rule 7).
 5. `requesting-code-review` on the whole branch → `receiving-code-review` →

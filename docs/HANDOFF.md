@@ -1,10 +1,5 @@
 # Handoff — read this first
 
-> **Update 2026-07-24 (Phase 5 cutover):** the web UI is now the React SPA
-> served at `/`; the Jinja2 templates, `/static/app.css`, the form-POST write
-> routes, and the `jinja2`/`python-multipart` deps have been retired. `journal
-> serve` and the loopback/WAL coexistence notes below are unchanged.
-
 ## YOUR STANDING INSTRUCTIONS
 
 You sit in the **architect / reviewer** seat on mt5-journal. Not the implementer.
@@ -36,12 +31,46 @@ home each, and a second copy is a future lie. Point, never duplicate.
 
 ## CURRENT STATE — update this section every session
 
-**Last updated:** 2026-09-04
+**Last updated:** 2026-10-06
+
+**2026-10-06 — repo cleanup; decoupled live loop merged; the daemon has been
+down since 2026-09-21.**
+
+- *Cleanup (`compact`).* Executed plans are no longer kept in the tree:
+  `docs/plans/`, `docs/superpowers/plans/`, the phase-B kickoff prompt and the
+  chart roadmap are gone — git history has them, and specs (the design
+  rationale) stay. Also dropped: the vendored `.agents/` copy of the graphify
+  skill, `web/format.py` (Jinja-era helpers; `price`/`level_word` moved into
+  `views.py`), and the unused `listSessions`/`getSummary` in `replayApi.ts`.
+  **Convention from here: a plan is deleted in the merge that finishes it.**
+- *Merged `worktree-decouple-live-loop-spec`* (entry below). All 8 tasks were
+  committed by 2026-09-06 but never merged; it merged clean. Its plan
+  went with the cleanup convention above.
+- *Remote branches `worktree-native-mt5-adapter` and
+  `worktree-paper-quote-watch-fix` deleted* — both were fully in `main`.
+- *Why the daily backups stopped.* Not a bug: the snapshot is taken by
+  `journal live` (`_maybe_backup`), and `journal live` is not running. Last
+  `live_quotes` write 2026-09-21 22:54 UTC, last snapshot
+  `journal-20260921T224124Z.db`; the Colima VM hosting the bridge was shut
+  down 2026-09-22 03:09 UTC and nothing has started it since. The 11→21 Sep
+  gap in `data/backups/` is the same cause. `journal status` already flags
+  both (`backup … overdue`, `live … not running`). A manual `journal backup`
+  was taken today.
+
+Gates: `uv run pytest` **921 passed, 1 skipped**; `npm --prefix frontend test`
+**402 passed / 51 files**; `tsc -b` clean; the threaded live tests
+(`test_live`, `test_cli_live`, `test_locked_client`, 74 tests) green 8 runs
+in a row.
+
+**Still owed by a human:** `colima start`, bring the bridge container up, then
+`journal live`. That starts the new two-thread daemon on the real account for
+the first time on `main` — watch the first position close hand off to
+`symbol_cycle` and land in `trades`.
 
 **2026-09-04 — decoupled the live loop: position and symbol-data paths split
-onto two threads** (`worktree-decouple-live-loop-spec`, 8 tasks, spec +
-plan in `docs/superpowers/specs/2026-09-04-decouple-live-loop-design.md` and
-`docs/superpowers/plans/2026-09-04-decouple-live-loop.md`). `journal live` now
+onto two threads** (`worktree-decouple-live-loop-spec`, 8 tasks, spec in
+`docs/superpowers/specs/2026-09-04-decouple-live-loop-design.md`; merged
+2026-10-06). `journal live` now
 runs `position_loop`/`symbol_loop` as two threads with independently
 configurable `--interval-positions`/`--interval-symbols`. A position close
 hands off to `symbol_cycle` via an in-memory `queue.Queue` instead of
@@ -51,6 +80,17 @@ to sit in front of the position mirror and command execution is now entirely
 on the symbol side. Bridge access is serialized through one
 `LockedMT5Client` wrapping the single adapter connection, so both threads
 share it without two sessions ever landing on the terminal at once.
+
+**2026-09-04 — paper orders on a fresh symbol.** `paper_step` now also fetches
+a tick for the chart's watched symbol, not only for symbols that already carry
+a paper position — the first paper order on any symbol was refused with
+"Belum ada harga" (`ea18124`).
+
+**2026-08-20 — native MT5 adapter for a Windows host.** `adapter/native.py`
+talks to the official `MetaTrader5` package directly; `adapter/select.py`'s
+`get_client()` picks native vs bridge by platform and every CLI construction
+site goes through it. Wire-format conversion shared in `adapter/_mt5_common.py`.
+Spec: `docs/superpowers/specs/2026-08-20-native-mt5-adapter-design.md`.
 
 **2026-08-18 — paper trading: a virtual account on the live chart
 (`worktree-spec-paper-trading`, 17 tasks, spec + plan in
@@ -570,8 +610,11 @@ note what was measured.
 | M7 | Web dashboard on localhost (`journal serve`) — read-mostly + annotation/tag writes | done |
 | M8 | Per-symbol breakdown (`by_symbol`) + dedicated `/report` web page | done |
 | M9 | Live positions + trade interaction + auto-ingest on close + UI redesign (`journal live`, `/live`) | **done — merged to main.** Live-verified 2026-07-23 (real account/bridge): auto-ingest-on-close, `/live` observe, and the order-send path to the broker all proven. The browser UI → live data (`open_positions`/`/api/live`) → `journal live` → bridge round trip WORKS and has for a long time. Only unmeasured: an *accepted* order landing — blocked solely by the MT5 container's AutoTrading toggle (a terminal setting, not code) — plus a browser visual/contrast pass. |
-| Frontend rework | Jinja2 → React SPA served at `/`; Jinja UI retired at the Phase 5 cutover | done (`8d1de45`, 2026-07-24 — see the note at the top of this file) |
+| Frontend rework | Jinja2 → React SPA served at `/`; Jinja UI retired at the Phase 5 cutover | done (`8d1de45`, 2026-07-24 — Jinja2 templates, `/static/app.css`, form-POST write routes and the `jinja2`/`python-multipart` deps all retired) |
 | M10 | Lab: regime + entry-timing models on candle data (`/lab` page, badge on `/live`) | done (`b4250a5`, 2026-08-08 — migration 010 / `SCHEMA_VERSION = 10`, `docs/lab-models.md`; see 2026-08-06 above) |
+| Paper trading | Virtual account traded from the live chart (migration 013) | done (`3943074`, 2026-08-18) |
+| Native adapter | `MetaTrader5` package on a Windows host; `get_client()` picks by platform | done (`b818b93`, 2026-08-21) |
+| Live loop split | `journal live` as two threads (positions / symbol data), `LockedMT5Client` | merged 2026-10-06; **not yet run against the real bridge on `main`** |
 
 M0–M3 delivers the original ask: an automatic journal with charts. **Done.**
 M4 onward — poller, analytics, annotations — is what makes the journal worth
