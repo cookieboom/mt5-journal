@@ -12,6 +12,11 @@ MINUTE = 60_000
 
 def walk(n: int, seed: int = 7, *, volume_gaps: bool = False) -> pd.DataFrame:
     """Seeded random-walk OHLC, M1, spanning more than one UTC day."""
+    return to_frame(walk_candles(n, seed, volume_gaps=volume_gaps))
+
+
+def walk_candles(n: int, seed: int = 7, *, volume_gaps: bool = False) -> list[Candle]:
+    """`walk` before `to_frame` — for resampling to higher timeframes."""
     rng = np.random.default_rng(seed)
     close = 2000 + np.cumsum(rng.normal(0, 1.5, n))
     open_ = np.concatenate([[close[0]], close[:-1]])
@@ -25,7 +30,7 @@ def walk(n: int, seed: int = 7, *, volume_gaps: bool = False) -> pd.DataFrame:
             low=float(min(open_[i], close[i]) - wick[1][i]),
             close=float(close[i]), tick_volume=vol, spread=20, real_volume=0,
         ))
-    return to_frame(bars)
+    return bars
 
 
 def s(values) -> pd.Series:

@@ -15,7 +15,9 @@ import numpy as np
 import pandas as pd
 
 from . import builtins as B
-from .lang import Program, ScriptError, call_consts, error_at, const_value, resolve_consts
+from .lang import (
+    Program, ScriptError, call_consts, check_higher, const_value, error_at, resolve_consts, tf_of,
+)
 
 BUDGET_S = 2.0
 
@@ -71,10 +73,59 @@ def map_closed(values: pd.Series, htf_ms: int, index: pd.Index, tf_ms: int,
     return pd.Series(out, index=index, dtype="float64")
 
 
-def evaluate(p: Program, f: pd.DataFrame, inputs: dict[str, Any], tf_ms: int) -> Result:
+def evaluate(p: Program, f: pd.DataFrame, inputs: dict[str, Any], tf_ms: int,
+             htf: dict[str, pd.DataFrame] | None = None,
+             forming_msc: int | None = None) -> Result:
+    """`htf`: bar frames per tf() timeframe (missing = no bars, all NaN).
+    `forming_msc`: open time of the chart's forming bar, if any (§1.2)."""
     consts = resolve_consts(p, inputs)
     env: dict[str, pd.Series] = base_series(f)
     deadline = time.monotonic() + BUDGET_S
+    cache: dict[tuple[str, str], pd.Series] = {}
+
+    def tf_call(node: ast.Call) -> pd.Series:
+        h = check_higher(node, tf_ms)
+        x = tf_of(node)
+        key = (x, ast.dump(node.args[1]))
+        if key not in cache:
+            hf = (htf or {}).get(x)
+            if hf is None:
+                hf = f.iloc[:0]
+            inner = _evaluator(hf, base_series(hf), consts, tf_call)(node.args[1])
+            cache[key] = map_closed(inner, h, f.index, tf_ms, forming_msc)
+        return cache[key]
+
+    ev = _evaluator(f, env, consts, tf_call)
+    index = f.index
+
+    def series(v: pd.Series | float | bool) -> pd.Series:
+        if isinstance(v, pd.Series):
+            return v
+        return pd.Series(float(v), index=index, dtype="float64")
+
+    plots: list[pd.Series] = [series(np.nan)] * len(p.plots)
+    signals: list[pd.Series] = [series(np.nan)] * len(p.signals)
+    for step in p.steps:
+        if time.monotonic() > deadline:
+            raise error_at(step.expr, f"evaluation exceeded the {BUDGET_S:g} s budget")
+        v = ev(step.expr)
+        if step.kind == "assign":
+            assert isinstance(step.target, str)
+            env[step.target] = v
+        elif step.kind == "plot":
+            assert isinstance(step.target, int)
+            plots[step.target] = v
+        else:
+            assert isinstance(step.target, int)
+            signals[step.target] = B.tri(v != 0, v)
+    hlines = [float(const_value(h.value, consts)) for h in p.hlines]
+    return Result(plots, hlines, signals)
+
+
+def _evaluator(f: pd.DataFrame, env: dict[str, pd.Series], consts: dict[str, float | bool],
+               tf_call: Callable[[ast.Call], pd.Series]) -> Callable[[ast.expr], pd.Series]:
+    """`ev(node)` over frame `f`; `env` holds base series and assigned names.
+    tf() is handed back to the caller — it alone knows the other frames."""
     index = f.index
 
     def series(v: pd.Series | float | bool) -> pd.Series:
@@ -118,6 +169,8 @@ def evaluate(p: Program, f: pd.DataFrame, inputs: dict[str, Any], tf_ms: int) ->
             assert isinstance(n, ast.Constant) and type(n.value) is int  # lang guarantees it
             return ev(node.value).shift(n.value)
         assert isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        if node.func.id == "tf":
+            return tf_call(node)
         b = B.REGISTRY[node.func.id]
         c = call_consts(node, consts)
         args: list[Any] = []
@@ -129,23 +182,7 @@ def evaluate(p: Program, f: pd.DataFrame, inputs: dict[str, Any], tf_ms: int) ->
         with np.errstate(all="ignore"):
             return clean(b.fn(f, *args))
 
-    plots: list[pd.Series] = [series(np.nan)] * len(p.plots)
-    signals: list[pd.Series] = [series(np.nan)] * len(p.signals)
-    for step in p.steps:
-        if time.monotonic() > deadline:
-            raise error_at(step.expr, f"evaluation exceeded the {BUDGET_S:g} s budget")
-        v = ev(step.expr)
-        if step.kind == "assign":
-            assert isinstance(step.target, str)
-            env[step.target] = v
-        elif step.kind == "plot":
-            assert isinstance(step.target, int)
-            plots[step.target] = v
-        else:
-            assert isinstance(step.target, int)
-            signals[step.target] = B.tri(v != 0, v)
-    hlines = [float(const_value(h.value, consts)) for h in p.hlines]
-    return Result(plots, hlines, signals)
+    return ev
 
 
-__all__ = ["Result", "ScriptError", "evaluate", "base_series"]
+__all__ = ["Result", "ScriptError", "evaluate", "base_series", "map_closed"]
