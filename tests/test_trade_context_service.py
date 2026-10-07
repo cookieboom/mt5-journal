@@ -197,3 +197,27 @@ def test_route(conn, tmp_path):
     assert r.status_code == 422
     r = client.post("/api/indicators/context", json=body | {"timeframe": "X9"})
     assert r.status_code == 400
+
+
+def test_bars_the_market_had_but_the_frame_lacks_make_it_unknown(conn):
+    # The M5 store stops at bar 39; a trade two bars later reads a quiet window.
+    real(conn, "buy", at(41), 10.0)
+    assert run(conn)["sources"]["real"]["false"]["n"] == 1
+    # M1 shows the market traded through bars 40 and 41: that window is stale.
+    for i in (40, 41):
+        cs.insert_candle(conn, "XAUUSDc", "M1", Candle(
+            time_msc=T0 + i * M5, open=100.0, high=101.0, low=99.0, close=100.0,
+            tick_volume=1, spread=10, real_volume=0))
+    conn.commit()
+    s = run(conn)["sources"]["real"]
+    assert s["n_unknown"] == 1 and s["false"]["n"] == 0
+
+
+def test_m1_bars_the_frame_has_change_nothing(conn):
+    real(conn, "buy", at(11), 10.0)
+    for i in range(40):
+        cs.insert_candle(conn, "XAUUSDc", "M1", Candle(
+            time_msc=T0 + i * M5 + 60_000, open=100.0, high=101.0, low=99.0, close=100.0,
+            tick_volume=1, spread=10, real_volume=0))
+    conn.commit()
+    assert run(conn)["sources"]["real"]["true"]["n"] == 1

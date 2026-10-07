@@ -14,6 +14,8 @@ import json
 import sqlite3
 from typing import Any
 
+import numpy as np
+
 from ..adapter.base import TIMEFRAMES
 from ..analytics.report import bucket_stat
 from ..domain import sim_stats
@@ -21,6 +23,7 @@ from ..domain.indicators.context import agreement
 from ..domain.indicators.engine import evaluate
 from ..domain.indicators.lang import lookback, parse, resolve_consts
 from ..domain.resample import timeframe_ms
+from ..store import candles_store as cs
 from ..store.db import now_ms, one_account_login
 from . import backtest
 from .indicators import _source_of, _warm_bars, load_frames
@@ -104,9 +107,16 @@ def run(conn: sqlite3.Connection, *, inputs: dict[str, Any], symbol: str, timefr
         # A value before warm-up is not trusted, even when it reads 0.0: NaN.
         warm = fr.f.index >= warm_from if warm_from is not None else fr.f.index < fr.f.index.min()
         sigs = [(s.side, v.where(warm)) for s, v in zip(p.signals, res.signals, strict=True)]
+        # Buckets M1 traded in that the frame lacks: store holes, not closures.
+        # A window spanning one is not the N bars before the trade.
+        idx = fr.f.index.to_numpy(dtype="int64")
+        m1 = np.array(cs.bar_times(conn, symbol, "M1", int(idx[0]) if len(idx) else from_ms,
+                                   to_ms), dtype="int64")
+        buckets = np.unique(m1 - m1 % tf_ms)
+        missing = buckets[~np.isin(buckets, idx)]
         for k, rs in rows.items():
-            labels[k] = [agreement(fr.f.index, tf_ms, sigs, r["ref"], r["direction"], window)
-                         for r in rs]
+            labels[k] = [agreement(fr.f.index, tf_ms, sigs, r["ref"], r["direction"], window,
+                                   missing=missing) for r in rs]
 
     sources: dict[str, Any] = {}
     for k, rs in rows.items():

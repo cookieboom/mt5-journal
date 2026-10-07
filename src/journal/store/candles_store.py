@@ -61,6 +61,16 @@ def read_candles(conn: sqlite3.Connection, symbol: str, timeframe: str,
     ).fetchall()
 
 
+def bar_times(conn: sqlite3.Connection, symbol: str, timeframe: str,
+              from_ms: int, to_ms: int) -> list[int]:
+    """Open times only, ascending — `read_candles` without the prices, for scans
+    over many bars (trade context reads ~770k M1 opens)."""
+    return [r[0] for r in conn.execute(
+        "SELECT time_msc FROM candles WHERE symbol = ? AND timeframe = ? "
+        "AND time_msc BETWEEN ? AND ? ORDER BY time_msc",
+        (symbol, timeframe, from_ms, to_ms))]
+
+
 def row_to_candle(r: sqlite3.Row) -> Candle:
     return Candle(
         time_msc=r["time_msc"], open=r["open"], high=r["high"], low=r["low"],

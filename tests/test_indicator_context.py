@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
 import pandas as pd
 
 from journal.domain.indicators.context import MAX_GAP_MS, agreement
@@ -100,3 +101,32 @@ def test_store_hole_longer_than_max_gap_is_unknown():
 def test_script_without_a_same_side_signal_is_false():
     ix = bars(10)
     assert agreement(ix, TF, [("short", sig(ix, {9}))], 10 * TF, "buy", 3) == "false"
+
+
+# --- `missing`: bars the market had (seen in M1) that the frame lacks ----------
+
+def test_missing_bar_inside_the_window_is_unknown():
+    ix = pd.Index([i * TF for i in range(10) if i != 8])        # bar 8 absent from the frame
+    sigs = [("long", sig(ix, {6}))]                             # positional: fires on bar 7
+    assert agreement(ix, TF, sigs, 10 * TF, "buy", 3) == "true"  # 7, 9 and the gap read as fine
+    assert agreement(ix, TF, sigs, 10 * TF, "buy", 3, missing=np.array([8 * TF])) is None
+
+
+def test_missing_bar_between_last_close_and_ref_is_unknown():
+    ix = bars(8)                                                # store stops at bar 7
+    sigs = [("long", sig(ix, set()))]
+    # The market traded bars 8 and 9 (M1 has them): the frame is stale, not quiet.
+    assert agreement(ix, TF, sigs, 10 * TF, "buy", 3, missing=np.array([8 * TF, 9 * TF])) is None
+
+
+def test_missing_bar_still_forming_at_ref_does_not_count():
+    ix = bars(10)
+    sigs = [("long", sig(ix, set()))]
+    # Bar 10 opened before ref but has not closed: it was never going to be read.
+    assert agreement(ix, TF, sigs, 10 * TF + MINUTE, "buy", 3, missing=np.array([10 * TF])) == "false"
+
+
+def test_missing_bar_before_the_window_does_not_count():
+    ix = pd.Index([i * TF for i in range(10) if i != 3])
+    sigs = [("long", sig(ix, set()))]
+    assert agreement(ix, TF, sigs, 10 * TF, "buy", 3, missing=np.array([3 * TF])) == "false"
