@@ -9,10 +9,11 @@ const seg = (avg: number, n: number) => ({ n, n_r: n, win_rate: 0.5, avg_r: avg,
   profit_factor: 1.2, max_dd_r: 1, max_win_streak: 2, max_loss_streak: 1 });
 const bk = { hour: [], session: [], dow: [] };
 const DAY = 86_400_000;
-const per = (key: number, total_r: number, oos = false): Period =>
-  ({ key, end_msc: key + DAY, oos, n: 3, win_rate: 0.5, avg_r: total_r / 3, total_r });
+const per = (key: number, total_r: number, segment: Period["segment"] = "is"): Period =>
+  ({ key, end_msc: key + DAY, last_exit_msc: key + DAY + 3_600_000, segment, n: 3, win_rate: 0.5,
+     avg_r: total_r / 3, total_r });
 const periods = {
-  day: [per(0, 1.0), per(DAY, -2.0), per(2 * DAY, 3.0, true)],
+  day: [per(0, 1.0, "mixed"), per(DAY, -2.0), per(2 * DAY, 3.0, "oos")],
   week: [per(-3 * DAY, 2.0)],
   session: [per(0, 1.0)],
 };
@@ -77,12 +78,14 @@ it("periods list ranks by total R, best first, and toggles worst first", () => {
   expect(rows()).toEqual([String(-3 * DAY)]);
 });
 
-it("a period row marks OOS and its Replay jumps to that period", () => {
+it("a period row says IS, OOS or both, and its Replay jumps to that period", () => {
   const { onPeriodReplay } = setup();
   fireEvent.click(screen.getByLabelText("Buka tester"));
   fireEvent.click(screen.getByRole("tab", { name: "Breakdown" }));
-  const best = screen.getAllByTestId("period-row")[0];
+  const [best, mid, worst] = screen.getAllByTestId("period-row");
   expect(best.textContent).toContain("OOS");
+  expect(mid.textContent).toContain("IS+OOS");
+  expect(worst.textContent).toContain("IS");
   fireEvent.click(best.querySelector("button")!);
   expect(onPeriodReplay).toHaveBeenCalledWith(periods.day[2]);
 });
@@ -92,7 +95,7 @@ it("a period row marks OOS and its Replay jumps to that period", () => {
 const cell = (c: Partial<ContextCell>): ContextCell =>
   ({ n: 0, n_r: 0, win_rate: null, avg_r: null, total_r: null, gated: false, ...c });
 const ctx: ContextResult = {
-  computed_ms: 0, source_hash: "h", window: 3, warm_from_msc: 0, pending: false,
+  computed_ms: 0, source_hash: "h", window: 3, warm_from_msc: 0, clipped_from_msc: null, pending: false,
   sources: {
     real: { true: cell({ n: 70, n_r: 18, win_rate: 0.58, gated: true }),
             false: cell({ n: 60, n_r: 18, win_rate: 0.4, gated: true }), n_unknown: 7 },
@@ -102,14 +105,43 @@ const ctx: ContextResult = {
   },
 };
 
-it("trade context is fetched only when its tab opens, and needs no tester result", async () => {
+it("trade context is fetched only when its tab opens", async () => {
   const spy = vi.spyOn(backtestApi, "context").mockResolvedValue({ ok: true, data: ctx });
-  setup(null);
+  setup();
   fireEvent.click(screen.getByLabelText("Buka tester"));
   expect(spy).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("tab", { name: "Trade saya" }));
   await waitFor(() => expect(spy).toHaveBeenCalledWith(QUERY, 3));
   expect(await screen.findByText("58%")).toBeTruthy();
+});
+
+it("trade context waits for a tester result: never shown without its OOS headline (rule 9)", () => {
+  const spy = vi.spyOn(backtestApi, "context").mockResolvedValue({ ok: true, data: ctx });
+  setup(null);
+  fireEvent.click(screen.getByLabelText("Buka tester"));
+  fireEvent.click(screen.getByRole("tab", { name: "Trade saya" }));
+  expect(screen.getByText(/Jalankan tester dulu/)).toBeTruthy();
+  expect(spy).not.toHaveBeenCalled();
+});
+
+it("switching tabs away and back keeps the result instead of refetching", async () => {
+  const spy = vi.spyOn(backtestApi, "context").mockResolvedValue({ ok: true, data: ctx });
+  setup();
+  fireEvent.click(screen.getByLabelText("Buka tester"));
+  fireEvent.click(screen.getByRole("tab", { name: "Trade saya" }));
+  await screen.findByText("58%");
+  fireEvent.click(screen.getByRole("tab", { name: "Breakdown" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Trade saya" }));
+  expect(screen.getByText("58%")).toBeTruthy();
+  expect(spy).toHaveBeenCalledTimes(1);
+});
+
+it("a clipped span says which trades were left unevaluated", async () => {
+  vi.spyOn(backtestApi, "context").mockResolvedValue({ ok: true, data: { ...ctx, clipped_from_msc: 0 } });
+  setup();
+  fireEvent.click(screen.getByLabelText("Buka tester"));
+  fireEvent.click(screen.getByRole("tab", { name: "Trade saya" }));
+  expect(await screen.findByText(/sebelum 1970-01-01 07:00 WIB tidak dievaluasi/)).toBeTruthy();
 });
 
 it("gated real cells say why; ungated sim cells show their numbers", async () => {
@@ -124,16 +156,18 @@ it("gated real cells say why; ungated sim cells show their numbers", async () =>
   expect(screen.getByText(/OOS \+0\.21 R\/trade/, { selector: "[data-testid=ctx-headline]" })).toBeTruthy();
 });
 
-it("changing the window refetches with it", async () => {
+it("typing a window refetches once, with the final value (debounced)", async () => {
   const spy = vi.spyOn(backtestApi, "context").mockResolvedValue({ ok: true, data: ctx });
   setup();
   fireEvent.click(screen.getByLabelText("Buka tester"));
   fireEvent.click(screen.getByRole("tab", { name: "Trade saya" }));
   await waitFor(() => expect(spy).toHaveBeenCalledTimes(1));
   await act(async () => {
-    fireEvent.change(screen.getByLabelText("Jendela (bar)"), { target: { value: "5" } });
+    fireEvent.change(screen.getByLabelText("Jendela (bar)"), { target: { value: "1" } });
+    fireEvent.change(screen.getByLabelText("Jendela (bar)"), { target: { value: "15" } });
   });
-  await waitFor(() => expect(spy).toHaveBeenLastCalledWith(QUERY, 5));
+  await waitFor(() => expect(spy).toHaveBeenLastCalledWith(QUERY, 15));
+  expect(spy).toHaveBeenCalledTimes(2);
 });
 
 it("a context error is shown, not swallowed", async () => {

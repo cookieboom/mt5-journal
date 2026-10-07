@@ -184,3 +184,10 @@ def test_replay_route_and_career_toggle(client):
     assert r.json()["session"]["origin"] == "study"
     assert client.get("/api/training/summary").status_code == 200
     assert client.get("/api/training/summary?include_study=true").status_code == 200
+
+
+def test_replay_refuses_an_exit_in_the_future(conn):
+    seed(conn)
+    with pytest.raises(ValueError, match="future"):
+        bt.replay_session(conn, symbol="XAUUSDc", timeframe="M5", decision_msc=T0,
+                          exit_msc=10**15)

@@ -29,6 +29,7 @@ from .. import sim_stats
 from ..excursion import compute_excursion
 from ..replay_eval import Bar, PositionState, r_multiple, step_bar
 from . import builtins as B
+from .builtins import DAY_MS
 from .engine import Result
 from .lang import Program, const_value
 
@@ -243,27 +244,38 @@ def _bucket(trades: list[Trade], key: Any) -> list[dict[str, Any]]:
     return out
 
 
-_DAY_MS = 86_400_000
 # Epoch 0 is a Thursday: Monday 00:00 UTC sits 3 days before it, mod 7 days.
-_MONDAY_MS = -3 * _DAY_MS
+_MONDAY_MS = -3 * DAY_MS
 
 
 def _day(ms: int) -> tuple[int, int]:
-    start = ms - ms % _DAY_MS
-    return start, start + _DAY_MS
+    start = ms - ms % DAY_MS
+    return start, start + DAY_MS
 
 
 def _week(ms: int) -> tuple[int, int]:
-    start = ms - (ms - _MONDAY_MS) % (7 * _DAY_MS)
-    return start, start + 7 * _DAY_MS
+    start = ms - (ms - _MONDAY_MS) % (7 * DAY_MS)
+    return start, start + 7 * DAY_MS
 
 
 def _periods(trades: list[Trade], window: Any, split_msc: int) -> list[dict[str, Any]]:
-    """`_bucket` keyed on a period's `[start, end)` (by entry), flattened to
-    `key` = start for the replay jump. `oos` when the period starts at/after
-    the split."""
-    return [b | {"key": b["key"][0], "end_msc": b["key"][1], "oos": b["key"][0] >= split_msc}
-            for b in _bucket(trades, window)]
+    """Trades grouped by the period `[key, end_msc)` their entry falls in, each
+    group a `_bucket` row. `last_exit_msc` — where a replay of the period must
+    reach (a trade can exit after its period ends; exits are always stored
+    bars, never the future). `segment` splits on decision time exactly as the
+    segments do: `is`, `oos`, or `mixed` when the split falls inside."""
+    groups: dict[tuple[int, int], list[Trade]] = defaultdict(list)
+    for tr in trades:
+        groups[window(tr.entry_msc)].append(tr)
+    out = []
+    for (start, end), trs in sorted(groups.items()):
+        (row,) = _bucket(trs, lambda _ms, k=start: k)
+        oos = [tr.decision_msc >= split_msc for tr in trs]
+        out.append(row | {
+            "end_msc": end,
+            "last_exit_msc": max(tr.exit_msc for tr in trs if tr.exit_msc is not None),
+            "segment": "oos" if all(oos) else "is" if not any(oos) else "mixed"})
+    return out
 
 
 def _utc(ms: int) -> datetime:

@@ -48,6 +48,10 @@ export default function StrategyTester({
 }) {
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<Tab>("summary");
+  // Kept here, above the tab switch, so leaving "Trade saya" and coming back
+  // neither loses the result nor re-runs the server job.
+  const [ctxWin, setCtxWin] = useState(3);
+  const [ctxOut, setCtxOut] = useState<CtxOut | null>(null);
 
   return (
     <section aria-label="Strategy Tester" className="glass mt-2 text-body">
@@ -80,7 +84,10 @@ export default function StrategyTester({
           </div>
           <div className="flex-1 min-h-0 overflow-auto p-3">
             {tab === "settings" ? <Settings s={settings} onChange={onSettings} />
-              : tab === "context" ? <TradeContext q={context} r={result} nowMs={nowMs} />
+              : tab === "context" ? (
+                <TradeContext q={context} r={result} nowMs={nowMs}
+                              win={ctxWin} onWin={setCtxWin} out={ctxOut} onOut={setCtxOut} />
+              )
               : !result ? <div className="text-muted">Jalankan tester untuk melihat hasil.</div>
               : tab === "summary" ? <Summary r={result} nowMs={nowMs} />
               : tab === "trades" ? <Trades r={result} onClick={onTradeClick} onReplay={onReplay} />
@@ -265,6 +272,7 @@ function BreakdownTab({ r, onPeriodReplay }: { r: BacktestResult; onPeriodReplay
   );
 }
 
+const SEGMENT: Record<Period["segment"], string> = { is: "IS", oos: "OOS", mixed: "IS+OOS" };
 const KINDS: [PeriodKind, string][] = [["day", "Hari"], ["week", "Minggu"], ["session", "Sesi"]];
 
 /** Replay jump per period: days / weeks / session instances ranked by total R
@@ -307,7 +315,8 @@ function Periods({ ps, onReplay }: { ps: Record<PeriodKind, Period[]>; onReplay:
                 <td className="text-right px-2 text-muted">{p.n}</td>
                 <td className="text-right px-2">{pct(p.win_rate)}</td>
                 <td className={`text-right px-2 ${tone(p.total_r)}`}>{fmtR(p.total_r)}</td>
-                <td className={`px-2 text-meta ${p.oos ? "text-ink" : "text-muted"}`}>{p.oos ? "OOS" : "IS"}</td>
+                <td className={`px-2 text-meta ${p.segment === "is" ? "text-muted" : "text-ink"}`}>
+                  {SEGMENT[p.segment]}</td>
                 <td className="text-right">
                   <button onClick={() => onReplay(p)} className="text-meta text-cyan hover:text-ink">Replay</button>
                 </td>
@@ -324,41 +333,57 @@ const SOURCES: [ContextSourceKey, string][] = [
   ["real", "Real"], ["replay", "Replay · simulasi, tanpa gating"], ["paper", "Paper · simulasi, tanpa gating"],
 ];
 
+interface CtxOut { key: string; res?: ContextResult; err?: string }
+const WIN_DEBOUNCE_MS = 400;
+
 /** My closed trades, split by whether a same-side signal fired in the last N
- *  closed bars before them. Fetched when the tab opens (it mounts only then). */
-function TradeContext({ q, r, nowMs }: { q: ContextQuery | null; r: BacktestResult | null; nowMs: number }) {
-  const [win, setWin] = useState(3);
-  const [out, setOut] = useState<{ res?: ContextResult; err?: string } | null>(null);
-  const key = JSON.stringify([q, win]);
+ *  closed bars before them. Fetched when the tab opens (it mounts only then),
+ *  and only beside a tester result — signal() output never shows without its
+ *  OOS expectancy, n and age (rule 9). */
+function TradeContext({ q, r, nowMs, win, onWin, out, onOut }: {
+  q: ContextQuery | null; r: BacktestResult | null; nowMs: number;
+  win: number; onWin: (w: number) => void; out: CtxOut | null; onOut: (o: CtxOut) => void;
+}) {
+  const [draft, setDraft] = useState(String(win));
   useEffect(() => {
-    if (!q) return;
+    const v = Math.round(Number(draft));
+    if (!(v >= 1 && v <= 50) || v === win) return;
+    const t = setTimeout(() => onWin(v), WIN_DEBOUNCE_MS);
+    return () => clearTimeout(t);
+  }, [draft, win, onWin]);
+
+  const key = JSON.stringify([q, win]);
+  const ready = q !== null && r !== null;
+  useEffect(() => {
+    if (!ready || out?.key === key) return;
     let live = true;
-    setOut(null);
-    void backtestApi.context(q, win).then((x) => {
-      if (live) setOut(x.ok && x.data ? { res: x.data } : { err: x.error ?? "gagal menghitung" });
+    void backtestApi.context(q!, win).then((x) => {
+      if (live) onOut(x.ok && x.data ? { key, res: x.data } : { key, err: x.error ?? "gagal menghitung" });
     });
     return () => { live = false; };
-  }, [key]);   // key covers q and win
+  }, [key, ready]);   // key covers q and win; `out` only short-circuits a repeat
 
   if (!q) return <div className="text-muted">Pilih script dengan signal().</div>;
-  const res = out?.res;
+  if (!r) {
+    return <div className="text-muted">Jalankan tester dulu — hasil ini selalu tampil di samping headline OOS-nya.</div>;
+  }
+  const cur = out?.key === key ? out : null;
+  const res = cur?.res;
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-4 text-meta">
         <label className="flex items-center gap-2">Jendela (bar)
-          <input type="number" min={1} max={50} value={win}
+          <input type="number" min={1} max={50} value={draft}
                  className="bg-transparent border border-panel-border rounded px-1 w-14 text-body tabular-nums"
-                 onChange={(e) => { const v = Math.round(Number(e.target.value)); if (v >= 1 && v <= 50) setWin(v); }} />
+                 onChange={(e) => setDraft(e.target.value)} />
         </label>
-        <span data-testid="ctx-headline" className="tabular-nums text-muted">
-          {r ? `Tester: ${headline(r, nowMs)}` : "Tester belum dijalankan"}
-        </span>
+        <span data-testid="ctx-headline" className="tabular-nums text-muted">Tester: {headline(r, nowMs)}</span>
       </div>
       <div className="text-meta text-muted">
         "Ya" = sinyal searah menyala dalam {win} bar tertutup sebelum trade (real: waktu fill, bukan
         waktu keputusan). Sel abu = n &lt; 20, angkanya disembunyikan.
       </div>
-      {out?.err ? <div className="text-neg">{out.err}</div>
+      {cur?.err ? <div className="text-neg">{cur.err}</div>
         : !res ? <div className="text-muted">menghitung…</div>
         : (
           <div className="flex flex-wrap gap-6">
@@ -389,6 +414,11 @@ function TradeContext({ q, r, nowMs }: { q: ContextQuery | null; r: BacktestResu
             })}
           </div>
         )}
+      {res?.clipped_from_msc != null && (
+        <div className="text-meta text-warn">
+          Rentang terlalu panjang: trade sebelum {wib(res.clipped_from_msc)} tidak dievaluasi (masuk "tidak diketahui").
+        </div>
+      )}
       {res?.pending && <div className="text-meta text-warn">warm-up belum lengkap — data sedang diambil</div>}
     </div>
   );

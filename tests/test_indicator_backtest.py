@@ -257,18 +257,32 @@ def test_periods_day_week_session_key_on_start_with_end_and_oos():
     sim = trades_frame()
     b = report(sim, split_msc=5 * MINUTE)["breakdown"]["all"]["periods"]
     # All four trades sit inside 1970-01-01 00:00–00:14 UTC (a Thursday, Asian).
-    assert b["day"] == [{"key": 0, "end_msc": DAY, "oos": False, "n": 4, "win_rate": 0.75,
-                         "avg_r": 0.625, "total_r": 2.5}]
+    last_exit = max(t.exit_msc for t in sim.trades)
+    assert b["day"] == [{"key": 0, "end_msc": DAY, "last_exit_msc": last_exit, "segment": "mixed",
+                         "n": 4, "win_rate": 0.75, "avg_r": 0.625, "total_r": 2.5}]
     monday = -3 * DAY                                     # 1969-12-29
     assert [(x["key"], x["end_msc"]) for x in b["week"]] == [(monday, monday + 7 * DAY)]
     assert [(x["key"], x["end_msc"]) for x in b["session"]] == [(0, 7 * 3_600_000)]
 
 
-def test_period_is_oos_when_it_starts_at_or_after_the_split():
+def test_period_segment_follows_its_trades_decisions_like_the_segments_do():
     sim = trades_frame()
-    b = report(sim, split_msc=0)["breakdown"]["all"]["periods"]
-    assert b["day"][0]["oos"] is True
-    assert report(sim, split_msc=1)["breakdown"]["all"]["periods"]["day"][0]["oos"] is False
+
+    def seg(split: int) -> str:
+        return report(sim, split_msc=split)["breakdown"]["all"]["periods"]["day"][0]["segment"]
+
+    assert seg(0) == "oos"
+    assert seg(10**12) == "is"
+    assert seg(5 * MINUTE) == "mixed"          # the split falls inside the day: say so
+
+
+def test_period_replay_reaches_the_last_exit_of_its_trades():
+    # A trade entered inside a session window can exit after it ends; the jump
+    # must reach that exit, and must never point past a stored bar.
+    sim = trades_frame()
+    sim.trades[-1].exit_msc = 9 * 3_600_000                # exits in the London session
+    (asian,) = [p for p in report(sim, split_msc=0)["breakdown"]["all"]["periods"]["session"]]
+    assert asian["end_msc"] == 7 * 3_600_000 and asian["last_exit_msc"] == 9 * 3_600_000
 
 
 def test_periods_split_trades_across_days():

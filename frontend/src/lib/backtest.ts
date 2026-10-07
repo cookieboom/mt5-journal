@@ -84,7 +84,11 @@ export interface Segment {
 
 export interface Bucket { key: number | string; n: number; win_rate: number | null; avg_r: number | null; total_r: number }
 /** A day / week / session instance `[key, end_msc)` UTC, for the replay jump per period. */
-export interface Period extends Bucket { key: number; end_msc: number; oos: boolean }
+export interface Period extends Bucket {
+  key: number; end_msc: number;
+  last_exit_msc: number;                       // where a replay must reach (never the future)
+  segment: "is" | "oos" | "mixed";             // by decision time, as the segments split
+}
 export type PeriodKind = "day" | "week" | "session";
 export interface Breakdown {
   hour: Bucket[]; session: Bucket[]; dow: Bucket[];
@@ -103,6 +107,7 @@ export type ContextSourceKey = "real" | "replay" | "paper";
 export interface ContextResult {
   computed_ms: number; source_hash: string; window: number;
   warm_from_msc: number | null; pending: boolean;
+  clipped_from_msc: number | null;            // span too long: trades before this read unknown
   sources: Record<ContextSourceKey, ContextSource>;
 }
 export interface ContextQuery {

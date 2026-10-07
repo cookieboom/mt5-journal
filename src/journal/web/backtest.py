@@ -80,7 +80,12 @@ def replay_session(conn: sqlite3.Connection, *, symbol: str, timeframe: str,
     """A STUDY training session around one tester trade: the cursor sits
     `lead_bars` stored bars before the decision (bars, not time — weekends), the
     range ends `tail_bars` bars after the exit, or at the last stored bar for a
-    trade still open. Study sessions stay out of the career summary."""
+    trade still open. Study sessions stay out of the career summary.
+
+    An `exit_msc` in the future is refused: no bar can follow it, so the range
+    would end past every stored bar and its fill request would never complete."""
+    if exit_msc is not None and exit_msc > now_ms():
+        raise ValueError("exit_msc is in the future")
     lead = _warm_bars(conn, symbol, timeframe, decision_msc, lead_bars)
     cursor = lead[-lead_bars].time_msc if len(lead) >= lead_bars else \
         (lead[0].time_msc if lead else decision_msc)

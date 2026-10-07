@@ -260,7 +260,7 @@ export default function Chart() {
       onRun={tester.run}
       onTradeClick={(t) => setFocus({ startMs: t.entry_msc, endMs: t.exit_msc ?? t.entry_msc })}
       onReplay={(t) => void onTesterReplay(t.decision_msc, t.exit_msc)}
-      onPeriodReplay={(p) => void onTesterReplay(p.key, p.end_msc)}
+      onPeriodReplay={(p) => void onTesterReplay(p.key, p.last_exit_msc)}
       context={testerItem ? {
         script: testerItem.script, inputs: testerItem.inputs, symbol, tf, rev: scriptsRev,
       } : null}

@@ -174,12 +174,17 @@ def test_script_error_raises(conn):
         run(conn, source="signal(")
 
 
-def test_bar_cap(conn, monkeypatch):
+def test_bar_cap_clips_the_oldest_trades_to_unknown_instead_of_failing(conn, monkeypatch):
+    # One old replay trade must not blank the whole tab: the newest bars are
+    # evaluated, trades before them read unknown, and the clip is reported.
     real(conn, "buy", at(11), 10.0)
     real(conn, "buy", at(35), 10.0)
+    assert run(conn)["clipped_from_msc"] is None
     monkeypatch.setattr(bt, "MAX_BACKTEST_BARS", 5)
-    with pytest.raises(ValueError, match="limit"):
-        run(conn)
+    out = run(conn)
+    s = out["sources"]["real"]
+    assert s["n_unknown"] == 1 and s["false"]["n"] == 1
+    assert out["clipped_from_msc"] == T0 + 32 * M5
 
 
 # --- route ---------------------------------------------------------------------
