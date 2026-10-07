@@ -83,9 +83,9 @@ def replay_session(conn: sqlite3.Connection, *, symbol: str, timeframe: str,
     range ends `tail_bars` bars after the exit, or at the last stored bar for a
     trade still open. Study sessions stay out of the career summary.
 
-    The range never ends past the last stored bar: an exit with no bar after it
-    (a lagging store, or a time in the future) would leave a fill request no
-    bar can ever complete."""
+    The range never ends past the last stored bar (a lagging store, or an exit
+    in the future), and with no bars at all never past now: otherwise its fill
+    request could never complete."""
     lead = _warm_bars(conn, symbol, timeframe, decision_msc, lead_bars)
     cursor = lead[-lead_bars].time_msc if len(lead) >= lead_bars else \
         (lead[0].time_msc if lead else decision_msc)
@@ -95,11 +95,11 @@ def replay_session(conn: sqlite3.Connection, *, symbol: str, timeframe: str,
                                tail_bars if exit_msc is not None else MAX_BACKTEST_BARS)
     if tail:
         end = tail[-1].time_msc
-    else:   # nothing after the anchor: the last bar the replay's own reader has
+    else:   # nothing after the anchor: the last bar the replay's own reader has,
+        # else (pruned / never filled) up to the anchor for the queued fill to
+        # recover — but never past now, where no fill can ever complete.
         upto = cs.load_bars(conn, symbol, timeframe, cursor, anchor)
-        if not upto:
-            raise ValueError(f"no stored bars for {symbol} {timeframe} around this trade")
-        end = upto[-1].time_msc
+        end = upto[-1].time_msc if upto else min(anchor, now_ms())
     assert end is not None
     return training.create_session(conn, symbol=symbol, timeframe=timeframe,
                                    range_start_msc=cursor, range_end_msc=end,

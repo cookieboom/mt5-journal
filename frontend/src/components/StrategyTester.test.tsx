@@ -235,6 +235,23 @@ it("a pending result stops retrying after a few tries and says why", async () =>
   }
 });
 
+it("a new window gets its own retry budget", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    const spy = vi.spyOn(backtestApi, "context").mockResolvedValue({ ok: true, data: { ...ctx, pending: true } });
+    setup();
+    fireEvent.click(screen.getByLabelText("Buka tester"));
+    fireEvent.click(screen.getByRole("tab", { name: "Trade saya" }));
+    for (let i = 0; i < 10; i++) await act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
+    expect(spy).toHaveBeenCalledTimes(6);
+    fireEvent.change(screen.getByLabelText("Jendela (bar)"), { target: { value: "5" } });
+    for (let i = 0; i < 10; i++) await act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
+    expect(spy).toHaveBeenCalledTimes(12);                 // 6 more for window 5
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("a pending (warm-up) result is retried", async () => {
   const spy = vi.spyOn(backtestApi, "context")
     .mockResolvedValueOnce({ ok: true, data: { ...ctx, pending: true } })

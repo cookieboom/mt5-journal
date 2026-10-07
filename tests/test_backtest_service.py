@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from journal.adapter.base import Candle
 from journal.domain.indicators.lang import ScriptError
 from journal.store import candles_store as cs
-from journal.store.db import connect
+from journal.store.db import connect, now_ms
 from journal.web import backtest as bt
 from journal.web.app import create_app
 
@@ -196,12 +196,14 @@ def test_replay_range_never_ends_past_the_last_stored_bar(conn, exit_msc):
     assert out["session"]["range_end_msc"] == T0 + 39 * M5
 
 
-def test_replay_with_no_stored_bars_is_refused(conn):
-    # Nothing stored for this symbol: no range can be built, and none that ends
-    # at a raw exit time no bar can fill.
-    with pytest.raises(ValueError, match="no stored bars"):
-        bt.replay_session(conn, symbol="XAUUSDc", timeframe="M5", decision_msc=T0,
-                          exit_msc=10**15)
+def test_replay_with_no_stored_bars_queues_a_fill_but_never_past_now(conn):
+    # Pruned or never-filled bars: the session is still created and its fill
+    # queued (`journal live` recovers it) — but the range stops at now, so the
+    # fill is one that can complete.
+    out = bt.replay_session(conn, symbol="XAUUSDc", timeframe="M5", decision_msc=T0,
+                            exit_msc=10**15)
+    assert out["pending"] is True
+    assert T0 < out["session"]["range_end_msc"] <= now_ms()
 
 
 def test_replay_end_follows_load_bars_when_native_lags_m1(conn):

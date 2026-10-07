@@ -368,8 +368,10 @@ function TradeContext({ q, r, nowMs, draft, onDraft, win, onWin, out, onOut }: {
   // a new closed bar does not change closed trades. Only a clean, settled,
   // recent result is kept: an error retries on the next open, a pending one
   // (warm-up still queued) retries on a timer a few times, an old one refreshes.
-  const [retry, setRetry] = useState(0);
   const key = JSON.stringify([q, win]);
+  // Retries are counted per key: a new window or script gets its own budget.
+  const [tries, setTries] = useState({ key: "", n: 0 });
+  const retry = tries.key === key ? tries.n : 0;
   const kept = out?.key === key && !out.err && !out.res?.pending &&
     Date.now() - (out.res?.computed_ms ?? 0) < STALE_MS;
   const ready = q !== null && r !== null;
@@ -381,7 +383,7 @@ function TradeContext({ q, r, nowMs, draft, onDraft, win, onWin, out, onOut }: {
       if (!live) return;
       onOut(x.ok && x.data ? { key, res: x.data } : { key, err: x.error ?? "gagal menghitung" });
       if (x.ok && x.data?.pending && retry < PENDING_RETRIES) {
-        timer = setTimeout(() => setRetry((n) => n + 1), PENDING_RETRY_MS);
+        timer = setTimeout(() => setTries({ key, n: retry + 1 }), PENDING_RETRY_MS);
       }
     });
     return () => { live = false; if (timer) clearTimeout(timer); };
