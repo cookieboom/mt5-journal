@@ -193,3 +193,48 @@ def test_tf_inner_lookback_is_capped():
     p = parse('plot(tf("H1", ema(ema(ema(ema(ema(close, 5000), 5000), 5000), 5000), 5000)))')
     with pytest.raises(ScriptError, match="limit"):
         htf_lookback(p, resolve_consts(p, {}), M5)
+
+
+# --- Strategy Tester: signal() exits + exit() (spec 2026-10-07-strategy-tester) --
+
+@pytest.mark.parametrize("src", [
+    'signal("long", close > open, stop=low[1] - atr(14), target_r=2)',
+    'signal("short", close < open, stop=high[1], target=sma(close, 20))',
+    'r = input(1.5)\nsignal("long", close > open, target_r=r * 2)',
+    'signal("long", close > open, stop=tf("H1", low))\nexit("long", close < open)',
+])
+def test_signal_exits_accepted_forms(src):
+    parse(src)
+
+
+def test_signal_keywords_and_exit_are_recorded_as_steps():
+    p = parse('signal("long", close > open, stop=low - 1, target=high + 1)\n'
+              'signal("short", close < open, target_r=2)\n'
+              'exit("long", close < low[1])')
+    long_, short = p.signals
+    assert long_.stop is not None and long_.target is not None and long_.target_r is None
+    assert short.stop is None and short.target is None and short.target_r is not None
+    assert [(e.side) for e in p.exits] == ["long"]
+    assert [(s.kind, s.target) for s in p.steps] == [
+        ("signal", 0), ("stop", 0), ("target", 0), ("signal", 1), ("exit", 0)]
+
+
+@pytest.mark.parametrize("src, msg", [
+    ('signal("long", close > open, sl=low)', "unknown keyword"),
+    ('signal("long", close > open, target=high, target_r=2)', "mutually exclusive"),
+    ('signal("long", close > open, target_r=close)', "target_r must be constant"),
+    ('signal("long", close > open)\nexit("up", close < open)', "exit side"),
+    ('signal("long", close > open)\nexit("long")', r"exit\(\) takes"),
+    ('plot(close)\nexit("long", close < open)', "nothing to exit"),
+    ('exit = 1\nplot(close)', "reserved"),
+])
+def test_signal_exits_refused(src, msg):
+    with pytest.raises(ScriptError, match=msg):
+        parse(src)
+
+
+def test_lookback_counts_stop_target_and_exit():
+    c = lambda p: lookback(p, resolve_consts(p, {}), MINUTE)  # noqa: E731
+    assert c(parse('signal("long", close > open, stop=sma(low, 30))')) == 30
+    assert c(parse('signal("long", close > open, target=sma(high, 40)[2])')) == 42
+    assert c(parse('signal("long", close > open)\nexit("long", sma(close, 25) > close)')) == 25

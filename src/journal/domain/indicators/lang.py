@@ -5,7 +5,7 @@ node not on the whitelist, so nothing here is ever handed to `eval`/`exec`.
 The checked tree is kept as-is and `engine.evaluate` interprets it.
 
 Statements: `name = expr`, `name = input(...)`, `plot(...)`, `hline(...)`,
-`signal(...)`. Expressions: numbers, booleans, names, arithmetic, comparisons,
+`signal(side, cond, stop=, target=, target_r=)`, `exit(side, cond)`. Expressions: numbers, booleans, names, arithmetic, comparisons,
 `and`/`or`/`not`, builtin calls (positional args only), and `x[n]` with n a
 literal integer >= 0 — n bars AGO. A negative or computed index is refused:
 that is the language half of the no-lookahead guard.
@@ -37,7 +37,7 @@ MAX_WINDOW = 5_000
 MAX_LOOKBACK = 20_000
 
 SERIES = ("open", "high", "low", "close", "volume", "spread", "hl2", "hlc3", "ohlc4")
-OUTPUTS = ("input", "plot", "hline", "signal", "tf")
+OUTPUTS = ("input", "plot", "hline", "signal", "exit", "tf")
 # Theme token names from frontend/src/lib/theme.ts — never hex (one palette).
 COLORS = ("violet", "cyan", "mark-amber", "mark-sky", "pos", "neg", "warn",
           "mark-chalk", "muted", "ink")
@@ -92,15 +92,27 @@ class HLine:
 
 @dataclass(frozen=True)
 class Signal:
+    """`stop`/`target`: price-level series read at the signal bar; `target_r`:
+    a constant R multiple of the actual risk (exclusive with `target`)."""
+    side: str
+    expr: ast.expr
+    stop: ast.expr | None = None
+    target: ast.expr | None = None
+    target_r: ast.expr | None = None
+
+
+@dataclass(frozen=True)
+class Exit:
     side: str
     expr: ast.expr
 
 
 @dataclass(frozen=True)
 class Step:
-    """One statement, in source order. `kind` = assign | plot | signal;
-    `target` is the variable name or the index into plots/signals."""
-    kind: Literal["assign", "plot", "signal"]
+    """One statement, in source order. `kind` = assign | plot | signal | stop |
+    target | exit; `target` is the variable name or the index into
+    plots/signals/exits (stop/target index their signal)."""
+    kind: Literal["assign", "plot", "signal", "stop", "target", "exit"]
     target: str | int
     expr: ast.expr
 
@@ -112,6 +124,7 @@ class Program:
     plots: list[Plot] = field(default_factory=list)
     hlines: list[HLine] = field(default_factory=list)
     signals: list[Signal] = field(default_factory=list)
+    exits: list[Exit] = field(default_factory=list)
     # Names bound to a constant expression (inputs included), in order.
     consts: dict[str, ast.expr] = field(default_factory=dict)
     # Timeframes named by tf() calls.
@@ -139,12 +152,14 @@ def parse(source: str) -> Program:
             _assign(p, stmt, defined)
         elif isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call) \
                 and isinstance(stmt.value.func, ast.Name) \
-                and stmt.value.func.id in ("plot", "hline", "signal"):
+                and stmt.value.func.id in ("plot", "hline", "signal", "exit"):
             _output(p, stmt.value, defined)
         else:
             raise error_at(stmt, f"{type(stmt).__name__} statement is not allowed")
     if not p.plots and not p.signals:
         raise ScriptError("a script must plot() or signal() something")
+    if p.exits and not p.signals:
+        raise ScriptError("exit() without signal(): nothing to exit")
     return p
 
 
@@ -260,13 +275,32 @@ def _output(p: Program, call: ast.Call, defined: set[str]) -> None:
         p.hlines.append(HLine(call.args[0], _str(kw.get("title"), "title", ""),
                               _str(kw.get("pane"), "pane", "price"),
                               _str(kw.get("color"), "color", "muted", COLORS)))
-    else:
+    elif fn == "exit":
         if len(call.args) != 2 or call.keywords:
-            raise error_at(call, 'signal() takes a side ("long"/"short") and a condition')
-        side = _str(call.args[0], "signal side", "", SIDES)
+            raise error_at(call, 'exit() takes a side ("long"/"short") and a condition')
+        side = _str(call.args[0], "exit side", "", SIDES)
         _expr(call.args[1], defined, p)
-        p.signals.append(Signal(side, call.args[1]))
-        p.steps.append(Step("signal", len(p.signals) - 1, call.args[1]))
+        p.exits.append(Exit(side, call.args[1]))
+        p.steps.append(Step("exit", len(p.exits) - 1, call.args[1]))
+    else:
+        if len(call.args) != 2:
+            raise error_at(call, 'signal() takes a side ("long"/"short") and a condition')
+        kw = _kwargs(call, ("stop", "target", "target_r"))
+        side = _str(call.args[0], "signal side", "", SIDES)
+        if "target" in kw and "target_r" in kw:
+            raise error_at(kw["target_r"], "target and target_r are mutually exclusive")
+        for node in (call.args[1], *kw.values()):
+            _expr(node, defined, p)
+        if "target_r" in kw and not _is_const(kw["target_r"], p):
+            raise error_at(kw["target_r"], "target_r must be constant "
+                                           "(a number, an input, or arithmetic over those)")
+        i = len(p.signals)
+        p.signals.append(Signal(side, call.args[1], kw.get("stop"), kw.get("target"),
+                                kw.get("target_r")))
+        p.steps.append(Step("signal", i, call.args[1]))
+        for k in ("stop", "target"):
+            if k in kw:
+                p.steps.append(Step(k, i, kw[k]))  # type: ignore[arg-type]  # literal k
 
 
 def _expr(node: ast.expr, defined: set[str], p: Program, inner: bool = False) -> None:
