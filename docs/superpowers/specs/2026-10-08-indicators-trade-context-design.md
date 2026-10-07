@@ -116,8 +116,10 @@ trades each count once (CLAUDE.md).
 
 1. Collect rows from the three sources; empty → 200 with zero counts.
 2. One evaluation over `[min ref − warm-up, max ref]` via `load_frames` (not
-   one per trade). Cap at `MAX_BACKTEST_BARS` → 400 with the count, as the
-   tester.
+   one per trade). Over `MAX_BACKTEST_BARS` (counted with `load_bars`, the
+   same reader, before loading): the newest bars only — older trades read
+   unknown and `clipped_from_msc` says where the cut fell. One old replay trade
+   must not blank the tab (M1 spans always clip).
 3. `classify` each row.
 4. Response, per source `real | replay | paper`:
    `{true: Cell, false: Cell, n_unknown}`.
@@ -132,19 +134,24 @@ trades each count once (CLAUDE.md).
   (nested: `breakdown.*.session` already holds the session-label buckets):
   `day` (UTC midnight), `week` (Monday 00:00 UTC), `session` — the session
   instance from `analytics/sessions.session_window_msc(ms)`. Each bucket:
-  `key` = period start msc, `end_msc`, `n, win_rate, avg_r, total_r`, and
-  `oos: bool` (period start ≥ `split_msc`). Same `_bucket`, ungated (tester
-  exception).
+  `key` = period start msc, `end_msc`, `n, win_rate, avg_r, total_r` (`null`
+  with no known R), `last_exit_msc`, and `segment: is | oos | mixed` by
+  decision time, as the segments split. Ungated (tester exception).
 - Jump: the existing `POST /api/indicators/backtest/replay` with
-  `decision_msc = key`, `exit_msc = end_msc`. Lead bars as today. Session is
-  `origin = 'study'`. **No new endpoint.**
+  `decision_msc = key`, `exit_msc = last_exit_msc` (a trade can exit after its
+  period ends, and the newest period's `end_msc` lies in the future).
+  `replay_session` now ends the range at the last bar `load_bars` has when
+  nothing follows the exit, and never past now. **No new endpoint.**
 
 ### Frontend
 
 - New tab **"Trade saya"** in `StrategyTester` (between *Breakdown* and
-  *Pengaturan*). Lazy: fetches on first open and when script / symbol / TF /
-  window change; not on every live re-run (real trades change on sync, not on
-  bars). Window `N` input in the tab header (1–50).
+  *Pengaturan*). **Only beside a tester result** (rule 9: signal() output
+  always next to its OOS expectancy, n, age). Lazy: fetches on open and when
+  script / symbol / TF / window change, not on every live re-run (closed
+  trades change on sync, not on bars); kept across tab switches, refreshed on
+  reopen after 5 min; errors not kept; pending retried 5× per key. Window `N`
+  input (1–50), debounced, its draft kept across tab switches.
 - Layout: three blocks *Real*, *Replay*, *Paper* (sim blocks labelled "simulasi,
   tanpa gating"); each a 2-row table *Sinyal searah dalam N bar: ya / tidak*
   × `n · win rate · n R · avg R · total R`, plus "tidak diketahui: k". Gated
@@ -187,3 +194,19 @@ browser check on XAUUSDc M5 with an EMA-cross script.
   `N = 3` and M5 that is a 15-minute tolerance — stated in the tab tooltip.
 - **Load.** One evaluation over the span of all trades; months of M5 is well
   under the 200k cap (57k XAUUSDc M5 bars total, measured 2026-10-07).
+
+## 5. Review outcome and follow-ups
+
+Four review waves (2026-10-08). Kept deliberately, not defects: the tab does
+not refresh while it stays open; counting the clip through `load_bars` costs
+~1.8 s on M1 (correct by construction — two hand-copied versions of its
+native-else-M1 rule drifted and were removed).
+
+Pre-existing, outside this spec:
+
+- `load_frames` / the Strategy Tester read straight across store holes;
+  expose the M1-missing buckets there so every consumer treats a hole alike.
+- `load_bars` picks native vs M1 per range, so a partly-filled native TF can
+  hide M1 bars inside that range (replay shows the same).
+- `sim_stats.summary` reports `total_r = 0` with no known R (tester segments,
+  training summary); buckets and context cells now say `null`.

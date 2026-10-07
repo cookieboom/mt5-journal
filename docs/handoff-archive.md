@@ -4,6 +4,53 @@ Verbatim overflow from `docs/HANDOFF.md` § CURRENT STATE. Nothing here was
 edited; entries were moved out so the file an agent reads at the start of a
 session stays small. Newest-first, same as the live file. Split 2026-08-13.
 
+**2026-10-06 — repo cleanup; local `main` diverged from `origin/main`; the daemon has
+been down since 2026-09-21.**
+
+- *Cleanup (`compact`).* Executed plans are no longer kept in the tree:
+  `docs/plans/`, `docs/superpowers/plans/`, the phase-B kickoff prompt and the
+  chart roadmap are gone — git history has them, and specs (the design
+  rationale) stay. Also dropped: the vendored `.agents/` copy of the graphify
+  skill, `web/format.py` (Jinja-era helpers; `price`/`level_word` moved into
+  `views.py`), and the unused `listSessions`/`getSummary` in `replayApi.ts`.
+  **Convention from here: a plan is deleted in the merge that finishes it.**
+- *`worktree-decouple-live-loop-spec` was already merged upstream* — PR #13,
+  2026-09-07 (entry below). This checkout's `main` was never pulled after
+  that, so locally it looked unmerged and was merged a second time
+  (`85bc346`, same tip `4aa54fc`, identical content). Its plan went with the
+  cleanup convention above.
+- **Local `main` and `origin/main` have diverged — reconcile before any
+  push.** `origin/main` has the PR #13 merge (`c18e2f7`); local `main` has
+  `ea18124` (paper quote fix — its remote branch was deleted today, so this
+  checkout is now its only copy), the cleanup `de10d1c`, the duplicate merge
+  and this entry. Both sides carry the same decouple commits, so
+  `git merge origin/main` (or a rebase that drops `85bc346`) should be
+  conflict-free.
+- *Remote branches `worktree-native-mt5-adapter` and
+  `worktree-paper-quote-watch-fix` deleted* — both were fully in local `main`
+  (the first is also in `origin/main`; the second only locally, see above).
+- *Why the daily backups stopped.* Not a bug: the snapshot is taken by
+  `journal live` (`_maybe_backup`), and `journal live` is not running. Last
+  `live_quotes` write 2026-09-21 22:54 UTC, last snapshot
+  `journal-20260921T224124Z.db`; the Colima VM hosting the bridge was shut
+  down 2026-09-22 03:09 UTC and nothing has started it since. The 11→21 Sep
+  gap in `data/backups/` is the same cause. `journal status` already flags
+  both (`backup … overdue`, `live … not running`). A manual `journal backup`
+  was taken today.
+
+Gates: `uv run pytest` **922 passed** (the hygiene test's live-DB arm runs
+here, so nothing skipped); `npm --prefix frontend test`
+**402 passed / 51 files**; `tsc -b` clean; the threaded live tests
+(`test_live`, `test_cli_live`, `test_locked_client`, 74 tests) green 8 runs
+in a row.
+
+**Still owed by a human:** `colima start`, bring the bridge container up, then
+`journal live`. Local `main` lacked PR #13 until today, so if the daemon that
+ran until 2026-09-21 was started from this checkout it was the old
+single-loop code (unverified). Treat the next start as the first real run of
+the two-thread daemon: watch the first position close hand off to
+`symbol_cycle` and land in `trades`.
+
 **2026-09-04 — decoupled the live loop: position and symbol-data paths split
 onto two threads** (`worktree-decouple-live-loop-spec`, 8 tasks, spec in
 `docs/superpowers/specs/2026-09-04-decouple-live-loop-design.md`; merged

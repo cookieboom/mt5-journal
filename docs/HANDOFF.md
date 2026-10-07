@@ -33,6 +33,50 @@ home each, and a second copy is a future lie. Point, never duplicate.
 
 **Last updated:** 2026-10-08
 
+**2026-10-08 — indicators, spec §4: trade context + replay jump per period
+(`feat/indicators-context`, spec
+`docs/superpowers/specs/2026-10-08-indicators-trade-context-design.md`).**
+The umbrella's deferred §3 plus the per-period half of its replay jump. No
+migration, nothing stored.
+
+- *Trade context* `domain/indicators/context.agreement`: a trade is "ya" when
+  a same-side `signal()` fired in the last N closed bars before it (real: fill
+  time; replay: `decision_msc`; paper: `requested_msc`). Unknown — never
+  "tidak" — when warm-up (bars before `warm_from_msc` masked to NaN), too few
+  bars, or a **store hole**: M1 traded in a bucket the frame lacks. Found on
+  the live store: M5 holes 2026-08-14→28 and 09-07→20, native D1 stops
+  2026-07-26; 3 of 137 real M5 trades had been labelled from stale bars.
+- *API* `POST /api/indicators/context` (`web/trade_context.py`): real cells via
+  `report.bucket_stat` (§8 gate, per-metric n), replay (blind only) and paper
+  via `sim_stats`, ungated. Span over `MAX_BACKTEST_BARS` → newest bars only,
+  older trades unknown, `clipped_from_msc` (M1 clips to 2026-03-16, 1.8 s; M5
+  0.4 s).
+- *Periods* `backtest.report` → `breakdown.all.periods{day,week,session}`
+  (`sessions.session_window_msc`), each with `last_exit_msc` and
+  `segment is|oos|mixed`. Jump = the existing replay endpoint, decision = period
+  start, exit = last exit. `replay_session` (shared with the per-trade jump)
+  now ends at the last bar `load_bars` has when nothing follows the exit —
+  previously the newest week's jump made a range ending in the future.
+- *FE* tester tab **Trade saya** (only beside a tester result — rule 9;
+  window debounced; result kept across tab switches, refreshed on reopen
+  after 5 min) and Breakdown → **Periode** (Hari/Minggu/Sesi, by total R,
+  best/worst, IS / OOS / IS+OOS). Refused Replay jumps now show in the strip.
+- `_stats`: bucket/period `total_r` is `null` with no known R (was 0).
+- Real XAUUSDc M5 EMA cross: "ya" n 2 (gated), "tidak" n 132, win 35%, avg R
+  −0.32 (n R 32). Browser-checked on a DB copy; period Replay opened a study
+  session at the right cursor.
+
+Four review waves; spec §5 lists what was kept on purpose. **Follow-ups
+(pre-existing, not this branch):** the tester/chart read straight across
+store holes (`load_frames` should expose the M1-missing buckets); `load_bars`
+picks native vs M1 per range; `sim_stats.summary` gives `total_r = 0` with no
+known R.
+
+Gates: `pytest` **1346 passed, 9 skipped**; `ruff` clean; `mypy` clean (85);
+`vitest` **465 passed**; `tsc` clean; `journal rebuild` + `verify` on a
+snapshot: PASS. No migration — `journal live` / `serve` need only the usual
+restart to pick up the code.
+
 **2026-10-08 — indicators, spec §3: Strategy Tester (`feat/indicators-tester`,
 spec `docs/superpowers/specs/2026-10-07-indicators-strategy-tester-design.md`).**
 The umbrella's §4 backtest moved up to §3; real-trade context is deferred.
@@ -210,53 +254,6 @@ rebuild` on a snapshot of the live store: 132 trades, identities 1 and 2 PASS;
 `journal serve` smoke-tested on the same snapshot. The first `journal live`
 after merge will report `health.py` as changed code (the module moved) — one
 restart clears it.
-
-**2026-10-06 — repo cleanup; local `main` diverged from `origin/main`; the daemon has
-been down since 2026-09-21.**
-
-- *Cleanup (`compact`).* Executed plans are no longer kept in the tree:
-  `docs/plans/`, `docs/superpowers/plans/`, the phase-B kickoff prompt and the
-  chart roadmap are gone — git history has them, and specs (the design
-  rationale) stay. Also dropped: the vendored `.agents/` copy of the graphify
-  skill, `web/format.py` (Jinja-era helpers; `price`/`level_word` moved into
-  `views.py`), and the unused `listSessions`/`getSummary` in `replayApi.ts`.
-  **Convention from here: a plan is deleted in the merge that finishes it.**
-- *`worktree-decouple-live-loop-spec` was already merged upstream* — PR #13,
-  2026-09-07 (entry below). This checkout's `main` was never pulled after
-  that, so locally it looked unmerged and was merged a second time
-  (`85bc346`, same tip `4aa54fc`, identical content). Its plan went with the
-  cleanup convention above.
-- **Local `main` and `origin/main` have diverged — reconcile before any
-  push.** `origin/main` has the PR #13 merge (`c18e2f7`); local `main` has
-  `ea18124` (paper quote fix — its remote branch was deleted today, so this
-  checkout is now its only copy), the cleanup `de10d1c`, the duplicate merge
-  and this entry. Both sides carry the same decouple commits, so
-  `git merge origin/main` (or a rebase that drops `85bc346`) should be
-  conflict-free.
-- *Remote branches `worktree-native-mt5-adapter` and
-  `worktree-paper-quote-watch-fix` deleted* — both were fully in local `main`
-  (the first is also in `origin/main`; the second only locally, see above).
-- *Why the daily backups stopped.* Not a bug: the snapshot is taken by
-  `journal live` (`_maybe_backup`), and `journal live` is not running. Last
-  `live_quotes` write 2026-09-21 22:54 UTC, last snapshot
-  `journal-20260921T224124Z.db`; the Colima VM hosting the bridge was shut
-  down 2026-09-22 03:09 UTC and nothing has started it since. The 11→21 Sep
-  gap in `data/backups/` is the same cause. `journal status` already flags
-  both (`backup … overdue`, `live … not running`). A manual `journal backup`
-  was taken today.
-
-Gates: `uv run pytest` **922 passed** (the hygiene test's live-DB arm runs
-here, so nothing skipped); `npm --prefix frontend test`
-**402 passed / 51 files**; `tsc -b` clean; the threaded live tests
-(`test_live`, `test_cli_live`, `test_locked_client`, 74 tests) green 8 runs
-in a row.
-
-**Still owed by a human:** `colima start`, bring the bridge container up, then
-`journal live`. Local `main` lacked PR #13 until today, so if the daemon that
-ran until 2026-09-21 was started from this checkout it was the old
-single-loop code (unverified). Treat the next start as the first real run of
-the two-thread daemon: watch the first position close hand off to
-`symbol_cycle` and land in `trades`.
 
 ## Who does what
 
