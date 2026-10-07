@@ -1,0 +1,4 @@
+# ADX
+length = input(14, min=2, max=100, title="Length")
+plot(adx(length), title="ADX", color="violet", pane="adx")
+hline(25, pane="adx")

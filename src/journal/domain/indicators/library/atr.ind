@@ -1,0 +1,3 @@
+# ATR
+length = input(14, min=1, max=200, title="Length")
+plot(atr(length), title="ATR", color="mark-amber", pane="atr")

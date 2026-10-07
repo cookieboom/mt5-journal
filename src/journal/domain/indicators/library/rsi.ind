@@ -1,0 +1,7 @@
+# RSI
+length = input(14, min=2, max=200, title="Length")
+upper = input(70, min=50, max=100, title="Overbought")
+lower = input(30, min=0, max=50, title="Oversold")
+plot(rsi(close, length), title="RSI", color="violet", pane="rsi")
+hline(upper, title="OB", pane="rsi")
+hline(lower, title="OS", pane="rsi")

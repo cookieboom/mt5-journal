@@ -1,0 +1,2 @@
+# VWAP (UTC day)
+plot(vwap(), title="VWAP", color="mark-amber")

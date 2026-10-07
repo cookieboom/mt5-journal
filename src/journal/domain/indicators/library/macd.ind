@@ -1,0 +1,8 @@
+# MACD
+fast = input(12, min=1, max=200, title="Fast")
+slow = input(26, min=2, max=400, title="Slow")
+sig = input(9, min=1, max=100, title="Signal")
+plot(macd_hist(close, fast, slow, sig), title="Hist", color="muted", pane="macd", style="histogram")
+plot(macd_line(close, fast, slow), title="MACD", color="cyan", pane="macd")
+plot(macd_signal(close, fast, slow, sig), title="Signal", color="mark-amber", pane="macd")
+hline(0, pane="macd")

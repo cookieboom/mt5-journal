@@ -1,0 +1,9 @@
+# EMA cross
+fast_len = input(20, min=1, max=500, title="Fast")
+slow_len = input(50, min=1, max=500, title="Slow")
+fast = ema(close, fast_len)
+slow = ema(close, slow_len)
+plot(fast, title="EMA fast", color="cyan")
+plot(slow, title="EMA slow", color="violet")
+signal("long", crossover(fast, slow))
+signal("short", crossunder(fast, slow))

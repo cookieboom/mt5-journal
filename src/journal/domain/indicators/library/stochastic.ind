@@ -1,0 +1,8 @@
+# Stochastic
+length = input(14, min=1, max=200, title="%K length")
+smooth = input(3, min=1, max=20, title="%K smoothing")
+d_len = input(3, min=1, max=20, title="%D length")
+plot(stoch_k(length, smooth), title="%K", color="cyan", pane="stoch")
+plot(stoch_d(length, smooth, d_len), title="%D", color="mark-amber", pane="stoch")
+hline(80, pane="stoch")
+hline(20, pane="stoch")
