@@ -66,7 +66,8 @@ def _real_cell(rows: list[sqlite3.Row]) -> dict[str, Any]:
 def _sim_cell(rows: list[sqlite3.Row]) -> dict[str, Any]:
     s = sim_stats.summary([dict(r) for r in rows])
     return {"n": s["n"], "n_r": sum(1 for r in rows if r["r_multiple"] is not None),
-            "win_rate": s["win_rate"], "avg_r": s["avg_r"], "total_r": s["total_r"],
+            "win_rate": s["win_rate"], "avg_r": s["avg_r"],
+            "total_r": s["total_r"] if s["avg_r"] is not None else None,   # no R → unknown
             "gated": False}
 
 

@@ -1,6 +1,6 @@
 # Indicators §4 — Trade context + replay jump per period — design
 
-**Status:** brainstormed 2026-10-08, awaiting review. Umbrella:
+**Status:** brainstormed and built 2026-10-08 (`feat/indicators-context`). Umbrella:
 `2026-10-07-indicators-design.md` (its §3 outline, deferred there). Builds on
 `2026-10-07-indicators-strategy-tester-design.md` (merged 2026-10-08).
 
@@ -72,8 +72,8 @@ likely clears `n ≥ 20`. Hence:
 **Pure function** — `domain/indicators/context.py`:
 
 ```python
-classify(bars_close_msc: list[int], tf_ms: int, signals: list[tuple[side, Series]],
-         ref_msc: int, direction: "buy"|"sell", window: int) -> "true"|"false"|None
+agreement(index, tf_ms, signals: [(side, Series)], ref_msc, direction, window,
+          missing=np.array([])) -> "true" | "false" | None
 ```
 
 - Last closed bar before `ref_msc`: the latest bar with
@@ -84,7 +84,16 @@ classify(bars_close_msc: list[int], tf_ms: int, signals: list[tuple[side, Series
   when all of them are known and none fires. **`None` (unknown)** when the
   window has fewer than `window` bars in the store, or any value in it is NaN
   (warm-up) — never folded into `"false"` (rule 4). Unknowns are counted and
-  reported, not bucketed.
+  reported, not bucketed. The service masks every bar before the frame's
+  `warm_from_msc` to NaN: a pre-warm-up value is not trusted even when it
+  reads 1.0.
+- **Store holes are unknown, not quiet** (found on the live store while
+  building): M5 has uncovered holes (2026-08-14→28, 09-07→20) and native D1
+  stops 2026-07-26 while M1 runs on. `missing` = buckets M1 traded in that the
+  frame lacks; one that closed by `ref_msc` inside the window's span → `None`.
+  `MAX_GAP_MS` (4 days since the last closed bar) is the backstop where a
+  symbol has no M1. Measured: 3 of 137 real trades on M5 had been labelled
+  from stale bars before this.
 - Opposite-side signals are ignored (a short signal before a buy is not
   "agreement"; showing "against" is a later column if asked).
 - Forming bar never used: `ref_msc` is in the past and only closed bars
@@ -119,10 +128,10 @@ trades each count once (CLAUDE.md).
 
 ### B. Replay jump per period
 
-- `backtest.report` gains three breakdown keys under `breakdown.all` only:
-  `day` (UTC midnight), `week` (Monday 00:00 UTC), `session` (UTC midnight +
-  the session's start hour from `analytics/sessions._WINDOWS` — expose a
-  `session_start_msc(ms)` there rather than re-deriving hours). Each bucket:
+- `backtest.report` gains `breakdown.all.periods = {day, week, session}`
+  (nested: `breakdown.*.session` already holds the session-label buckets):
+  `day` (UTC midnight), `week` (Monday 00:00 UTC), `session` — the session
+  instance from `analytics/sessions.session_window_msc(ms)`. Each bucket:
   `key` = period start msc, `end_msc`, `n, win_rate, avg_r, total_r`, and
   `oos: bool` (period start ≥ `split_msc`). Same `_bucket`, ungated (tester
   exception).
@@ -152,10 +161,10 @@ trades each count once (CLAUDE.md).
 
 ## 3. Plan (one task = one commit, tests first — rule 7)
 
-1. `domain/indicators/context.classify` + tests: window counting across a
+1. `domain/indicators/context.agreement` + tests: window counting across a
    weekend gap, NaN → `None`, short window → `None`, opposite side ignored,
    ref exactly on a bar close, forming bar excluded.
-2. `sessions.session_start_msc` + `backtest.report` period keys + tests
+2. `sessions.session_window_msc` + `backtest.report` periods + tests
    (week starts Monday UTC, `oos` flag at the split, keys stable).
 3. `web/trade_context.py` + route + schema; tests with fixture DB: real gated
    via `bucket_stat`, replay excludes `study`, paper included, unknown counted,

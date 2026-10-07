@@ -148,6 +148,7 @@ def test_paper_is_ungated(conn):
     s = run(conn)["sources"]["paper"]
     assert s["true"]["n"] == 1 and s["true"]["win_rate"] == 0.0
     assert s["true"]["avg_r"] is None and s["true"]["gated"] is False
+    assert s["true"]["total_r"] is None          # no known R: unknown, not 0 (rule 4)
 
 
 def test_empty_store_gives_zero_counts(conn):
