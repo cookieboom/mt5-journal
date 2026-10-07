@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  mergeTail, normalizeLayout, paneAssignments, signalMarkers, toLineData, valueAt,
+  clipResult, mergeTail, normalizeLayout, paneAssignments, signalMarkers, toLineData, valueAt,
   plotColor, type IndicatorResult,
 } from "./indicators";
 import { palette } from "./theme";
@@ -101,5 +101,17 @@ describe("plotColor", () => {
   it("maps a theme token, falling back to muted", () => {
     expect(plotColor("cyan")).toBe(palette.cyan);
     expect(plotColor("#ff0000")).toBe(palette.muted);
+  });
+});
+
+describe("clipResult", () => {
+  it("never keeps a bar or signal past the cursor", () => {
+    const r = result([1, 2, 3], [1, 2, 3], { signals: [{ time_msc: 3, side: "long" }], forming_msc: 3 });
+    const c = clipResult(r, 2);
+    expect(c.times).toEqual([1, 2]);
+    expect(c.plots[0].values).toEqual([1, 2]);
+    expect(c.signals).toEqual([]);
+    expect(c.forming_msc).toBeNull();
+    expect(clipResult(r, 9)).toBe(r);
   });
 });

@@ -113,7 +113,7 @@ it("a data-only update reuses the series", () => {
   r.rerender(view([{ id: "a", result: next }]));
   const after = chart!.panes()[1].getSeries()[0];
   expect(after).toBe(before);
-  expect((after.data().at(-1) as { value: number }).value).toBe(9);
+  expect((after.data()[after.data().length - 1] as { value: number }).value).toBe(9);
 });
 
 it("a chart-type switch with only an oscillator keeps the price pane first", () => {

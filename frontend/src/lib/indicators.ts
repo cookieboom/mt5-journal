@@ -198,3 +198,19 @@ export const indicatorsApi = {
   getLayout: () => call<{ layout: unknown }>("GET", "/api/indicators/layout"),
   putLayout: (l: IndicatorLayout) => call<{ ok: true }>("PUT", "/api/indicators/layout", l),
 };
+
+// Drop everything after `toMs`. The chart never shows an indicator past the
+// last drawn bar — in replay that is the cursor, whatever a stale or racing
+// response held (the server clips too; this is the second lock).
+export function clipResult(r: IndicatorResult, toMs: number): IndicatorResult {
+  let k = r.times.length;
+  while (k > 0 && r.times[k - 1] > toMs) k--;
+  if (k === r.times.length) return r;
+  return {
+    ...r,
+    times: r.times.slice(0, k),
+    plots: r.plots.map((p) => ({ ...p, values: p.values.slice(0, k) })),
+    signals: r.signals.filter((s) => s.time_msc <= toMs),
+    forming_msc: r.forming_msc !== null && r.forming_msc <= toMs ? r.forming_msc : null,
+  };
+}
