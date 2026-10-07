@@ -25,6 +25,9 @@ MAX_SOURCE = 20_000
 MAX_STATEMENTS = 200
 MAX_DEPTH = 50
 MAX_WINDOW = 5_000
+# Total warm-up a script may ask for. Nested smoothing multiplies fast, and
+# every compute loads this many bars before the window.
+MAX_LOOKBACK = 20_000
 
 SERIES = ("open", "high", "low", "close", "volume", "spread", "hl2", "hlc3", "ohlc4")
 OUTPUTS = ("input", "plot", "hline", "signal")
@@ -425,6 +428,8 @@ def lookback(p: Program, consts: dict[str, float | bool], tf_ms: int) -> int:
     out = 0
     for step in p.steps:
         n = lb(step.expr)
+        if n > MAX_LOOKBACK:
+            raise error_at(step.expr, f"needs {n} bars of warm-up; the limit is {MAX_LOOKBACK}")
         if step.kind == "assign":
             assert isinstance(step.target, str)
             var_lb[step.target] = n

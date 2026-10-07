@@ -128,3 +128,9 @@ def test_limits():
 def test_a_script_must_output_something():
     with pytest.raises(ScriptError, match="plot"):
         parse("x = sma(close, 5)")
+
+
+def test_total_lookback_is_capped():
+    p = parse("plot(ema(ema(ema(close, 5000), 5000), 5000))")
+    with pytest.raises(ScriptError, match="warm-up"):
+        lookback(p, resolve_consts(p, {}), MINUTE)
