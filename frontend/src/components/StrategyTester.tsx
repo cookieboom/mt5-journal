@@ -1,7 +1,8 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
-  ageLabel, fmtR, headline,
-  type BacktestResult, type BacktestSettings, type Bucket, type Segment, type TesterTrade,
+  ageLabel, backtestApi, fmtR, headline,
+  type BacktestResult, type BacktestSettings, type Bucket, type ContextCell, type ContextQuery,
+  type ContextResult, type ContextSourceKey, type Period, type PeriodKind, type Segment, type TesterTrade,
 } from "../lib/backtest";
 import { wib } from "../lib/format";
 import { palette, white } from "../lib/theme";
@@ -10,11 +11,13 @@ import { palette, white } from "../lib/theme";
 // tester §1.8). Collapsed: one line — the OOS headline with n and age, which is
 // what rule 9 makes non-optional beside any live signal marker. Expanded: four
 // tabs. Out-of-sample leads everywhere; in-sample is context, not the score.
-// No order button, ever.
+// No order button, ever. "Trade saya" (spec 2026-10-08-indicators-trade-
+// context) describes MY past trades against the script — no verdict (rule 9).
 
-type Tab = "summary" | "trades" | "breakdown" | "settings";
+type Tab = "summary" | "trades" | "breakdown" | "context" | "settings";
 const TABS: [Tab, string][] = [
-  ["summary", "Ringkasan"], ["trades", "Daftar trade"], ["breakdown", "Breakdown"], ["settings", "Pengaturan"],
+  ["summary", "Ringkasan"], ["trades", "Daftar trade"], ["breakdown", "Breakdown"],
+  ["context", "Trade saya"], ["settings", "Pengaturan"],
 ];
 const REASON: Record<TesterTrade["reason"], string> = {
   sl: "SL", tp: "TP", exit: "exit()", opposite: "sinyal lawan", max_hold: "max hold", open: "terbuka",
@@ -25,7 +28,7 @@ export interface TesterCandidate { id: string; name: string }
 
 export default function StrategyTester({
   candidates, activeId, onActive, settings, onSettings, result, error, loading, armed, onRun,
-  onTradeClick, onReplay, nowMs,
+  onTradeClick, onReplay, onPeriodReplay, context, nowMs,
 }: {
   candidates: TesterCandidate[];
   activeId: string;
@@ -39,6 +42,8 @@ export default function StrategyTester({
   onRun: () => void;
   onTradeClick: (t: TesterTrade) => void;
   onReplay: (t: TesterTrade) => void;
+  onPeriodReplay: (p: Period) => void;
+  context: ContextQuery | null;      // the active script/symbol/TF, for "Trade saya"
   nowMs: number;
 }) {
   const [open, setOpen] = useState(false);
@@ -75,10 +80,11 @@ export default function StrategyTester({
           </div>
           <div className="flex-1 min-h-0 overflow-auto p-3">
             {tab === "settings" ? <Settings s={settings} onChange={onSettings} />
+              : tab === "context" ? <TradeContext q={context} r={result} nowMs={nowMs} />
               : !result ? <div className="text-muted">Jalankan tester untuk melihat hasil.</div>
               : tab === "summary" ? <Summary r={result} nowMs={nowMs} />
               : tab === "trades" ? <Trades r={result} onClick={onTradeClick} onReplay={onReplay} />
-              : <BreakdownTab r={result} />}
+              : <BreakdownTab r={result} onPeriodReplay={onPeriodReplay} />}
           </div>
         </div>
       )}
@@ -209,7 +215,7 @@ function Trades({ r, onClick, onReplay }: {
   );
 }
 
-function BreakdownTab({ r }: { r: BacktestResult }) {
+function BreakdownTab({ r, onPeriodReplay }: { r: BacktestResult; onPeriodReplay: (p: Period) => void }) {
   const [seg, setSeg] = useState<"oos" | "all">("oos");
   const b = r.breakdown[seg];
   const groups: [string, Bucket[], (k: Bucket["key"]) => string][] = [
@@ -254,7 +260,154 @@ function BreakdownTab({ r }: { r: BacktestResult }) {
           </table>
         ))}
       </div>
+      {r.breakdown.all.periods && <Periods ps={r.breakdown.all.periods} onReplay={onPeriodReplay} />}
     </div>
+  );
+}
+
+const KINDS: [PeriodKind, string][] = [["day", "Hari"], ["week", "Minggu"], ["session", "Sesi"]];
+
+/** Replay jump per period: days / weeks / session instances ranked by total R
+ *  (all trades; each row says whether it lies in-sample or out-of-sample). */
+function Periods({ ps, onReplay }: { ps: Record<PeriodKind, Period[]>; onReplay: (p: Period) => void }) {
+  const [kind, setKind] = useState<PeriodKind>("day");
+  const [worst, setWorst] = useState(false);
+  const list = useMemo(
+    () => [...ps[kind]].sort((a, b) => (a.total_r - b.total_r) * (worst ? 1 : -1)),
+    [ps, kind, worst],
+  );
+  return (
+    <div className="space-y-1 pt-2">
+      <div className="flex gap-3 text-meta items-center">
+        <span className="text-label uppercase text-muted">Periode</span>
+        {KINDS.map(([k, l]) => (
+          <button key={k} aria-pressed={kind === k} onClick={() => setKind(k)}
+                  className={kind === k ? "text-ink font-semibold" : "text-muted hover:text-ink"}>{l}</button>
+        ))}
+      </div>
+      {list.length === 0 ? <div className="text-muted">Belum ada trade tertutup.</div> : (
+        <table className="tabular-nums">
+          <thead>
+            <tr className="text-label uppercase text-muted">
+              <th className="text-left font-normal pr-3">Mulai</th>
+              <th className="text-right font-normal px-2">n</th>
+              <th className="text-right font-normal px-2">Win</th>
+              <th className="text-right font-normal px-2">
+                <button onClick={() => setWorst((x) => !x)} aria-label="Urutkan periode"
+                        className="uppercase hover:text-ink">Total R {worst ? "↑" : "↓"}</button>
+              </th>
+              <th className="text-left font-normal px-2" />
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {list.map((p) => (
+              <tr key={p.key} data-testid="period-row" data-key={p.key}>
+                <td className="pr-3">{wib(p.key)}</td>
+                <td className="text-right px-2 text-muted">{p.n}</td>
+                <td className="text-right px-2">{pct(p.win_rate)}</td>
+                <td className={`text-right px-2 ${tone(p.total_r)}`}>{fmtR(p.total_r)}</td>
+                <td className={`px-2 text-meta ${p.oos ? "text-ink" : "text-muted"}`}>{p.oos ? "OOS" : "IS"}</td>
+                <td className="text-right">
+                  <button onClick={() => onReplay(p)} className="text-meta text-cyan hover:text-ink">Replay</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+const SOURCES: [ContextSourceKey, string][] = [
+  ["real", "Real"], ["replay", "Replay · simulasi, tanpa gating"], ["paper", "Paper · simulasi, tanpa gating"],
+];
+
+/** My closed trades, split by whether a same-side signal fired in the last N
+ *  closed bars before them. Fetched when the tab opens (it mounts only then). */
+function TradeContext({ q, r, nowMs }: { q: ContextQuery | null; r: BacktestResult | null; nowMs: number }) {
+  const [win, setWin] = useState(3);
+  const [out, setOut] = useState<{ res?: ContextResult; err?: string } | null>(null);
+  const key = JSON.stringify([q, win]);
+  useEffect(() => {
+    if (!q) return;
+    let live = true;
+    setOut(null);
+    void backtestApi.context(q, win).then((x) => {
+      if (live) setOut(x.ok && x.data ? { res: x.data } : { err: x.error ?? "gagal menghitung" });
+    });
+    return () => { live = false; };
+  }, [key]);   // key covers q and win
+
+  if (!q) return <div className="text-muted">Pilih script dengan signal().</div>;
+  const res = out?.res;
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-4 text-meta">
+        <label className="flex items-center gap-2">Jendela (bar)
+          <input type="number" min={1} max={50} value={win}
+                 className="bg-transparent border border-panel-border rounded px-1 w-14 text-body tabular-nums"
+                 onChange={(e) => { const v = Math.round(Number(e.target.value)); if (v >= 1 && v <= 50) setWin(v); }} />
+        </label>
+        <span data-testid="ctx-headline" className="tabular-nums text-muted">
+          {r ? `Tester: ${headline(r, nowMs)}` : "Tester belum dijalankan"}
+        </span>
+      </div>
+      <div className="text-meta text-muted">
+        "Ya" = sinyal searah menyala dalam {win} bar tertutup sebelum trade (real: waktu fill, bukan
+        waktu keputusan). Sel abu = n &lt; 20, angkanya disembunyikan.
+      </div>
+      {out?.err ? <div className="text-neg">{out.err}</div>
+        : !res ? <div className="text-muted">menghitung…</div>
+        : (
+          <div className="flex flex-wrap gap-6">
+            {SOURCES.map(([k, title]) => {
+              const s = res.sources[k];
+              return (
+                <div key={k} className="space-y-1">
+                  <div className="text-label uppercase text-muted">{title}</div>
+                  <table className="tabular-nums">
+                    <thead>
+                      <tr className="text-label uppercase text-muted">
+                        <th className="text-left font-normal pr-3">Sinyal searah</th>
+                        <th className="text-right font-normal px-2">n</th>
+                        <th className="text-right font-normal px-2">Win</th>
+                        <th className="text-right font-normal px-2">n R</th>
+                        <th className="text-right font-normal px-2">Avg R</th>
+                        <th className="text-right font-normal px-2">Total R</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <CtxRow label="ya" c={s.true} />
+                      <CtxRow label="tidak" c={s.false} />
+                    </tbody>
+                  </table>
+                  {s.n_unknown > 0 && <div className="text-meta text-muted">tidak diketahui: {s.n_unknown}</div>}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      {res?.pending && <div className="text-meta text-warn">warm-up belum lengkap — data sedang diambil</div>}
+    </div>
+  );
+}
+
+function CtxRow({ label, c }: { label: string; c: ContextCell }) {
+  // A null under the gate is "too few", not "unknown": say which n held it back.
+  const gate = (v: string, isNull: boolean, n: number, what: string) =>
+    isNull && c.gated && n > 0 && n < 20
+      ? <span className="text-muted opacity-60" title={`${what} ${n} < 20`}>—</span> : v;
+  return (
+    <tr>
+      <td className="pr-3">{label}</td>
+      <td className="text-right px-2 text-muted">{c.n}</td>
+      <td className="text-right px-2">{gate(pct(c.win_rate), c.win_rate === null, c.n, "n")}</td>
+      <td className="text-right px-2 text-muted">{c.n_r}</td>
+      <td className={`text-right px-2 ${tone(c.avg_r)}`}>{gate(fmtR(c.avg_r), c.avg_r === null, c.n_r, "n R")}</td>
+      <td className={`text-right px-2 ${tone(c.total_r)}`}>{gate(fmtR(c.total_r), c.total_r === null, c.n_r, "n R")}</td>
+    </tr>
   );
 }
 

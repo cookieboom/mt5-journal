@@ -83,7 +83,31 @@ export interface Segment {
 }
 
 export interface Bucket { key: number | string; n: number; win_rate: number | null; avg_r: number | null; total_r: number }
-export interface Breakdown { hour: Bucket[]; session: Bucket[]; dow: Bucket[] }
+/** A day / week / session instance `[key, end_msc)` UTC, for the replay jump per period. */
+export interface Period extends Bucket { key: number; end_msc: number; oos: boolean }
+export type PeriodKind = "day" | "week" | "session";
+export interface Breakdown {
+  hour: Bucket[]; session: Bucket[]; dow: Bucket[];
+  periods?: Record<PeriodKind, Period[]>;     // only under breakdown.all
+}
+
+// Trade context (spec 2026-10-08-indicators-trade-context §2 A): my closed
+// trades split by whether a same-side signal fired in the last N closed bars.
+// Real cells come pre-gated from the server (n < 20 → null, `gated` true).
+export interface ContextCell {
+  n: number; n_r: number; win_rate: number | null; avg_r: number | null;
+  total_r: number | null; gated: boolean;
+}
+export interface ContextSource { true: ContextCell; false: ContextCell; n_unknown: number }
+export type ContextSourceKey = "real" | "replay" | "paper";
+export interface ContextResult {
+  computed_ms: number; source_hash: string; window: number;
+  warm_from_msc: number | null; pending: boolean;
+  sources: Record<ContextSourceKey, ContextSource>;
+}
+export interface ContextQuery {
+  script: string; inputs: Record<string, InputValue>; symbol: string; tf: string; rev: number;
+}
 
 export interface BacktestResult {
   computed_ms: number;
@@ -183,4 +207,7 @@ export const backtestApi = {
   run: (body: ReturnType<typeof backtestBody>) => post<BacktestResult>("/api/indicators/backtest", body),
   replay: (b: { symbol: string; timeframe: string; decision_msc: number; exit_msc: number | null }) =>
     post<{ session: unknown; pending: boolean }>("/api/indicators/backtest/replay", b),
+  context: (q: ContextQuery, window: number) => post<ContextResult>("/api/indicators/context", {
+    script: q.script, inputs: q.inputs, symbol: q.symbol, timeframe: q.tf, window,
+  }),
 };

@@ -45,7 +45,7 @@ import { useIndicatorLayout } from "../hooks/useIndicatorLayout";
 import { indicatorsApi, signalMarkers, type ScriptInfo } from "../lib/indicators";
 import StrategyTester from "../components/StrategyTester";
 import { useBacktest } from "../hooks/useBacktest";
-import { backtestApi, hasSignal, tradeMarkers, type TesterTrade } from "../lib/backtest";
+import { backtestApi, hasSignal, tradeMarkers } from "../lib/backtest";
 import type { TrainingSession } from "../lib/replay";
 
 export interface ChartHandle {
@@ -230,9 +230,10 @@ export default function Chart() {
     const first = data.candles[0]?.time_msc;
     if (focus && first !== undefined && first > focus.startMs) void data.loadOlder();
   }, [focus, data.candles, data.loadOlder]);
-  const onTesterReplay = async (t: TesterTrade) => {
+  // Study session around one tester trade, or one period (its start to its end).
+  const onTesterReplay = async (decisionMsc: number, exitMsc: number | null) => {
     const r = await backtestApi.replay({
-      symbol, timeframe: tf, decision_msc: t.decision_msc, exit_msc: t.exit_msc,
+      symbol, timeframe: tf, decision_msc: decisionMsc, exit_msc: exitMsc,
     });
     if (!r.ok || !r.data) return;
     snapshotRef.current = params.toString();
@@ -258,7 +259,11 @@ export default function Chart() {
       armed={tester.armed}
       onRun={tester.run}
       onTradeClick={(t) => setFocus({ startMs: t.entry_msc, endMs: t.exit_msc ?? t.entry_msc })}
-      onReplay={(t) => void onTesterReplay(t)}
+      onReplay={(t) => void onTesterReplay(t.decision_msc, t.exit_msc)}
+      onPeriodReplay={(p) => void onTesterReplay(p.key, p.end_msc)}
+      context={testerItem ? {
+        script: testerItem.script, inputs: testerItem.inputs, symbol, tf, rev: scriptsRev,
+      } : null}
       nowMs={Date.now()}
     />
   );
