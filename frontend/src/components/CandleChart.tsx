@@ -35,6 +35,7 @@ import {
   type Anchor, type Drawing, type Projected, type Tool,
 } from "../lib/drawings";
 import { chartDark, chartLight } from "../lib/theme";
+import { useIndicatorSeries, type IndicatorRender } from "../hooks/useIndicatorSeries";
 
 const DARK = chartDark;
 const LIGHT = chartLight;
@@ -99,6 +100,7 @@ const CandleChart = forwardRef<ChartHandle, {
   missing?: [number, number][];
   shadeCoverage?: boolean;
   hideDate?: boolean;
+  indicators?: IndicatorRender[];
   drawings?: {
     items: Drawing[];
     editable: boolean;
@@ -465,6 +467,8 @@ const CandleChart = forwardRef<ChartHandle, {
     setMeasure((s) => (s.phase === "idle" ? s : IDLE));
   }, [props.symbol, props.tf, props.settings.chartType, endDrag]);
 
+  useIndicatorSeries(chart, props.indicators);
+
   // Re-apply live-appliable settings when they change (no full re-create; chart
   // type is handled by its own recreate effect below).
   useEffect(() => {
@@ -511,9 +515,12 @@ const CandleChart = forwardRef<ChartHandle, {
     priceLines.current = [];
     linesMeta.current = [];
     ghostLine.current = null;
-    c.removeSeries(series.current);
+    // Add before removing: a pane left with no series is deleted, so removing
+    // first would drop pane 0 and promote an indicator pane into its place.
+    const old = series.current;
     markersPrimitive.current = null;
     const s = addSeriesFor(c, props.settings);
+    c.removeSeries(old);
     s.applyOptions({ priceLineVisible: props.settings.lastPriceLine });
     s.setData(seriesData(cbs.current.candles, props.settings.chartType));
     series.current = s;
