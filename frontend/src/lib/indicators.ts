@@ -183,7 +183,7 @@ export interface ComputeRequest {
 
 export type ValidateResult =
   | { ok: true; inputs: InputSpec[]; plots: Omit<PlotResult, "values">[]; hlines: HLineResult[];
-      signals: string[]; lookback: Record<string, number> }
+      signals: string[]; lookback: Record<string, number | null> }
   | { ok: false; error: ScriptErrorInfo };
 
 export const indicatorsApi = {
