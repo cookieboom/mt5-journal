@@ -17,7 +17,7 @@ from ..adapter.base import TIMEFRAMES, Candle
 from ..domain.indicators.engine import evaluate
 from ..domain.indicators.frame import to_frame
 from ..domain.indicators.lang import (
-    Program, ScriptError, const_value, lookback, parse, resolve_consts,
+    Program, ScriptError, const_value, htf_lookback, lookback, parse, resolve_consts,
 )
 from ..domain.indicators.library import library
 from ..domain.resample import timeframe_ms
@@ -107,7 +107,17 @@ def validate(source: str) -> dict:
         p = parse(source)
         consts = resolve_consts(p, {})
         meta = _meta(p, consts)
-        meta["lookback"] = {tf: lookback(p, consts, timeframe_ms(tf)) for tf in TIMEFRAMES}
+        # Per chart TF; None where the script does not apply (tf() not higher).
+        lbs: dict[str, int | None] = {}
+        first: ScriptError | None = None
+        for tf in TIMEFRAMES:
+            try:
+                lbs[tf] = lookback(p, consts, timeframe_ms(tf))
+            except ScriptError as e:
+                lbs[tf], first = None, first or e
+        if first is not None and all(v is None for v in lbs.values()):
+            raise first
+        meta["lookback"] = lbs
     except ScriptError as e:
         return {"ok": False, "error": error_payload(e)}
     return {"ok": True, **meta}
@@ -181,10 +191,36 @@ def compute(conn: sqlite3.Connection, *, inputs: dict[str, Any], symbol: str,
         pending = candle_queue.request_candles(
             conn, symbol, timeframe, from_ms - lb * tf_ms, from_ms - 1) != 0
 
+    # tf() frames: from two HTF bars before the first chart bar (its mapped bar
+    # opens after that), plus that TF's own warm-up.
+    start = bars[0].time_msc if bars and bars[0].time_msc is not None else from_ms
+    htf: dict[str, Any] = {}
+    htf_ready: list[int | None] = []      # close time of each TF's first warm bar
+    for x, need in htf_lookback(p, consts, tf_ms).items():
+        h = timeframe_ms(x)
+        hstart = start - 2 * h
+        hview = [b for b in cs.load_bars(conn, symbol, x, hstart, to_ms)
+                 if b.time_msc is not None and hstart <= b.time_msc <= to_ms]
+        hwarm = _warm_bars(conn, symbol, x, hstart, need)
+        hbars = hwarm + hview
+        if reveal_end is not None:   # the mapping skips them too; never even load them
+            hbars = [b for b in hbars if b.time_msc is not None and b.time_msc + h <= reveal_end]
+        if len(hwarm) < need:
+            pending = candle_queue.request_candles(
+                conn, symbol, x, hstart - need * h, hstart - 1) != 0 or pending
+        htf[x] = to_frame(hbars)
+        htf_ready.append(int(htf[x].index[need]) + h if len(hbars) > need else None)
+
     f = to_frame(bars)
-    r = evaluate(p, f, inputs, tf_ms)
+    r = evaluate(p, f, inputs, tf_ms, htf=htf, forming_msc=forming_msc)
     times = [int(t) for t in f.index]
     keep = [i for i, t in enumerate(times) if t >= from_ms]
+    warm_from: int | None = times[lb] if len(times) > lb else None
+    for ready in htf_ready:   # the latest TF to become warm decides
+        if warm_from is None or ready is None:
+            warm_from = None
+            break
+        warm_from = next((t for t in times if t >= warm_from and t + tf_ms >= ready), None)
 
     def values(s: Any) -> list[float | None]:
         arr = s.to_numpy(dtype=float)
@@ -206,7 +242,7 @@ def compute(conn: sqlite3.Connection, *, inputs: dict[str, Any], symbol: str,
         "hlines": [{**h, "value": v} for h, v in zip(meta["hlines"], r.hlines, strict=True)],
         "signals": signals,
         "lookback": lb,
-        "warm_from_msc": times[lb] if len(times) > lb else None,
+        "warm_from_msc": warm_from,
         "forming_msc": forming_msc,
         "pending": pending,
     }

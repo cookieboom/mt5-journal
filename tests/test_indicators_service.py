@@ -194,3 +194,72 @@ def test_compute_a_user_script_by_id(conn):
     out = ind.compute(conn, script=a["id"], inputs={}, symbol="XAUUSDc", timeframe="M5",
                       from_ms=t[5], to_ms=t[6])
     assert out["plots"][0]["values"] == [104.0, 105.0]
+
+
+# --- tf(): higher-timeframe bars, closed only (spec 2026-10-07-indicators-mtf) ---
+
+H1 = 3_600_000
+TF_CLOSE = 'plot(tf("H1", close))'
+
+
+def test_tf_steps_once_per_closed_htf_bar(conn):
+    t = seed(conn, 36)                              # M5 00:00 .. 02:55
+    seed(conn, 3, tf="H1", step=H1)                 # H1 closes 100, 101, 102
+    out = ind.compute(conn, source=TF_CLOSE, inputs={}, symbol="XAUUSDc", timeframe="M5",
+                      from_ms=t[0], to_ms=t[35])
+    v = out["plots"][0]["values"]
+    assert v[:11] == [None] * 11                    # H1 00:00 not closed before 00:55's close
+    assert v[11:23] == [100.0] * 12 and v[23:35] == [101.0] * 12 and v[35] == 102.0
+
+
+def test_tf_in_replay_never_shows_the_unfinished_htf_bar(conn):
+    t = seed(conn, 36)
+    seed(conn, 3, tf="H1", step=H1)
+    sid = ts.create_session(conn, symbol="XAUUSDc", symbol_base="XAUUSD", timeframe="M5",
+                            range_start_msc=t[0], range_end_msc=t[35], cursor_msc=t[17])
+    out = ind.compute(conn, source=TF_CLOSE, inputs={}, symbol="XAUUSDc", timeframe="M5",
+                      from_ms=t[0], to_ms=t[35], session_id=sid)
+    assert out["times"][-1] == t[17]
+    assert out["plots"][0]["values"][-1] == 100.0   # 01:25: the 01:00 H1 bar is still forming
+
+
+def test_tf_on_the_forming_chart_bar_waits_for_the_htf_close(conn):
+    t = seed(conn, 11)                              # 00:00 .. 00:50
+    seed(conn, 1, tf="H1", step=H1)
+    forming_t = t[-1] + M5                          # 00:55, closes with H1 00:00
+    live_store.upsert_forming(conn, "XAUUSDc", "M5", Candle(
+        time_msc=forming_t, open=110, high=111, low=109, close=110,
+        tick_volume=1, spread=5, real_volume=0), now_msc=forming_t + 1)
+    out = ind.compute(conn, source=TF_CLOSE, inputs={}, symbol="XAUUSDc", timeframe="M5",
+                      from_ms=t[0], to_ms=forming_t, include_forming=True)
+    assert out["forming_msc"] == forming_t and out["plots"][0]["values"][-1] is None
+
+
+def test_tf_warm_from_waits_for_the_htf_warmup(conn):
+    t = seed(conn, 36)
+    seed(conn, 3, tf="H1", step=H1)
+    out = ind.compute(conn, source='plot(tf("H1", sma(close, 2)))', inputs={},
+                      symbol="XAUUSDc", timeframe="M5", from_ms=t[0], to_ms=t[35])
+    assert out["warm_from_msc"] == t[35]   # same rule as the chart TF: bar [lookback], H1 02:00
+    assert out["plots"][0]["values"][23] == 100.5
+
+
+def test_tf_missing_htf_history_queues_a_fill(conn):
+    t = seed(conn, 36)
+    out = ind.compute(conn, source='plot(tf("H1", sma(close, 2)))', inputs={},
+                      symbol="XAUUSDc", timeframe="M5", from_ms=t[0], to_ms=t[35])
+    assert out["pending"] is True and out["warm_from_msc"] is None
+    tfs = [r[0] for r in conn.execute("SELECT timeframe FROM candle_requests")]
+    assert "H1" in tfs
+
+
+def test_tf_lower_than_the_chart_is_a_script_error(conn):
+    t = seed(conn, 3, tf="H1", step=H1)
+    with pytest.raises(ind.ScriptError, match="higher timeframes"):
+        ind.compute(conn, source='plot(tf("M5", close))', inputs={}, symbol="XAUUSDc",
+                    timeframe="H1", from_ms=t[0], to_ms=t[2])
+
+
+def test_validate_lookback_is_none_where_tf_does_not_apply():
+    out = ind.validate('plot(tf("H1", ema(close, 50)))')
+    assert out["lookback"] == {"M1": 60, "M5": 12, "M15": 4, "H1": None, "H4": None, "D1": None}

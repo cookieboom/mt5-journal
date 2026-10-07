@@ -94,3 +94,10 @@ def test_layout_roundtrip_and_cap(client):
     assert client.get("/api/indicators/layout").json()["layout"]["version"] == 1
     big = {"items": ["x" * 70_000]}
     assert client.put("/api/indicators/layout", json=big).status_code == 400
+
+
+def test_tf_lower_than_the_chart_is_400(client):
+    r = client.post("/api/indicators/compute", json={
+        "source": 'plot(tf("M1", close))', "symbol": "XAUUSDc", "timeframe": "M5",
+        "from_ms": T0, "to_ms": T0 + M5})
+    assert r.status_code == 400 and "higher timeframes" in r.json()["error"]
