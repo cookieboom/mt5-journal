@@ -146,7 +146,11 @@ def load_active(conn: sqlite3.Connection, symbol: str, timeframe: str,
     ).fetchone()
     if row is None:
         return None
-    path = Path(row["artifact_path"])
+    # Derived, not read from `artifact_path`: that column holds whatever
+    # cache_dir save_models was handed (usually the relative `cache`), so
+    # opening it as stored depends on the working directory. save_models always
+    # names the file `<cache_dir>/models/<id>.joblib`.
+    path = Path(cache_dir) / "models" / f"{row['id']}.joblib"
     if not path.exists():
         raise ArtifactMissing(
             f"lab model {row['id']} has no artifact at {path}. Retrain from /lab."

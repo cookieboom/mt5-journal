@@ -3,6 +3,8 @@ must leave the rows intact and produce a clear retrain signal, not a crash."""
 from __future__ import annotations
 
 
+from pathlib import Path
+
 import pytest
 
 from journal.lab.store import (
@@ -172,3 +174,20 @@ def test_list_models_filters_by_symbol_and_timeframe(conn, tmp_path):
     _save(conn, tmp_path, [_model()], symbol="BTCUSDc", timeframe="M5")
     assert len(list_models(conn, symbol="BTCUSDc")) == 1
     assert len(list_models(conn, symbol="XAUUSDc", timeframe="M5")) == 0
+
+
+def test_load_active_resolves_the_artifact_under_cache_dir_not_cwd(
+        conn, tmp_path, monkeypatch):
+    """Production saves with the relative `cache` dir, so the stored
+    artifact_path is `cache/models/<id>.joblib`. Loading from any other working
+    directory must still find it through the `cache_dir` it is handed."""
+    monkeypatch.chdir(tmp_path)
+    save_models(conn, symbol="XAUUSDc", timeframe="H1", config={},
+                models=[_model()], train_from_ms=1_000, train_to_ms=2_000,
+                cache_dir=Path("cache"))
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    _, est = load_active(conn, "XAUUSDc", "H1", "timing", "trend_up",
+                         tmp_path / "cache")
+    assert est == _Stub("timing-lgbm")
