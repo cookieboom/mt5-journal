@@ -209,6 +209,11 @@ from the same source `/api/candles/live` reads.
 
 ## §3 Indicator context of real trades and replay — spec 3 (outline)
 
+> **Re-sequenced 2026-10-07 (user decision):** this section is DEFERRED. The
+> spec built third is the Strategy Tester —
+> `2026-10-07-indicators-strategy-tester-design.md` — which takes §4's backtest,
+> the Rule 9 amendment and the per-trade replay jump.
+
 - For each real trade, evaluate a chosen script on the trade's `symbol`
   (using `symbol` to read candles and `symbol_base` to group results, per
   rule 11) at the **last closed bar before `entry_time`**, on a chosen TF.
