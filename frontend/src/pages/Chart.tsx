@@ -39,6 +39,10 @@ import Sheet from "../components/Sheet";
 import { useChartData } from "../hooks/useChartData";
 import { useDrawings } from "../hooks/useDrawings";
 import { PLANNED_ID } from "../lib/sltpDrag";
+import IndicatorPanel from "../components/IndicatorPanel";
+import { useIndicators } from "../hooks/useIndicators";
+import { useIndicatorLayout } from "../hooks/useIndicatorLayout";
+import { indicatorsApi, signalMarkers, type ScriptInfo } from "../lib/indicators";
 
 export interface ChartHandle {
   jumpToNow: () => void;
@@ -179,6 +183,43 @@ export default function Chart() {
       : mergeForming(data.candles, forming, timeframeMs(tf))),
     [replayOpen, cursor, data.candles, forming, tf],
   );
+  // ------------------------------------------------------------ indicators
+  // One layout for live and replay. In replay nothing is computed until the
+  // session exists: its id is what makes the server clip to the cursor.
+  const indLayout = useIndicatorLayout();
+  const [scripts, setScripts] = useState<ScriptInfo[]>([]);
+  const [scriptsRev, setScriptsRev] = useState(0);
+  useEffect(() => {
+    void indicatorsApi.scripts().then((r) => { if (r.ok && Array.isArray(r.data?.scripts)) setScripts(r.data.scripts); });
+  }, [scriptsRev]);
+  const indicatorsReady = !replayOpen || replay.session != null;
+  const ind = useIndicators({
+    symbol, tf,
+    items: indicatorsReady ? indLayout.layout.items : [],
+    bars: shownCandles,
+    sessionId: replayOpen ? replay.session?.id ?? null : null,
+    live: !replayOpen,
+    rev: scriptsRev,
+  });
+  // Signal markers are historical-only until a script carries a backtest
+  // (spec 2026-10-07-indicators, Rule 9 amendment): replay, never live.
+  const indicatorMarkers = useMemo(
+    () => (replayOpen ? signalMarkers(ind.renders.map((r) => r.result.signals)) : undefined),
+    [replayOpen, ind.renders],
+  );
+  const indicatorPanel = (
+    <IndicatorPanel
+      layout={indLayout.layout}
+      onLayout={indLayout.setLayout}
+      scripts={scripts}
+      onScriptSaved={() => setScriptsRev((x) => x + 1)}
+      results={ind.results}
+      errors={ind.errors}
+      hoverMs={hovered?.time_msc ?? null}
+      firstShownMs={shownCandles[0]?.time_msc ?? null}
+    />
+  );
+
   // ------------------------------------------------------------ paper mode
   // A virtual account with its own balance. Replay owns the chart when it is
   // open, so paper only applies outside it — two simulated accounts fed by
@@ -314,7 +355,7 @@ export default function Chart() {
     />
   );
 
-  const sidePanel = paperMode ? paperPanel : replayOpen ? (
+  const sidePanel = paperMode ? <>{paperPanel}{indicatorPanel}</> : replayOpen ? (
     <>
       <RiskSizePanel
         disabled={!replay.session || atEnd}
@@ -347,6 +388,7 @@ export default function Chart() {
         s={sessionSummary}
         counts={sessionCounts}
       />
+      {indicatorPanel}
     </>
   ) : (
     <>
@@ -379,6 +421,7 @@ export default function Chart() {
           chartType={settings.chartType}
         />
       </div>
+      {indicatorPanel}
       <DataHealthPanel
         bars={shownCandles}
         missing={data.missing}
@@ -485,6 +528,8 @@ export default function Chart() {
               shadeCoverage={!replayOpen}
               hideDate={replayOpen && replayPrefs.prefs.competitiveMode && replayPrefs.prefs.competitiveHideDate}
               drawings={drawingsProp}
+              indicators={ind.renders}
+              markers={indicatorMarkers}
             />
           ) : (
             <ChartPlaceholder status={data.status} error={data.error} onRetry={data.retry}
