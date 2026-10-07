@@ -4,6 +4,13 @@ Verbatim overflow from `docs/HANDOFF.md` § CURRENT STATE. Nothing here was
 edited; entries were moved out so the file an agent reads at the start of a
 session stays small. Newest-first, same as the live file. Split 2026-08-13.
 
+**2026-09-04 — paper orders on a fresh symbol.** `paper_step` now also fetches
+a tick for the chart's watched symbol, not only for symbols that already carry
+a paper position — the first paper order on any symbol was refused with
+"Belum ada harga" (`ea18124`).
+
+---
+
 ---
 
 **2026-08-20 — native MT5 adapter for a Windows host.** `adapter/native.py`

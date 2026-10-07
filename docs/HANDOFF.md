@@ -33,6 +33,33 @@ home each, and a second copy is a future lie. Point, never duplicate.
 
 **Last updated:** 2026-10-07
 
+**2026-10-07 — indicators, spec §2: multi-timeframe `tf()`
+(`feat/indicators-mtf`, spec
+`docs/superpowers/specs/2026-10-07-indicators-mtf-design.md`).**
+
+- *Language.* `tf("H1", expr)`: literal TF, inner scope = base series,
+  constants, builtins, `x[n]`; a chart-TF variable or nested `tf()` refused.
+  `Program.htfs`; `htf_lookback()` counts the inner warm-up in HTF bars; on the
+  chart a `tf()` costs `ceil(H/L)`. A TF not above the chart's raises in
+  `lookback`/`evaluate` (route → 400); `validate` reports `null` for that TF.
+- *Mapping* `engine.map_closed`: HTF bar `[T,T+H)` shows on chart bar `[t,t+L)`
+  only if `T+H <= t+L` (forming chart bar: `t`). Carries across closures; NaN
+  once > 2 HTF buckets that have chart bars are missing.
+- *No lookahead:* prefix-invariance extended — chart cut at k, HTF cut at what
+  had closed by then, for a mixed script and every library script.
+- *Service* loads each HTF from two HTF bars before the first chart bar plus
+  its warm-up, drops unclosed HTF bars in replay, queues a fill per TF;
+  `warm_from_msc` = the latest TF to become warm. Library: `lib:ema_htf`.
+- Verified on a DB copy (service + HTTP): M5 `lib:ema_htf` over 24 h changed
+  22 times, all on bars closing on the hour; replay stepping inside an hour
+  leaves it still. Browser not re-checked — rendering path unchanged
+  (results are chart-TF series).
+- Known limit: H4 native only since 2026-01-30 (older H4 aggregates from M1).
+
+Gates: `pytest` **1238 passed, 9 skipped**; `ruff` clean; `mypy` clean (81);
+`vitest` **438 passed**; `tsc` clean; `journal rebuild` + `verify` on a
+snapshot: PASS.
+
 **2026-10-07 — indicators, spec §1: engine, script language, chart
 (`feat/indicators-engine`, spec
 `docs/superpowers/specs/2026-10-07-indicators-design.md`).** First of four
@@ -204,13 +231,6 @@ to sit in front of the position mirror and command execution is now entirely
 on the symbol side. Bridge access is serialized through one
 `LockedMT5Client` wrapping the single adapter connection, so both threads
 share it without two sessions ever landing on the terminal at once.
-
-**2026-09-04 — paper orders on a fresh symbol.** `paper_step` now also fetches
-a tick for the chart's watched symbol, not only for symbols that already carry
-a paper position — the first paper order on any symbol was refused with
-"Belum ada harga" (`ea18124`).
-
----
 
 ## Who does what
 
