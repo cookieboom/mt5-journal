@@ -24,7 +24,7 @@ from typing import Any, Literal
 import pandas as pd
 
 from ...analytics.report import sequence_stats
-from ...analytics.sessions import session_of
+from ...analytics.sessions import session_of, session_window_msc
 from .. import sim_stats
 from ..excursion import compute_excursion
 from ..replay_eval import Bar, PositionState, r_multiple, step_bar
@@ -243,6 +243,29 @@ def _bucket(trades: list[Trade], key: Any) -> list[dict[str, Any]]:
     return out
 
 
+_DAY_MS = 86_400_000
+# Epoch 0 is a Thursday: Monday 00:00 UTC sits 3 days before it, mod 7 days.
+_MONDAY_MS = -3 * _DAY_MS
+
+
+def _day(ms: int) -> tuple[int, int]:
+    start = ms - ms % _DAY_MS
+    return start, start + _DAY_MS
+
+
+def _week(ms: int) -> tuple[int, int]:
+    start = ms - (ms - _MONDAY_MS) % (7 * _DAY_MS)
+    return start, start + 7 * _DAY_MS
+
+
+def _periods(trades: list[Trade], window: Any, split_msc: int) -> list[dict[str, Any]]:
+    """`_bucket` keyed on a period's `[start, end)` (by entry), flattened to
+    `key` = start for the replay jump. `oos` when the period starts at/after
+    the split."""
+    return [b | {"key": b["key"][0], "end_msc": b["key"][1], "oos": b["key"][0] >= split_msc}
+            for b in _bucket(trades, window)]
+
+
 def _utc(ms: int) -> datetime:
     return datetime.fromtimestamp(ms / 1000, tz=timezone.utc)
 
@@ -250,7 +273,8 @@ def _utc(ms: int) -> datetime:
 def report(sim: Sim, split_msc: int) -> dict[str, Any]:
     """Segments `all | is | oos` split on decision time (OOS = at/after
     `split_msc`), cumulative-R equity at each exit, and hour/session/weekday
-    breakdowns (UTC — the client relabels to WIB, rule 3). Open trades are
+    breakdowns (UTC — the client relabels to WIB, rule 3), plus `all`'s
+    day/week/session-instance periods for the replay jump. Open trades are
     excluded: their outcome is unknown."""
     done = sorted((tr for tr in sim.trades if tr.reason != "open"),
                   key=lambda tr: (tr.exit_msc, tr.id))
@@ -261,7 +285,7 @@ def report(sim: Sim, split_msc: int) -> dict[str, Any]:
         if tr.r is not None:
             cum += tr.r
             equity.append({"t": tr.exit_msc, "r": cum})
-    return {
+    out: dict[str, Any] = {
         "segments": {k: _segment(v) for k, v in seg.items()},
         "equity": equity,
         "breakdown": {k: {"hour": _bucket(seg[k], lambda ms: _utc(ms).hour),
@@ -269,3 +293,7 @@ def report(sim: Sim, split_msc: int) -> dict[str, Any]:
                           "dow": _bucket(seg[k], lambda ms: _utc(ms).weekday())}
                       for k in ("all", "oos")},
     }
+    out["breakdown"]["all"]["periods"] = {
+        name: _periods(done, window, split_msc)
+        for name, window in (("day", _day), ("week", _week), ("session", session_window_msc))}
+    return out

@@ -55,3 +55,17 @@ def session_of(open_time_msc: int) -> str:
         else:
             break
     return label
+
+
+_HOUR_MS = 3_600_000
+_DAY_MS = 24 * _HOUR_MS
+
+
+def session_window_msc(ms: int) -> tuple[int, int]:
+    """`[start, end)` epoch ms (UTC) of the session instance containing `ms` —
+    the same windows as `session_of`; the last one ends at the next midnight."""
+    day = ms - ms % _DAY_MS
+    hour = (ms - day) // _HOUR_MS
+    starts = [h for h, _ in _WINDOWS] + [24]
+    i = max(k for k in range(len(_WINDOWS)) if starts[k] <= hour)
+    return day + starts[i] * _HOUR_MS, day + starts[i + 1] * _HOUR_MS

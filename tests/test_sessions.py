@@ -60,3 +60,25 @@ def test_every_hour_maps_into_session_order():
 
 def test_session_order_is_the_five_windows_in_time_order():
     assert SESSION_ORDER == ("Asian", "London", "LDN/NY", "New York", "Late")
+
+
+# --- session_window_msc: the [start, end) of the session instance ---------------
+
+def test_session_window_is_the_instance_containing_the_instant():
+    from journal.analytics.sessions import session_window_msc
+    assert session_window_msc(_ms(9, 30)) == (_ms(7), _ms(12))
+    assert session_window_msc(_ms(7)) == (_ms(7), _ms(12))          # half-open start
+    assert session_window_msc(_ms(0)) == (_ms(0), _ms(7))
+
+
+def test_late_session_ends_at_the_next_utc_midnight():
+    from journal.analytics.sessions import session_window_msc
+    start, end = session_window_msc(_ms(23, 59))
+    assert start == _ms(21) and end == _ms(0) + 86_400_000
+
+
+def test_session_window_label_agrees_with_session_of():
+    from journal.analytics.sessions import session_window_msc
+    for h in range(24):
+        start, end = session_window_msc(_ms(h, 15))
+        assert session_of(start) == session_of(_ms(h, 15)) == session_of(end - 1)

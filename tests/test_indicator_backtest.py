@@ -246,3 +246,41 @@ def test_empty_report_is_all_unknowns_not_zeros():
     seg = rep["segments"]["oos"]
     assert seg["n"] == 0 and seg["avg_r"] is None and seg["max_dd_r"] is None
     assert math.isfinite(seg["total_r"])
+
+
+# --- report(): periods for the replay jump per period (spec 2026-10-08 §2 B) ---
+
+DAY = 86_400_000
+
+
+def test_periods_day_week_session_key_on_start_with_end_and_oos():
+    sim = trades_frame()
+    b = report(sim, split_msc=5 * MINUTE)["breakdown"]["all"]["periods"]
+    # All four trades sit inside 1970-01-01 00:00–00:14 UTC (a Thursday, Asian).
+    assert b["day"] == [{"key": 0, "end_msc": DAY, "oos": False, "n": 4, "win_rate": 0.75,
+                         "avg_r": 0.625, "total_r": 2.5}]
+    monday = -3 * DAY                                     # 1969-12-29
+    assert [(x["key"], x["end_msc"]) for x in b["week"]] == [(monday, monday + 7 * DAY)]
+    assert [(x["key"], x["end_msc"]) for x in b["session"]] == [(0, 7 * 3_600_000)]
+
+
+def test_period_is_oos_when_it_starts_at_or_after_the_split():
+    sim = trades_frame()
+    b = report(sim, split_msc=0)["breakdown"]["all"]["periods"]
+    assert b["day"][0]["oos"] is True
+    assert report(sim, split_msc=1)["breakdown"]["all"]["periods"]["day"][0]["oos"] is False
+
+
+def test_periods_split_trades_across_days():
+    sim = trades_frame()
+    for i, tr in enumerate(sim.trades):
+        tr.entry_msc += (i // 2) * DAY                    # two trades a day
+    days = report(sim, split_msc=0)["breakdown"]["all"]["periods"]["day"]
+    assert [(d["key"], d["n"]) for d in days] == [(0, 2), (DAY, 2)]
+    assert [d["total_r"] for d in days] == pytest.approx([0.5, 2.0])
+
+
+def test_periods_only_in_all_not_oos():
+    b = report(trades_frame(), split_msc=0)["breakdown"]
+    assert "periods" in b["all"] and "periods" not in b["oos"]
+    assert isinstance(b["all"]["session"][0]["key"], str)       # the label breakdown survives
