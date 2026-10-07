@@ -41,3 +41,8 @@ def same(a: pd.Series, b: pd.Series) -> bool:
     a, b = a.to_numpy(dtype=float), b.to_numpy(dtype=float)
     both_nan = np.isnan(a) & np.isnan(b)
     return bool(np.all(both_nan | (np.abs(a - b) < 1e-9)))
+
+
+def every_series(r) -> list[pd.Series]:
+    """Every series an engine `Result` holds — for prefix-invariance checks."""
+    return [x for x in r.plots + r.signals + r.stops + r.targets + r.exits if x is not None]

@@ -36,6 +36,10 @@ class Result:
     plots: list[pd.Series]
     hlines: list[float]
     signals: list[pd.Series]
+    # Per signal; None where the script gave no stop=/target=.
+    stops: list[pd.Series | None]
+    targets: list[pd.Series | None]
+    exits: list[pd.Series]
 
 
 def base_series(f: pd.DataFrame) -> dict[str, pd.Series]:
@@ -105,6 +109,9 @@ def evaluate(p: Program, f: pd.DataFrame, inputs: dict[str, Any], tf_ms: int,
 
     plots: list[pd.Series] = [series(np.nan)] * len(p.plots)
     signals: list[pd.Series] = [series(np.nan)] * len(p.signals)
+    stops: list[pd.Series | None] = [None] * len(p.signals)
+    targets: list[pd.Series | None] = [None] * len(p.signals)
+    exits: list[pd.Series] = [series(np.nan)] * len(p.exits)
     for step in p.steps:
         if time.monotonic() > deadline:
             raise error_at(step.expr, f"evaluation exceeded the {BUDGET_S:g} s budget")
@@ -112,14 +119,20 @@ def evaluate(p: Program, f: pd.DataFrame, inputs: dict[str, Any], tf_ms: int,
         if step.kind == "assign":
             assert isinstance(step.target, str)
             env[step.target] = v
-        elif step.kind == "plot":
-            assert isinstance(step.target, int)
-            plots[step.target] = v
         else:
             assert isinstance(step.target, int)
-            signals[step.target] = B.tri(v != 0, v)
+            if step.kind == "plot":
+                plots[step.target] = v
+            elif step.kind == "stop":
+                stops[step.target] = series(v)
+            elif step.kind == "target":
+                targets[step.target] = series(v)
+            elif step.kind == "exit":
+                exits[step.target] = B.tri(v != 0, v)
+            else:
+                signals[step.target] = B.tri(v != 0, v)
     hlines = [float(const_value(h.value, consts)) for h in p.hlines]
-    return Result(plots, hlines, signals)
+    return Result(plots, hlines, signals, stops, targets, exits)
 
 
 def _evaluator(f: pd.DataFrame, env: dict[str, pd.Series], consts: dict[str, float | bool],

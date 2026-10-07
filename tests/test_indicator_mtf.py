@@ -68,7 +68,7 @@ from journal.domain.indicators.frame import to_frame  # noqa: E402
 from journal.domain.indicators.lang import ScriptError, parse  # noqa: E402
 from journal.domain.resample import resample_m1  # noqa: E402
 
-from indicator_helpers import same, walk_candles  # noqa: E402
+from indicator_helpers import every_series, same, walk_candles  # noqa: E402
 
 M1 = walk_candles(3000)                     # 50 whole hours
 F5, F60 = to_frame(resample_m1(M1, "M5")), to_frame(resample_m1(M1, "H1"))
@@ -77,7 +77,8 @@ MIXED = """
 x = tf("H1", ema(close, 10))
 plot(x)
 plot(sma(close, 5) - tf("H1", rsi(close, 14)))
-signal("long", crossover(close, x))
+signal("long", crossover(close, x), stop=tf("H1", low[1]), target=x + 5)
+exit("long", close < tf("H1", sma(close, 3)))
 """
 
 
@@ -101,7 +102,7 @@ def test_tf_is_prefix_invariant():
         close = int(F5.index[k - 1]) + M5
         cut = F60[F60.index + H1 <= close]
         part = evaluate(parse(MIXED), F5.iloc[:k], {}, M5, htf={"H1": cut})
-        for a, b in zip(part.plots + part.signals, full.plots + full.signals, strict=True):
+        for a, b in zip(every_series(part), every_series(full), strict=True):
             assert same(a, b.iloc[:k])
 
 

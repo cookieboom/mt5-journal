@@ -11,7 +11,7 @@ from journal.domain.indicators import builtins as B
 from journal.domain.indicators.engine import evaluate
 from journal.domain.indicators.frame import to_frame
 from journal.domain.indicators.lang import ScriptError, parse
-from indicator_helpers import MINUTE, same, walk
+from indicator_helpers import MINUTE, every_series, same, walk
 
 EMA_CROSS = """
 fast_len = input(5, min=1, max=500)
@@ -120,11 +120,15 @@ def test_empty_frame_gives_empty_series():
 
 def test_whole_script_is_prefix_invariant():
     f = walk(1500, volume_gaps=True)
-    src = EMA_CROSS + "\nplot(vwap() - sma(hlc3, 20)[3])\nsignal('short', rsi(close, 14) > 70 and adx(14) > 20)"
+    src = EMA_CROSS + ("\nplot(vwap() - sma(hlc3, 20)[3])"
+                       "\nsignal('short', rsi(close, 14) > 70 and adx(14) > 20,"
+                       " stop=high[1] + atr(14), target=bb_lower(close, 20, 2))"
+                       "\nexit('long', crossunder(close, sma(close, 30)))")
     full = evaluate(parse(src), f, {}, MINUTE)
+    assert len(every_series(full)) == 8
     for k in (3, 400, 1441):
         part = evaluate(parse(src), f.iloc[:k], {}, MINUTE)
-        for a, b in zip(part.plots + part.signals, full.plots + full.signals, strict=True):
+        for a, b in zip(every_series(part), every_series(full), strict=True):
             assert same(a, b.iloc[:k])
 
 
@@ -138,3 +142,20 @@ def test_time_budget(monkeypatch):
 def test_infinite_power_is_unknown():
     r = evaluate(parse("plot(close ** 1000)"), frame(close=[10]), {}, MINUTE)
     assert np.isnan(r.plots[0].iloc[0])
+
+
+def test_stops_targets_and_exits_are_evaluated():
+    src = ('signal("long", close > open, stop=low - 1, target_r=2)\n'
+           'signal("short", close < open, target=high + 1)\n'
+           'exit("long", close < 3)')
+    r = evaluate(parse(src), frame(close=[2, 5, 1], open=[1, 1, 1], low=[0, 4, 1],
+                                   high=[3, 6, 2]), {}, MINUTE)
+    assert list(r.stops[0]) == [-1, 3, 0] and r.stops[1] is None
+    assert r.targets[0] is None and list(r.targets[1]) == [4, 7, 3]
+    assert list(r.exits[0]) == [1.0, 0.0, 1.0]
+
+
+def test_exit_is_three_valued():
+    r = evaluate(parse('signal("long", close > 0)\nexit("long", close > sma(close, 2))'),
+                 frame(close=[1, 2, 1]), {}, MINUTE)
+    assert math.isnan(r.exits[0].iloc[0]) and list(r.exits[0].iloc[1:]) == [1.0, 0.0]
