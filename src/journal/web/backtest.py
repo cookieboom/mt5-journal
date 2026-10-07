@@ -20,7 +20,8 @@ from ..domain.indicators.engine import evaluate
 from ..domain.indicators.lang import lookback, parse, resolve_consts
 from ..domain.resample import timeframe_ms
 from ..store.db import now_ms
-from .indicators import _source_of, load_frames
+from . import training
+from .indicators import _source_of, _warm_bars, load_frames
 
 MAX_BACKTEST_BARS = 200_000
 
@@ -71,3 +72,23 @@ def run(conn: sqlite3.Connection, *, inputs: dict[str, Any], symbol: str, timefr
         "trades": [asdict(t) for t in sim.trades],
         "counts": sim.counts, "warm_from_msc": fr.warm_from_msc, "pending": fr.pending,
     }
+
+
+def replay_session(conn: sqlite3.Connection, *, symbol: str, timeframe: str,
+                   decision_msc: int, exit_msc: int | None, lead_bars: int = 50,
+                   tail_bars: int = 20) -> dict:
+    """A STUDY training session around one tester trade: the cursor sits
+    `lead_bars` stored bars before the decision (bars, not time — weekends), the
+    range ends `tail_bars` bars after the exit, or at the last stored bar for a
+    trade still open. Study sessions stay out of the career summary."""
+    lead = _warm_bars(conn, symbol, timeframe, decision_msc, lead_bars)
+    cursor = lead[-lead_bars].time_msc if len(lead) >= lead_bars else \
+        (lead[0].time_msc if lead else decision_msc)
+    anchor = exit_msc if exit_msc is not None else decision_msc
+    tail = training._next_bars(conn, symbol, timeframe, anchor, now_ms(),
+                               tail_bars if exit_msc is not None else MAX_BACKTEST_BARS)
+    end = tail[-1].time_msc if tail else anchor
+    assert cursor is not None and end is not None
+    return training.create_session(conn, symbol=symbol, timeframe=timeframe,
+                                   range_start_msc=cursor, range_end_msc=end,
+                                   origin="study")

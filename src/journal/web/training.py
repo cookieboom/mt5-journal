@@ -92,7 +92,7 @@ def _next_bars(conn: sqlite3.Connection, symbol: str, timeframe: str,
 
 def create_session(conn: sqlite3.Connection, *, symbol: str, timeframe: str,
                    range_start_msc: int, range_end_msc: int,
-                   cursor_start_msc: int | None = None) -> dict:
+                   cursor_start_msc: int | None = None, origin: str = "blind") -> dict:
     if timeframe not in TIMEFRAMES:
         raise ValueError(f"unknown timeframe {timeframe!r}; expected one of {list(TIMEFRAMES)}")
     if range_start_msc > range_end_msc:
@@ -104,7 +104,7 @@ def create_session(conn: sqlite3.Connection, *, symbol: str, timeframe: str,
     sid = ts.create_session(
         conn, symbol=symbol, symbol_base=to_base(symbol), timeframe=timeframe,
         range_start_msc=range_start_msc, range_end_msc=range_end_msc,
-        cursor_msc=cursor,
+        cursor_msc=cursor, origin=origin,
     )
     # Ensure the whole replay range is cached; the web NEVER touches the bridge —
     # it enqueues and `journal live` drains (returns 0 when already covered).
@@ -252,8 +252,8 @@ def end_session(conn: sqlite3.Connection, session_id: int) -> dict:
     return view
 
 
-def career_summary(conn: sqlite3.Connection) -> dict:
-    return ts.career_summary(conn)
+def career_summary(conn: sqlite3.Connection, include_study: bool = False) -> dict:
+    return ts.career_summary(conn, include_study)
 
 
 def modify_sltp(

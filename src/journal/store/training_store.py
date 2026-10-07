@@ -24,14 +24,14 @@ from .db import last_insert_id, now_ms
 
 def create_session(conn: sqlite3.Connection, *, symbol: str, symbol_base: str,
                    timeframe: str, range_start_msc: int, range_end_msc: int,
-                   cursor_msc: int) -> int:
+                   cursor_msc: int, origin: str = "blind") -> int:
     cur = conn.execute(
         "INSERT INTO training_sessions "
         "(symbol, symbol_base, timeframe, range_start_msc, range_end_msc, "
-        " cursor_msc, status, created_at_msc) "
-        "VALUES (?, ?, ?, ?, ?, ?, 'active', ?)",
+        " cursor_msc, status, created_at_msc, origin) "
+        "VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)",
         (symbol, symbol_base, timeframe, range_start_msc, range_end_msc,
-         cursor_msc, now_ms()),
+         cursor_msc, now_ms(), origin),
     )
     conn.commit()
     return last_insert_id(cur)
@@ -208,8 +208,11 @@ def session_summary(conn: sqlite3.Connection, session_id: int) -> dict:
     ).fetchall()))
 
 
-def career_summary(conn: sqlite3.Connection) -> dict:
+def career_summary(conn: sqlite3.Connection, include_study: bool = False) -> dict:
+    """Every closed position across sessions. Study sessions (tester replay
+    jumps, cherry-picked) are left out unless asked for."""
     return _summary(list(conn.execute(
-        "SELECT net_profit, r_multiple, mae_r, mfe_r FROM training_positions "
-        "WHERE status = 'closed'"
+        "SELECT p.net_profit, p.r_multiple, p.mae_r, p.mfe_r FROM training_positions p "
+        "JOIN training_sessions s ON s.id = p.session_id "
+        "WHERE p.status = 'closed' AND (? OR s.origin = 'blind')", (include_study,)
     ).fetchall()))

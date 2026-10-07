@@ -86,6 +86,15 @@ class IndicatorBacktestRequest(BaseModel):
     spread_fallback: float | None = Field(None, ge=0)
 
 
+class BacktestReplayRequest(BaseModel):
+    symbol: str = Field(min_length=1)
+    timeframe: str
+    decision_msc: int
+    exit_msc: int | None = None
+    lead_bars: int = Field(default=50, ge=1, le=5_000)
+    tail_bars: int = Field(default=20, ge=0, le=5_000)
+
+
 class IndicatorComputeRequest(BaseModel):
     """Exactly one of `script` (an id) or `source` (an unsaved draft)."""
     script: str | None = None

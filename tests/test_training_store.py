@@ -92,3 +92,32 @@ def test_summary_is_null_only_without_input(conn):
     assert s["n"] == 1
     assert abs(s["win_rate"] - 1.0) < 1e-9   # net_profit known → win rate known
     assert s["avg_r"] is None                # no SL → R unknown, not 0
+
+
+def test_study_sessions_stay_out_of_the_career_summary_by_default(conn):
+    """A replay jump onto a tester trade is a cherry-picked STUDY session — it
+    must not inflate blind-training stats (migration 014)."""
+    blind = _session(conn)
+    study = ts.create_session(
+        conn, symbol="XAUUSDc", symbol_base="XAUUSD", timeframe="M15",
+        range_start_msc=1000, range_end_msc=9000, cursor_msc=1000, origin="study")
+    assert ts.get_session(conn, blind)["origin"] == "blind"
+    assert ts.get_session(conn, study)["origin"] == "study"
+    for sid, r in ((blind, -1.0), (study, 3.0)):
+        pid = ts.insert_position(conn, session_id=sid, direction="buy", volume=0.1,
+                                 decision_msc=1000, sl=3999.0, tp=4003.0)
+        ts.mark_fill(conn, pid, entry_msc=2000, entry_price=4000.0)
+        ts.mark_close(conn, pid, exit_msc=3000, exit_price=4000.0 + r, exit_reason="tp",
+                      net_profit=r * 10, r_multiple=r, mae=0.0, mfe=0.0,
+                      mae_r=0.0, mfe_r=0.0)
+    assert ts.career_summary(conn)["n"] == 1
+    assert ts.career_summary(conn)["total_r"] == pytest.approx(-1.0)
+    assert ts.career_summary(conn, include_study=True)["n"] == 2
+
+
+def test_origin_is_checked(conn):
+    import sqlite3
+    with pytest.raises(sqlite3.IntegrityError):
+        ts.create_session(conn, symbol="XAUUSDc", symbol_base="XAUUSD", timeframe="M15",
+                          range_start_msc=1000, range_end_msc=9000, cursor_msc=1000,
+                          origin="cheat")

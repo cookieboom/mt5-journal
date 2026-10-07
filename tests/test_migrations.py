@@ -68,9 +68,25 @@ def _make_v1(path) -> None:
 # ------------------------------------------------------------------ version
 
 
-def test_schema_version_is_13():
-    """paper_accounts, paper_positions, live_quotes — paper trading virtual account (013)."""
-    assert SCHEMA_VERSION == 13
+def test_schema_version_is_14():
+    """training_sessions.origin — blind vs study sessions (014)."""
+    assert SCHEMA_VERSION == 14
+
+
+def test_014_adds_training_origin_defaulting_to_blind(tmp_path):
+    path = tmp_path / "old.db"
+    c = connect(path)
+    c.execute("ALTER TABLE training_sessions DROP COLUMN origin")
+    c.execute("UPDATE schema_version SET version = 13")
+    c.execute("INSERT INTO training_sessions (symbol, symbol_base, timeframe, range_start_msc, "
+              "range_end_msc, cursor_msc, created_at_msc) VALUES ('X', 'X', 'M5', 0, 1, 0, 0)")
+    c.commit()
+    c.close()
+    c = connect(path)
+    try:
+        assert c.execute("SELECT origin FROM training_sessions").fetchone()[0] == "blind"
+    finally:
+        c.close()
 
 
 def test_fresh_db_has_training_tables(tmp_path):
@@ -184,7 +200,7 @@ def test_migrate_reports_what_it_applied(tmp_path):
     conn.row_factory = sqlite3.Row
     try:
         applied = migrate(conn)
-        assert applied == [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
+        assert applied == [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
     finally:
         conn.close()
 

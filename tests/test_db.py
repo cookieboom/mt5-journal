@@ -61,6 +61,7 @@ def test_migration_009_allows_an_open_command(tmp_path):
         -- so the stand-in has to carry it or the fixture is lying about v8.
         CREATE TABLE live_heartbeat (
             id INTEGER PRIMARY KEY CHECK (id = 1), beat_msc INTEGER NOT NULL);
+        CREATE TABLE training_sessions (id INTEGER PRIMARY KEY AUTOINCREMENT);
         CREATE TABLE trade_commands (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             account_login INTEGER NOT NULL,

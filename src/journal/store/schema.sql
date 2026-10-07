@@ -406,7 +406,9 @@ CREATE TABLE IF NOT EXISTS training_sessions (
     cursor_msc      INTEGER NOT NULL,
     status          TEXT NOT NULL DEFAULT 'active'
                         CHECK (status IN ('active', 'ended')),
-    created_at_msc  INTEGER NOT NULL
+    created_at_msc  INTEGER NOT NULL,
+    -- 014: 'study' = a Strategy Tester replay jump; out of career stats by default
+    origin          TEXT NOT NULL DEFAULT 'blind' CHECK (origin IN ('blind', 'study'))
 );
 
 CREATE TABLE IF NOT EXISTS training_positions (

@@ -140,3 +140,47 @@ def test_route_script_error_is_400_with_position(client):
 ])
 def test_route_rejects_bad_settings(client, bad):
     assert client.post("/api/indicators/backtest", json=BODY | bad).status_code in (400, 422)
+
+
+# --- replay jump (migration 014) ----------------------------------------------
+
+DAY = 86_400_000
+
+
+def seed_gap(conn):
+    """10 bars, a two-day closure, 10 more."""
+    times = [T0 + i * M5 for i in range(10)] + [T0 + 2 * DAY + i * M5 for i in range(10)]
+    for t in times:
+        cs.insert_candle(conn, "XAUUSDc", "M5", Candle(
+            time_msc=t, open=100, high=101, low=99, close=100, tick_volume=1, spread=1,
+            real_volume=0))
+        cs.record_coverage(conn, "XAUUSDc", "M5", t, t)
+    conn.commit()
+    return times
+
+
+def test_replay_jump_counts_bars_across_a_gap_and_is_a_study_session(conn):
+    t = seed_gap(conn)
+    out = bt.replay_session(conn, symbol="XAUUSDc", timeframe="M5", decision_msc=t[11],
+                            exit_msc=t[14], lead_bars=3, tail_bars=2)
+    s = out["session"]
+    assert s["origin"] == "study"
+    assert s["cursor_msc"] == s["range_start_msc"] == t[8]       # 3 bars back, over the gap
+    assert s["range_end_msc"] == t[16]                            # 2 bars past the exit
+
+
+def test_replay_jump_clamps_to_the_store_edges(conn):
+    t = seed_gap(conn)
+    s = bt.replay_session(conn, symbol="XAUUSDc", timeframe="M5", decision_msc=t[1],
+                          exit_msc=None, lead_bars=50, tail_bars=20)["session"]
+    assert s["cursor_msc"] == t[0] and s["range_end_msc"] == t[-1]
+
+
+def test_replay_route_and_career_toggle(client):
+    r = client.post("/api/indicators/backtest/replay", json={
+        "symbol": "XAUUSDc", "timeframe": "M5", "decision_msc": T0 + 10 * M5,
+        "exit_msc": T0 + 12 * M5})
+    assert r.status_code == 200, r.text
+    assert r.json()["session"]["origin"] == "study"
+    assert client.get("/api/training/summary").status_code == 200
+    assert client.get("/api/training/summary?include_study=true").status_code == 200

@@ -110,8 +110,9 @@ def api_training_end(session_id: int,
 
 
 @router.get("/api/training/summary")
-def api_training_summary(conn: sqlite3.Connection = Depends(get_conn)):
-    return JSONResponse(api.to_jsonable(training.career_summary(conn)))
+def api_training_summary(include_study: bool = False,
+                         conn: sqlite3.Connection = Depends(get_conn)):
+    return JSONResponse(api.to_jsonable(training.career_summary(conn, include_study)))
 
 
 @router.patch("/api/training/positions/{position_id}/sltp")
