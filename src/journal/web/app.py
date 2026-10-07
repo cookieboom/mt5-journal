@@ -21,12 +21,12 @@ from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from ..health import FRONTEND_DIR
-from ..store.db import connect
+from ..store.db import DEFAULT_CACHE_DIR, DEFAULT_DB, connect
 from . import local_only
 from .routes import chart, lab, live, paper, storage, trades, training
 
-_DEFAULT_DB = "data/journal.db"
-_CACHE_DIR = "cache"
+_DEFAULT_DB = DEFAULT_DB
+_CACHE_DIR = DEFAULT_CACHE_DIR
 
 # The built SPA (Vite → frontend/dist). Served at the site root (Phase 5
 # cutover); absent until `npm --prefix frontend run build` has run.

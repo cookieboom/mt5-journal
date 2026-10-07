@@ -14,7 +14,7 @@ from pathlib import Path
 
 import typer
 
-from .store.db import connect
+from .store.db import DEFAULT_CACHE_DIR, DEFAULT_DB, connect
 
 app = typer.Typer(help="mt5-journal — automated trading journal.")
 
@@ -31,7 +31,7 @@ _MARGIN_MODE: dict[int | None, str] = {0: "NETTING", 1: "EXCHANGE", 2: "HEDGING"
 _XAU = "XAUUSDc"  # this account's gold symbol (broker `c` suffix)
 
 # Local-only, single user. Never committed (CLAUDE.md rule 10). Override with --db.
-_DEFAULT_DB = "data/journal.db"
+_DEFAULT_DB = DEFAULT_DB
 
 
 @app.command()
@@ -617,7 +617,7 @@ def chart(
         ..., help="trades.position_id — the STABLE key (survives rebuild)."
     ),
     tf: str = typer.Option(None, help="Override the duration-based timeframe pick."),
-    cache_dir: str = typer.Option("cache", help="Directory PNGs are written to."),
+    cache_dir: str = typer.Option(DEFAULT_CACHE_DIR, help="Directory PNGs are written to."),
     db: str = typer.Option(_DEFAULT_DB, help="SQLite DB path."),
 ) -> None:
     """Render one trade to a PNG in `cache/` (M3). Pure DB, no bridge needed —
@@ -1019,7 +1019,7 @@ def weekly(
     week: str = typer.Option(
         None, help="ISO week 'YYYY-Www' (default: the last COMPLETE week)."
     ),
-    cache_dir: str = typer.Option("cache", help="Directory the .md is written to."),
+    cache_dir: str = typer.Option(DEFAULT_CACHE_DIR, help="Directory the .md is written to."),
     db: str = typer.Option(_DEFAULT_DB, help="SQLite DB path."),
 ) -> None:
     """Render one ISO week to a Markdown file in `cache/` (M6.1). Pure DB, no

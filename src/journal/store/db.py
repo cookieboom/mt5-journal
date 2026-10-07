@@ -22,6 +22,13 @@ SCHEMA_VERSION = 13
 _SCHEMA_PATH = Path(__file__).resolve().parent / "schema.sql"
 _MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"
 
+# Anchored to the repo, never the cwd: a relative "data/journal.db" opened from
+# `frontend/` made sqlite3 create a fresh EMPTY store there, and the dashboard
+# 400'd with "no account" while the real one sat untouched.
+_REPO = Path(__file__).resolve().parents[3]
+DEFAULT_DB = str(_REPO / "data" / "journal.db")
+DEFAULT_CACHE_DIR = str(_REPO / "cache")
+
 
 def now_ms() -> int:
     """Current true UTC time in epoch milliseconds (integer)."""
