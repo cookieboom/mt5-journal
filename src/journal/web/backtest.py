@@ -19,6 +19,7 @@ from ..domain.indicators.builtins import REGISTRY
 from ..domain.indicators.engine import evaluate
 from ..domain.indicators.lang import lookback, parse, resolve_consts
 from ..domain.resample import timeframe_ms
+from ..store import candles_store as cs
 from ..store.db import now_ms
 from . import training
 from .indicators import _source_of, _warm_bars, load_frames
@@ -82,17 +83,20 @@ def replay_session(conn: sqlite3.Connection, *, symbol: str, timeframe: str,
     range ends `tail_bars` bars after the exit, or at the last stored bar for a
     trade still open. Study sessions stay out of the career summary.
 
-    An `exit_msc` in the future is refused: no bar can follow it, so the range
-    would end past every stored bar and its fill request would never complete."""
-    if exit_msc is not None and exit_msc > now_ms():
-        raise ValueError("exit_msc is in the future")
+    The range never ends past the last stored bar: an exit with no bar after it
+    (a lagging store, or a time in the future) would leave a fill request no
+    bar can ever complete."""
     lead = _warm_bars(conn, symbol, timeframe, decision_msc, lead_bars)
     cursor = lead[-lead_bars].time_msc if len(lead) >= lead_bars else \
         (lead[0].time_msc if lead else decision_msc)
     anchor = exit_msc if exit_msc is not None else decision_msc
     tail = training._next_bars(conn, symbol, timeframe, anchor, now_ms(),
                                tail_bars if exit_msc is not None else MAX_BACKTEST_BARS)
-    end = tail[-1].time_msc if tail else anchor
+    if tail:
+        end = tail[-1].time_msc
+    else:   # nothing after the anchor: the last stored bar at or before it
+        end = cs.last_bar_open(conn, symbol, timeframe, anchor)
+        end = anchor if end is None else end
     assert cursor is not None and end is not None
     return training.create_session(conn, symbol=symbol, timeframe=timeframe,
                                    range_start_msc=cursor, range_end_msc=end,

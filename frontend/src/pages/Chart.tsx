@@ -231,11 +231,14 @@ export default function Chart() {
     if (focus && first !== undefined && first > focus.startMs) void data.loadOlder();
   }, [focus, data.candles, data.loadOlder]);
   // Study session around one tester trade, or one period (its start to its end).
+  const [replayError, setReplayError] = useState<string | null>(null);
+  useEffect(() => { setReplayError(null); }, [symbol, tf]);
   const onTesterReplay = async (decisionMsc: number, exitMsc: number | null) => {
     const r = await backtestApi.replay({
       symbol, timeframe: tf, decision_msc: decisionMsc, exit_msc: exitMsc,
     });
-    if (!r.ok || !r.data) return;
+    if (!r.ok || !r.data) { setReplayError(r.error ?? "gagal membuat sesi"); return; }
+    setReplayError(null);
     snapshotRef.current = params.toString();
     const session = r.data.session as TrainingSession;
     setReplayOpen(true);
@@ -261,6 +264,7 @@ export default function Chart() {
       onTradeClick={(t) => setFocus({ startMs: t.entry_msc, endMs: t.exit_msc ?? t.entry_msc })}
       onReplay={(t) => void onTesterReplay(t.decision_msc, t.exit_msc)}
       onPeriodReplay={(p) => void onTesterReplay(p.key, p.last_exit_msc)}
+      replayError={replayError}
       context={testerItem ? {
         script: testerItem.script, inputs: testerItem.inputs, symbol, tf, rev: scriptsRev,
       } : null}

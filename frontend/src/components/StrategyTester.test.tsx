@@ -30,13 +30,17 @@ const result: BacktestResult = {
 
 const QUERY = { script: "s1", inputs: {}, symbol: "XAUUSDc", tf: "M5", rev: 0 };
 
-function setup(r: BacktestResult | null = result) {
-  const onTradeClick = vi.fn(), onReplay = vi.fn(), onPeriodReplay = vi.fn();
-  render(<StrategyTester candidates={[{ id: "a", name: "EMA cross" }]} activeId="a" onActive={() => {}}
+function tester(r: BacktestResult | null, replayError: string | null = null,
+                fns = { onTradeClick: vi.fn(), onReplay: vi.fn(), onPeriodReplay: vi.fn() }) {
+  return <StrategyTester candidates={[{ id: "a", name: "EMA cross" }]} activeId="a" onActive={() => {}}
     settings={DEFAULT_BACKTEST} onSettings={() => {}} result={r} error={null} loading={false}
-    armed onRun={() => {}} onTradeClick={onTradeClick} onReplay={onReplay}
-    onPeriodReplay={onPeriodReplay} context={QUERY} nowMs={180_000} />);
-  return { onTradeClick, onReplay, onPeriodReplay };
+    armed onRun={() => {}} {...fns} replayError={replayError} context={QUERY} nowMs={180_000} />;
+}
+
+function setup(r: BacktestResult | null = result, replayError: string | null = null) {
+  const fns = { onTradeClick: vi.fn(), onReplay: vi.fn(), onPeriodReplay: vi.fn() };
+  const { rerender } = render(tester(r, replayError, fns));
+  return { ...fns, rerender: (r2: BacktestResult | null) => rerender(tester(r2, replayError, fns)) };
 }
 
 afterEach(() => { vi.restoreAllMocks(); });
@@ -82,10 +86,9 @@ it("a period row says IS, OOS or both, and its Replay jumps to that period", () 
   const { onPeriodReplay } = setup();
   fireEvent.click(screen.getByLabelText("Buka tester"));
   fireEvent.click(screen.getByRole("tab", { name: "Breakdown" }));
-  const [best, mid, worst] = screen.getAllByTestId("period-row");
-  expect(best.textContent).toContain("OOS");
-  expect(mid.textContent).toContain("IS+OOS");
-  expect(worst.textContent).toContain("IS");
+  const seg = (row: HTMLElement) => row.querySelector("[data-testid=period-segment]")?.textContent;
+  expect(screen.getAllByTestId("period-row").map(seg)).toEqual(["OOS", "IS+OOS", "IS"]);
+  const [best] = screen.getAllByTestId("period-row");
   fireEvent.click(best.querySelector("button")!);
   expect(onPeriodReplay).toHaveBeenCalledWith(periods.day[2]);
 });
@@ -176,4 +179,58 @@ it("a context error is shown, not swallowed", async () => {
   fireEvent.click(screen.getByLabelText("Buka tester"));
   fireEvent.click(screen.getByRole("tab", { name: "Trade saya" }));
   expect(await screen.findByText("baris 1: boom")).toBeTruthy();
+});
+
+it("a new tester result refreshes the context beside it", async () => {
+  const spy = vi.spyOn(backtestApi, "context").mockResolvedValue({ ok: true, data: ctx });
+  const { rerender } = setup();
+  fireEvent.click(screen.getByLabelText("Buka tester"));
+  fireEvent.click(screen.getByRole("tab", { name: "Trade saya" }));
+  await waitFor(() => expect(spy).toHaveBeenCalledTimes(1));
+  rerender({ ...result, computed_ms: 60_000 });
+  await waitFor(() => expect(spy).toHaveBeenCalledTimes(2));
+});
+
+it("an error is not kept: reopening the tab tries again", async () => {
+  const spy = vi.spyOn(backtestApi, "context")
+    .mockResolvedValueOnce({ ok: false, error: "database is locked" })
+    .mockResolvedValue({ ok: true, data: ctx });
+  setup();
+  fireEvent.click(screen.getByLabelText("Buka tester"));
+  fireEvent.click(screen.getByRole("tab", { name: "Trade saya" }));
+  await screen.findByText("database is locked");
+  fireEvent.click(screen.getByRole("tab", { name: "Breakdown" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Trade saya" }));
+  expect(await screen.findByText("58%")).toBeTruthy();
+  expect(spy).toHaveBeenCalledTimes(2);
+});
+
+it("a pending (warm-up) result is retried", async () => {
+  const spy = vi.spyOn(backtestApi, "context")
+    .mockResolvedValueOnce({ ok: true, data: { ...ctx, pending: true } })
+    .mockResolvedValue({ ok: true, data: ctx });
+  setup();
+  fireEvent.click(screen.getByLabelText("Buka tester"));
+  fireEvent.click(screen.getByRole("tab", { name: "Trade saya" }));
+  await screen.findByText(/warm-up belum lengkap/);
+  await waitFor(() => expect(spy).toHaveBeenCalledTimes(2), { timeout: 4000 });
+  await waitFor(() => expect(screen.queryByText(/warm-up belum lengkap/)).toBeNull());
+});
+
+it("a window typed just before leaving the tab survives the switch", async () => {
+  const spy = vi.spyOn(backtestApi, "context").mockResolvedValue({ ok: true, data: ctx });
+  setup();
+  fireEvent.click(screen.getByLabelText("Buka tester"));
+  fireEvent.click(screen.getByRole("tab", { name: "Trade saya" }));
+  await waitFor(() => expect(spy).toHaveBeenCalledTimes(1));
+  fireEvent.change(screen.getByLabelText("Jendela (bar)"), { target: { value: "15" } });
+  fireEvent.click(screen.getByRole("tab", { name: "Breakdown" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Trade saya" }));
+  expect((screen.getByLabelText("Jendela (bar)") as HTMLInputElement).value).toBe("15");
+  await waitFor(() => expect(spy).toHaveBeenLastCalledWith(QUERY, 15));
+});
+
+it("a refused replay jump is shown, not swallowed", () => {
+  setup(result, "exit_msc is in the future");
+  expect(screen.getByText("Replay gagal: exit_msc is in the future")).toBeTruthy();
 });

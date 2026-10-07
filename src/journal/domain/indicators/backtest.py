@@ -227,21 +227,19 @@ def _segment(trades: list[Trade]) -> dict[str, Any]:
     return out
 
 
+def _stats(trades: list[Trade]) -> dict[str, Any]:
+    """`n` counts every trade; the R figures only those with a known R."""
+    rs = [tr.r for tr in trades if tr.r is not None]
+    return {"n": len(trades),
+            "win_rate": sum(1 for x in rs if x > 0) / len(rs) if rs else None,
+            "avg_r": sum(rs) / len(rs) if rs else None, "total_r": sum(rs)}
+
+
 def _bucket(trades: list[Trade], key: Any) -> list[dict[str, Any]]:
-    groups: dict[Any, list[float]] = defaultdict(list)
-    counts: dict[Any, int] = defaultdict(int)
+    groups: dict[Any, list[Trade]] = defaultdict(list)
     for tr in trades:
-        k = key(tr.entry_msc)
-        counts[k] += 1
-        if tr.r is not None:
-            groups[k].append(tr.r)
-    out = []
-    for k in sorted(counts):
-        rs = groups[k]
-        out.append({"key": k, "n": counts[k],
-                    "win_rate": sum(1 for x in rs if x > 0) / len(rs) if rs else None,
-                    "avg_r": sum(rs) / len(rs) if rs else None, "total_r": sum(rs)})
-    return out
+        groups[key(tr.entry_msc)].append(tr)
+    return [{"key": k, **_stats(groups[k])} for k in sorted(groups)]
 
 
 # Epoch 0 is a Thursday: Monday 00:00 UTC sits 3 days before it, mod 7 days.
@@ -260,7 +258,7 @@ def _week(ms: int) -> tuple[int, int]:
 
 def _periods(trades: list[Trade], window: Any, split_msc: int) -> list[dict[str, Any]]:
     """Trades grouped by the period `[key, end_msc)` their entry falls in, each
-    group a `_bucket` row. `last_exit_msc` — where a replay of the period must
+    with `_stats`. `last_exit_msc` — where a replay of the period must
     reach (a trade can exit after its period ends; exits are always stored
     bars, never the future). `segment` splits on decision time exactly as the
     segments do: `is`, `oos`, or `mixed` when the split falls inside."""
@@ -269,10 +267,9 @@ def _periods(trades: list[Trade], window: Any, split_msc: int) -> list[dict[str,
         groups[window(tr.entry_msc)].append(tr)
     out = []
     for (start, end), trs in sorted(groups.items()):
-        (row,) = _bucket(trs, lambda _ms, k=start: k)
         oos = [tr.decision_msc >= split_msc for tr in trs]
-        out.append(row | {
-            "end_msc": end,
+        out.append({
+            "key": start, **_stats(trs), "end_msc": end,
             "last_exit_msc": max(tr.exit_msc for tr in trs if tr.exit_msc is not None),
             "segment": "oos" if all(oos) else "is" if not any(oos) else "mixed"})
     return out

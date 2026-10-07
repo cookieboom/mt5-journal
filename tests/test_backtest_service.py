@@ -186,8 +186,11 @@ def test_replay_route_and_career_toggle(client):
     assert client.get("/api/training/summary?include_study=true").status_code == 200
 
 
-def test_replay_refuses_an_exit_in_the_future(conn):
+@pytest.mark.parametrize("exit_msc", [T0 + 45 * M5, 10**15])
+def test_replay_range_never_ends_past_the_last_stored_bar(conn, exit_msc):
+    # The store lags (or the exit is the future): no bar follows the exit, so the
+    # range ends at the last stored bar, never at a time no bar can fill.
     seed(conn)
-    with pytest.raises(ValueError, match="future"):
-        bt.replay_session(conn, symbol="XAUUSDc", timeframe="M5", decision_msc=T0,
-                          exit_msc=10**15)
+    out = bt.replay_session(conn, symbol="XAUUSDc", timeframe="M5", decision_msc=T0 + 20 * M5,
+                            exit_msc=exit_msc)
+    assert out["session"]["range_end_msc"] == T0 + 39 * M5

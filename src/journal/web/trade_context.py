@@ -57,6 +57,19 @@ def _rows(conn: sqlite3.Connection, symbol: str) -> dict[str, list[sqlite3.Row]]
             "paper": conn.execute(_PAPER, (symbol,)).fetchall()}
 
 
+def _bar_opens(conn: sqlite3.Connection, symbol: str, timeframe: str,
+               from_ms: int, to_ms: int) -> np.ndarray:
+    """Open times `load_frames` would read for [from_ms, to_ms]: native rows if
+    any (as `candles_store.load_bars`), else the M1 buckets it aggregates."""
+    tf_ms = timeframe_ms(timeframe)
+    t = np.array(cs.bar_times(conn, symbol, timeframe, from_ms, to_ms), dtype="int64")
+    if len(t) or timeframe == "M1":
+        return t
+    m1 = np.array(cs.bar_times(conn, symbol, "M1", from_ms - from_ms % tf_ms, to_ms),
+                  dtype="int64")
+    return np.unique(m1 - m1 % tf_ms)
+
+
 def _real_cell(rows: list[sqlite3.Row]) -> dict[str, Any]:
     b = bucket_stat("", rows)
     return {"n": b.n, "n_r": b.n_with_r, "win_rate": b.win_rate, "avg_r": b.avg_r,
@@ -99,18 +112,16 @@ def run(conn: sqlite3.Connection, *, inputs: dict[str, Any], symbol: str, timefr
             (before[0].time_msc if before else min(refs))
         assert from_ms is not None
         to_ms = max(refs)
-        lb = lookback(p, consts, tf_ms)
-        fr = load_frames(conn, p, consts, symbol=symbol, timeframe=timeframe,
-                         from_ms=from_ms, to_ms=to_ms, lb=lb)
-        view = fr.f.index[fr.f.index >= from_ms]
+        # Too long a span (an old replay trade, or M1): evaluate the newest
+        # `cap` bars only. Older trades fall before warm-up and read unknown, and
+        # the clip is reported — one old trade never blanks the tab. Counted from
+        # open times before loading, so nothing outside the cut is read or queued.
+        view = _bar_opens(conn, symbol, timeframe, from_ms, to_ms)
         cap = backtest.MAX_BACKTEST_BARS
         if len(view) > cap:
-            # Too long a span (an old replay trade, or M1): evaluate the newest
-            # `cap` bars only. Older trades fall before warm-up and read unknown,
-            # and the clip is reported — one old trade never blanks the tab.
             from_ms = clipped_from = int(view[-cap])
-            fr = load_frames(conn, p, consts, symbol=symbol, timeframe=timeframe,
-                             from_ms=from_ms, to_ms=to_ms, lb=lb)
+        fr = load_frames(conn, p, consts, symbol=symbol, timeframe=timeframe,
+                         from_ms=from_ms, to_ms=to_ms, lb=lookback(p, consts, tf_ms))
         warm_from, pending = fr.warm_from_msc, fr.pending
         res = evaluate(p, fr.f, inputs, tf_ms, htf=fr.htf)
         # A value before warm-up is not trusted, even when it reads 0.0: NaN.
@@ -118,11 +129,13 @@ def run(conn: sqlite3.Connection, *, inputs: dict[str, Any], symbol: str, timefr
         sigs = [(s.side, v.where(warm)) for s, v in zip(p.signals, res.signals, strict=True)]
         # Buckets M1 traded in that the frame lacks: store holes, not closures.
         # A window spanning one is not the N bars before the trade.
-        # No window starts before `from_ms`; on M1 the frame IS the M1 store.
+        # A window reaches at most `window` bars before `from_ms` (after a clip,
+        # into the warm-up); on M1 the frame IS the M1 store.
         idx = fr.f.index.to_numpy(dtype="int64")
         missing = np.array([], dtype="int64")
-        if timeframe != "M1":
-            m1 = np.array(cs.bar_times(conn, symbol, "M1", from_ms, to_ms), dtype="int64")
+        if timeframe != "M1" and len(idx):
+            scan_from = int(idx[max(0, int(np.searchsorted(idx, from_ms)) - window)])
+            m1 = np.array(cs.bar_times(conn, symbol, "M1", scan_from, to_ms), dtype="int64")
             buckets = np.unique(m1 - m1 % tf_ms)      # resample.bucket_start, vectorised
             missing = buckets[~np.isin(buckets, idx)]
         for k, rs in rows.items():

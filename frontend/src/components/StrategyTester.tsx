@@ -28,7 +28,7 @@ export interface TesterCandidate { id: string; name: string }
 
 export default function StrategyTester({
   candidates, activeId, onActive, settings, onSettings, result, error, loading, armed, onRun,
-  onTradeClick, onReplay, onPeriodReplay, context, nowMs,
+  onTradeClick, onReplay, onPeriodReplay, replayError, context, nowMs,
 }: {
   candidates: TesterCandidate[];
   activeId: string;
@@ -43,6 +43,7 @@ export default function StrategyTester({
   onTradeClick: (t: TesterTrade) => void;
   onReplay: (t: TesterTrade) => void;
   onPeriodReplay: (p: Period) => void;
+  replayError: string | null;        // the last Replay jump the server refused
   context: ContextQuery | null;      // the active script/symbol/TF, for "Trade saya"
   nowMs: number;
 }) {
@@ -50,6 +51,7 @@ export default function StrategyTester({
   const [tab, setTab] = useState<Tab>("summary");
   // Kept here, above the tab switch, so leaving "Trade saya" and coming back
   // neither loses the result nor re-runs the server job.
+  const [ctxDraft, setCtxDraft] = useState("3");
   const [ctxWin, setCtxWin] = useState(3);
   const [ctxOut, setCtxOut] = useState<CtxOut | null>(null);
 
@@ -70,6 +72,7 @@ export default function StrategyTester({
         </span>
         {!armed && <button onClick={onRun} className="text-cyan hover:text-ink shrink-0">Jalankan</button>}
         {loading && result && <span className="text-meta text-muted shrink-0">menghitung…</span>}
+        {replayError && <span className="text-meta text-neg shrink-0">Replay gagal: {replayError}</span>}
         <button onClick={() => setOpen((x) => !x)} aria-expanded={open}
                 aria-label={open ? "Tutup tester" : "Buka tester"}
                 className="text-muted hover:text-ink shrink-0 min-w-[32px]">{open ? "▼" : "▲"}</button>
@@ -85,7 +88,7 @@ export default function StrategyTester({
           <div className="flex-1 min-h-0 overflow-auto p-3">
             {tab === "settings" ? <Settings s={settings} onChange={onSettings} />
               : tab === "context" ? (
-                <TradeContext q={context} r={result} nowMs={nowMs}
+                <TradeContext q={context} r={result} nowMs={nowMs} draft={ctxDraft} onDraft={setCtxDraft}
                               win={ctxWin} onWin={setCtxWin} out={ctxOut} onOut={setCtxOut} />
               )
               : !result ? <div className="text-muted">Jalankan tester untuk melihat hasil.</div>
@@ -315,7 +318,8 @@ function Periods({ ps, onReplay }: { ps: Record<PeriodKind, Period[]>; onReplay:
                 <td className="text-right px-2 text-muted">{p.n}</td>
                 <td className="text-right px-2">{pct(p.win_rate)}</td>
                 <td className={`text-right px-2 ${tone(p.total_r)}`}>{fmtR(p.total_r)}</td>
-                <td className={`px-2 text-meta ${p.segment === "is" ? "text-muted" : "text-ink"}`}>
+                <td data-testid="period-segment"
+                    className={`px-2 text-meta ${p.segment === "is" ? "text-muted" : "text-ink"}`}>
                   {SEGMENT[p.segment]}</td>
                 <td className="text-right">
                   <button onClick={() => onReplay(p)} className="text-meta text-cyan hover:text-ink">Replay</button>
@@ -335,16 +339,19 @@ const SOURCES: [ContextSourceKey, string][] = [
 
 interface CtxOut { key: string; res?: ContextResult; err?: string }
 const WIN_DEBOUNCE_MS = 400;
+const PENDING_RETRY_MS = 3000;
 
 /** My closed trades, split by whether a same-side signal fired in the last N
  *  closed bars before them. Fetched when the tab opens (it mounts only then),
  *  and only beside a tester result — signal() output never shows without its
  *  OOS expectancy, n and age (rule 9). */
-function TradeContext({ q, r, nowMs, win, onWin, out, onOut }: {
+function TradeContext({ q, r, nowMs, draft, onDraft, win, onWin, out, onOut }: {
   q: ContextQuery | null; r: BacktestResult | null; nowMs: number;
+  draft: string; onDraft: (d: string) => void;
   win: number; onWin: (w: number) => void; out: CtxOut | null; onOut: (o: CtxOut) => void;
 }) {
-  const [draft, setDraft] = useState(String(win));
+  // The draft lives in the parent, so a value typed just before leaving the
+  // tab is applied when it comes back instead of being lost with the timer.
   useEffect(() => {
     const v = Math.round(Number(draft));
     if (!(v >= 1 && v <= 50) || v === win) return;
@@ -352,16 +359,25 @@ function TradeContext({ q, r, nowMs, win, onWin, out, onOut }: {
     return () => clearTimeout(t);
   }, [draft, win, onWin]);
 
-  const key = JSON.stringify([q, win]);
+  // Keyed by the tester result too: the context always pairs with the headline
+  // beside it, and a new run (new closed bar, new inputs) refreshes it. Only a
+  // clean, settled result is kept: an error retries on the next open, a pending
+  // (warm-up still queued) one retries on a timer.
+  const [retry, setRetry] = useState(0);
+  const key = JSON.stringify([q, win, r?.computed_ms ?? null]);
+  const kept = out?.key === key && !out.err && !out.res?.pending;
   const ready = q !== null && r !== null;
   useEffect(() => {
-    if (!ready || out?.key === key) return;
+    if (!ready || kept) return;
     let live = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     void backtestApi.context(q!, win).then((x) => {
-      if (live) onOut(x.ok && x.data ? { key, res: x.data } : { key, err: x.error ?? "gagal menghitung" });
+      if (!live) return;
+      onOut(x.ok && x.data ? { key, res: x.data } : { key, err: x.error ?? "gagal menghitung" });
+      if (x.ok && x.data?.pending) timer = setTimeout(() => setRetry((n) => n + 1), PENDING_RETRY_MS);
     });
-    return () => { live = false; };
-  }, [key, ready]);   // key covers q and win; `out` only short-circuits a repeat
+    return () => { live = false; if (timer) clearTimeout(timer); };
+  }, [key, ready, retry]);   // key covers q, win and the result; `kept` only short-circuits
 
   if (!q) return <div className="text-muted">Pilih script dengan signal().</div>;
   if (!r) {
@@ -375,7 +391,7 @@ function TradeContext({ q, r, nowMs, win, onWin, out, onOut }: {
         <label className="flex items-center gap-2">Jendela (bar)
           <input type="number" min={1} max={50} value={draft}
                  className="bg-transparent border border-panel-border rounded px-1 w-14 text-body tabular-nums"
-                 onChange={(e) => setDraft(e.target.value)} />
+                 onChange={(e) => onDraft(e.target.value)} />
         </label>
         <span data-testid="ctx-headline" className="tabular-nums text-muted">Tester: {headline(r, nowMs)}</span>
       </div>

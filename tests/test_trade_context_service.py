@@ -227,3 +227,33 @@ def test_m1_bars_the_frame_has_change_nothing(conn):
             tick_volume=1, spread=10, real_volume=0))
     conn.commit()
     assert run(conn)["sources"]["real"]["true"]["n"] == 1
+
+
+def test_clip_loads_the_frames_once(conn, monkeypatch):
+    real(conn, "buy", at(11), 10.0)
+    real(conn, "buy", at(35), 10.0)
+    monkeypatch.setattr(bt, "MAX_BACKTEST_BARS", 5)
+    calls = []
+    real_load = tc.load_frames
+    monkeypatch.setattr(tc, "load_frames", lambda *a, **k: calls.append(k["from_ms"]) or real_load(*a, **k))
+    assert run(conn)["clipped_from_msc"] == T0 + 32 * M5
+    assert calls == [T0 + 32 * M5]
+
+
+def test_after_a_clip_a_hole_just_before_the_cut_still_makes_it_unknown(conn, monkeypatch):
+    # Bar 31 missing from the M5 store while M1 traded in it. The trade's window
+    # (3 bars) reaches back across the cut at bar 32 into that hole.
+    conn.execute("DELETE FROM candles WHERE timeframe = 'M5' AND time_msc = ?", (T0 + 31 * M5,))
+    cs.insert_candle(conn, "XAUUSDc", "M1", Candle(
+        time_msc=T0 + 31 * M5, open=100.0, high=101.0, low=99.0, close=100.0,
+        tick_volume=1, spread=10, real_volume=0))
+    conn.commit()
+    real(conn, "buy", at(11), 10.0)
+    real(conn, "buy", at(33), 10.0)
+    monkeypatch.setattr(bt, "MAX_BACKTEST_BARS", 3)       # view 32..34 → cut at bar 32
+    # Fires on every ordinary bar; the ema gives warm-up bars before the cut, so
+    # the window is 30, 32, 33 in the frame — a fire on 32/33 reads "true"
+    # unless the hole at 31 is seen.
+    out = run(conn, source='x = ema(close, 5)\nsignal("long", volume == 1 and x > 0)')
+    assert out["clipped_from_msc"] == T0 + 32 * M5
+    assert out["sources"]["real"]["true"]["n"] == 0 and out["sources"]["real"]["n_unknown"] == 2

@@ -71,6 +71,20 @@ def bar_times(conn: sqlite3.Connection, symbol: str, timeframe: str,
         (symbol, timeframe, from_ms, to_ms))]
 
 
+def last_bar_open(conn: sqlite3.Connection, symbol: str, timeframe: str,
+                  at_ms: int) -> int | None:
+    """Open of the last bar at or before `at_ms`: native if stored, else the M1
+    bucket `load_bars` would aggregate it from. None when there is none."""
+    from ..domain.resample import bucket_start
+
+    q = "SELECT MAX(time_msc) FROM candles WHERE symbol = ? AND timeframe = ? AND time_msc <= ?"
+    (t,) = conn.execute(q, (symbol, timeframe, at_ms)).fetchone()
+    if t is None and timeframe != "M1":
+        (m1,) = conn.execute(q, (symbol, "M1", at_ms)).fetchone()
+        t = None if m1 is None else bucket_start(m1, timeframe)
+    return t
+
+
 def row_to_candle(r: sqlite3.Row) -> Candle:
     return Candle(
         time_msc=r["time_msc"], open=r["open"], high=r["high"], low=r["low"],

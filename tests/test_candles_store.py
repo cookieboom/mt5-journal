@@ -135,3 +135,15 @@ def test_prune_before_without_a_symbol_prunes_every_symbol(tmp_path):
     conn.commit()
     assert cs.prune_before(conn, BASE + 5 * M1) == 2
     assert len(cs.read_candles(conn, "BTCUSDc", "M1", 0, BASE * 2)) == 1
+
+
+def test_last_bar_open_native_then_m1_bucket(tmp_path):
+    t0 = 1_767_225_600_000                                           # 2026-01-01 00:00 UTC
+    conn = _conn(tmp_path)
+    assert cs.last_bar_open(conn, "XAUUSDc", "M5", t0 + 10**9) is None
+    cs.insert_candle(conn, "XAUUSDc", "M1", _c(t0 + 7 * 60_000))     # M1 at 00:07
+    # No native M5: the M5 bucket that M1 bar would aggregate into.
+    assert cs.last_bar_open(conn, "XAUUSDc", "M5", t0 + 10**9) == t0 + 5 * 60_000
+    assert cs.last_bar_open(conn, "XAUUSDc", "M5", t0 + 6 * 60_000) is None
+    cs.insert_candle(conn, "XAUUSDc", "M5", _c(t0))
+    assert cs.last_bar_open(conn, "XAUUSDc", "M5", t0 + 10**9) == t0  # native wins
