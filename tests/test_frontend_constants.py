@@ -82,3 +82,14 @@ def test_timeframe_ms_matches(tf: str) -> None:
 
 def test_timeframe_ms_table_has_no_extra_entries() -> None:
     assert set(_tf_ms()) == set(TIMEFRAMES)
+
+
+def test_indicator_colors_are_palette_tokens():
+    """A script's `color=` is a theme token name; the browser resolves it in
+    `lib/theme.ts::palette`. A token the palette lacks would fall back to muted
+    silently."""
+    from journal.domain.indicators.lang import COLORS
+    theme = (CANDLES_TS.parent / "theme.ts").read_text(encoding="utf-8")
+    block = theme.split("export const palette = {", 1)[1].split("} as const", 1)[0]
+    keys = set(re.findall(r'^\s*"?([\w-]+)"?\s*:', block, re.M))
+    assert set(COLORS) <= keys, set(COLORS) - keys
