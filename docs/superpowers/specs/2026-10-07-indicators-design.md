@@ -128,25 +128,20 @@ src/journal/domain/indicators/
 
 `domain/` keeps its layering (imports nothing above it). TDD per rule 7.
 
-### 1.4 Storage — migration 014
+### 1.4 Storage — `app_prefs`, no migration
 
-```sql
-CREATE TABLE indicator_scripts (
-  id           INTEGER PRIMARY KEY,
-  name         TEXT NOT NULL UNIQUE,
-  source       TEXT NOT NULL,
-  source_hash  TEXT NOT NULL,       -- sha256(source); backtests key on it
-  created_ms   INTEGER NOT NULL,
-  updated_ms   INTEGER NOT NULL
-);
-```
+User scripts live in `app_prefs` key `indicator_scripts` as
+`{"scripts": [{"id", "name", "source", "updated_ms"}]}`. Ids are server-assigned
+and never reused. `source_hash` (`sha256(source)`) is derived when spec 4
+needs it, not stored. Library scripts are files and are never seeded into the
+DB; "Edit a copy" creates a user script. A table was considered and rejected:
+a migration bumps the schema version, and a running `journal live` on older
+code would then be refused for a change that it never reads.
 
-Library scripts are files and are not seeded into the DB. "Edit a copy"
-creates a row.
-**Chart layout** (which scripts are attached, with what inputs, visibility and
-pane order) lives in `app_prefs` key `indicators`, versioned and normalised
-the same way `chartPrefs` is. It is a single layout shared by live and replay,
-so a training session uses exactly what the live chart uses.
+The **chart layout** (which scripts are attached, with what inputs, visibility
+and pane order) lives under key `indicator_layout`, versioned and normalised
+the way `chartPrefs` is. It is a single layout shared by live and replay, so a
+training session uses exactly what the live chart uses.
 
 ### 1.5 API
 
