@@ -325,6 +325,7 @@ def _execute_one_command(
 
     cmd_id = int(row["id"])
 
+    pos: sqlite3.Row | dict
     try:
         if row["kind"] == "open":
             price = _open_price_for(client, row["symbol"], row["price_ref"])
@@ -404,6 +405,8 @@ def _persist_exit(conn: sqlite3.Connection, row: sqlite3.Row, ev: pe.Event,
     "no guess" only bites the MONEY math). `net_profit` then stays NULL/unknown
     rather than coerced to 0; R still resolves independently, since it needs
     only entry/exit/sl, not the symbol's tick value."""
+    # paper_eval only ever builds an "exit" with a price and a reason.
+    assert ev.price is not None and ev.reason is not None
     entry = row["entry_price"]
     net = None if entry is None or specs is None else rev.net_profit_usc(
         row["direction"], entry, ev.price, row["volume"],
@@ -507,6 +510,7 @@ def paper_step(client: MT5Client, conn: sqlite3.Connection, *,
         for ev in events:
             row = rows[ev.position_id]
             if ev.kind == "fill":
+                assert ev.price is not None  # a fill carries the entry price
                 paper_store.mark_fill(
                     conn, ev.position_id, entry_msc=ev.time_msc,
                     entry_price=ev.price,
@@ -520,6 +524,7 @@ def paper_step(client: MT5Client, conn: sqlite3.Connection, *,
                 # this exit's money depends on. specs.get(...): None is a valid,
                 # meaningful value here (unknown spec), not a bug.
                 fresh = paper_store.get_position(conn, ev.position_id)
+                assert fresh is not None  # read from this table a moment ago
                 _persist_exit(conn, fresh, ev, specs.get(fresh["symbol"]))
                 resolved_ids.add(ev.position_id)
 
