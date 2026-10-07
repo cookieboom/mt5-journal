@@ -70,7 +70,7 @@ def set_annotation(
     followed_plan: bool | int | None = None,
     notes: str | None = None,
     segment: int = 0,
-) -> sqlite3.Row | None:
+) -> sqlite3.Row:
     """UPSERT one annotation on the PK. First write sets `created_at`; every write
     (insert or update) sets `updated_at = now_ms()`. `created_at` is preserved on
     update — it is deliberately absent from the DO UPDATE clause.
@@ -105,7 +105,9 @@ def set_annotation(
         (login, position_id, segment, setup, confidence, emotion, fp, notes, ts, ts),
     )
     conn.commit()
-    return get_annotation(conn, position_id, segment=segment)
+    row = get_annotation(conn, position_id, segment=segment)
+    assert row is not None  # upserted just above
+    return row
 
 
 def add_tag(

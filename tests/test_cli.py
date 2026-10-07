@@ -223,3 +223,21 @@ def test_restore_refuses_a_source_that_is_not_a_database(tmp_path):
     assert conn.execute("SELECT COUNT(*) FROM candle_coverage").fetchone()[0] == 1
     conn.close()
     assert not list(tmp_path.glob("t-replaced-*.db"))
+
+
+def test_doctor_survives_a_tick_without_a_time(tmp_path, monkeypatch):
+    """A tick with no `time` cannot give an offset; doctor says so instead of
+    crashing on the arithmetic (or on the stale-tick warning after it)."""
+    import json
+
+    from journal.adapter import select
+    from journal.adapter.fake import FakeMT5Client
+
+    (tmp_path / "account.json").write_text(json.dumps(
+        {"login": 0, "currency": "USC", "balance": 1.0, "margin_mode": 2, "leverage": 100}))
+    (tmp_path / "ticks.json").write_text(json.dumps({"XAUUSDc": {"bid": 1.0}}))
+    monkeypatch.setattr(select, "get_client", lambda: FakeMT5Client(tmp_path))
+
+    result = CliRunner().invoke(app, ["doctor"])
+    assert result.exit_code == 0, result.output
+    assert "no time" in result.output

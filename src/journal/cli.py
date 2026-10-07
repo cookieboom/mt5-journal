@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 import sqlite3
 import time
+from typing import Any
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -25,7 +26,7 @@ def _main() -> None:
     Future milestones add `rebuild`, `chart`."""
 
 
-_MARGIN_MODE = {0: "NETTING", 1: "EXCHANGE", 2: "HEDGING"}
+_MARGIN_MODE: dict[int | None, str] = {0: "NETTING", 1: "EXCHANGE", 2: "HEDGING"}
 
 _XAU = "XAUUSDc"  # this account's gold symbol (broker `c` suffix)
 
@@ -74,6 +75,8 @@ def doctor() -> None:
 
     if tick is None:
         typer.echo("symbol_info_tick returned None — not in Market Watch / market closed?")
+    elif tick.time is None:
+        typer.echo("symbol_info_tick returned a tick with no time — cannot measure the offset.")
     else:
         true_now = time.time()
         server_epoch = tick.time
@@ -112,7 +115,7 @@ def doctor() -> None:
     typer.echo(f"distinct entry:    {entries}")
 
     # ---- warning -------------------------------------------------------
-    if tick is not None and tick_age > 300:
+    if tick is not None and tick.time is not None and tick_age > 300:
         typer.echo(
             f"\nWARNING: tick is {tick_age:.0f}s old (> 300s). The measured "
             f"server_utc_offset of {offset_s}s is NOT trustworthy — re-run "
@@ -1129,7 +1132,7 @@ def serve(
     typer.echo("Ctrl+C to stop.")
     # Only pass reload_includes when watchfiles can honour it — otherwise uvicorn
     # warns "no effect unless watchfiles is installed".
-    extra = {"reload_includes": ["*.py", "*.html"]} if (reload and has_watchfiles) else {}
+    extra: dict[str, Any] = {"reload_includes": ["*.py", "*.html"]} if (reload and has_watchfiles) else {}
     uvicorn.run(
         "journal.web.app:create_app",
         factory=True,

@@ -69,7 +69,6 @@ ignore_missing_imports = true
 # this list, never grow it.
 [[tool.mypy.overrides]]
 module = [
-    "journal.cli",
     "journal.domain.reconstruct",
 ]
 ignore_errors = true
