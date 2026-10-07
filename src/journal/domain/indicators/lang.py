@@ -46,7 +46,7 @@ class ScriptError(ValueError):
         self.msg, self.line, self.col = msg, line, col
 
 
-def _err(node: ast.AST | None, msg: str) -> ScriptError:
+def error_at(node: ast.AST | None, msg: str) -> ScriptError:
     line, col = getattr(node, "lineno", 0), getattr(node, "col_offset", -1)
     return ScriptError(msg, line, col + 1) if line else ScriptError(msg)
 
@@ -130,7 +130,7 @@ def parse(source: str) -> Program:
                 and stmt.value.func.id in ("plot", "hline", "signal"):
             _output(p, stmt.value, defined)
         else:
-            raise _err(stmt, f"{type(stmt).__name__} statement is not allowed")
+            raise error_at(stmt, f"{type(stmt).__name__} statement is not allowed")
     if not p.plots and not p.signals:
         raise ScriptError("a script must plot() or signal() something")
     return p
@@ -143,10 +143,10 @@ def _depth(node: ast.AST) -> int:
 
 def _assign(p: Program, stmt: ast.Assign, defined: set[str]) -> None:
     if len(stmt.targets) != 1 or not isinstance(stmt.targets[0], ast.Name):
-        raise _err(stmt, "this assignment form is not allowed; use `name = expression`")
+        raise error_at(stmt, "this assignment form is not allowed; use `name = expression`")
     name = stmt.targets[0].id
     if name in SERIES or name in REGISTRY or name in OUTPUTS:
-        raise _err(stmt.targets[0], f"{name!r} is reserved")
+        raise error_at(stmt.targets[0], f"{name!r} is reserved")
     v = stmt.value
     if isinstance(v, ast.Call) and isinstance(v.func, ast.Name) and v.func.id == "input":
         p.inputs.append(_input(name, v))
@@ -165,7 +165,7 @@ def _kwargs(call: ast.Call, allowed: tuple[str, ...]) -> dict[str, ast.expr]:
     out: dict[str, ast.expr] = {}
     for kw in call.keywords:
         if kw.arg is None or kw.arg not in allowed:
-            raise _err(kw.value, f"unknown keyword {kw.arg!r}; allowed: {', '.join(allowed)}")
+            raise error_at(kw.value, f"unknown keyword {kw.arg!r}; allowed: {', '.join(allowed)}")
         out[kw.arg] = kw.value
     return out
 
@@ -177,7 +177,7 @@ def _literal(node: ast.expr, what: str) -> Any:
             and not isinstance(node.operand.value, bool):
         return -node.operand.value
     if not isinstance(node, ast.Constant):
-        raise _err(node, f"{what} must be a literal")
+        raise error_at(node, f"{what} must be a literal")
     return node.value
 
 
@@ -187,9 +187,9 @@ def _str(node: ast.expr | None, what: str, default: str,
         return default
     v = _literal(node, what)
     if not isinstance(v, str):
-        raise _err(node, f"{what} must be a string")
+        raise error_at(node, f"{what} must be a string")
     if choices is not None and v not in choices:
-        raise _err(node, f"{what} {v!r} is not one of {', '.join(choices)}")
+        raise error_at(node, f"{what} {v!r} is not one of {', '.join(choices)}")
     return v
 
 
@@ -198,23 +198,23 @@ def _num(node: ast.expr | None, what: str) -> float | None:
         return None
     v = _literal(node, what)
     if isinstance(v, bool) or not isinstance(v, (int, float)):
-        raise _err(node, f"{what} must be a number")
+        raise error_at(node, f"{what} must be a number")
     return float(v)
 
 
 def _input(name: str, call: ast.Call) -> Input:
     if len(call.args) != 1:
-        raise _err(call, "input() takes exactly one default value")
+        raise error_at(call, "input() takes exactly one default value")
     d = call.args[0]
     if not isinstance(d, (ast.Constant, ast.UnaryOp)):
-        raise _err(d, "input() default must be a literal number or boolean")
+        raise error_at(d, "input() default must be a literal number or boolean")
     default = _literal(d, "input() default")
     kw = _kwargs(call, ("min", "max", "step", "title"))
     title = _str(kw.get("title"), "input title", name)
     if isinstance(default, bool):
         return Input(name, "bool", default, title=title)
     if not isinstance(default, (int, float)):
-        raise _err(d, "input() default must be a number or boolean")
+        raise error_at(d, "input() default must be a number or boolean")
     kind: Literal["int", "float"] = "int" if isinstance(default, int) else "float"
     return Input(name, kind, default, _num(kw.get("min"), "min"),
                  _num(kw.get("max"), "max"), _num(kw.get("step"), "step"), title)
@@ -224,7 +224,7 @@ def _output(p: Program, call: ast.Call, defined: set[str]) -> None:
     fn = call.func.id  # type: ignore[attr-defined]  # checked by the caller
     if fn == "plot":
         if len(call.args) != 1:
-            raise _err(call, "plot() takes one expression")
+            raise error_at(call, "plot() takes one expression")
         kw = _kwargs(call, ("title", "color", "pane", "style", "width"))
         _expr(call.args[0], defined, p)
         i = len(p.plots)
@@ -240,17 +240,17 @@ def _output(p: Program, call: ast.Call, defined: set[str]) -> None:
         p.steps.append(Step("plot", i, call.args[0]))
     elif fn == "hline":
         if len(call.args) != 1:
-            raise _err(call, "hline() takes one value")
+            raise error_at(call, "hline() takes one value")
         kw = _kwargs(call, ("title", "pane", "color"))
         _expr(call.args[0], defined, p)
         if not _is_const(call.args[0], p):
-            raise _err(call.args[0], "hline() value must be constant")
+            raise error_at(call.args[0], "hline() value must be constant")
         p.hlines.append(HLine(call.args[0], _str(kw.get("title"), "title", ""),
                               _str(kw.get("pane"), "pane", "price"),
                               _str(kw.get("color"), "color", "muted", COLORS)))
     else:
         if len(call.args) != 2 or call.keywords:
-            raise _err(call, 'signal() takes a side ("long"/"short") and a condition')
+            raise error_at(call, 'signal() takes a side ("long"/"short") and a condition')
         side = _str(call.args[0], "signal side", "", SIDES)
         _expr(call.args[1], defined, p)
         p.signals.append(Signal(side, call.args[1]))
@@ -261,12 +261,12 @@ def _expr(node: ast.expr, defined: set[str], p: Program) -> None:
     """Raise unless `node` is a whitelisted expression over defined names."""
     if isinstance(node, ast.Constant):
         if isinstance(node.value, str):
-            raise _err(node, "a string is not a value here")
+            raise error_at(node, "a string is not a value here")
         if not isinstance(node.value, (int, float, bool)):
-            raise _err(node, f"{type(node.value).__name__} constant is not allowed")
+            raise error_at(node, f"{type(node.value).__name__} constant is not allowed")
     elif isinstance(node, ast.Name):
         if node.id not in SERIES and node.id not in defined:
-            raise _err(node, f"undefined name {node.id!r}")
+            raise error_at(node, f"undefined name {node.id!r}")
     elif isinstance(node, ast.BinOp) and isinstance(node.op, _BINOPS):
         _expr(node.left, defined, p)
         _expr(node.right, defined, p)
@@ -282,32 +282,32 @@ def _expr(node: ast.expr, defined: set[str], p: Program) -> None:
     elif isinstance(node, ast.Subscript):
         n = node.slice
         if not (isinstance(n, ast.Constant) and type(n.value) is int and n.value >= 0):
-            raise _err(n, "history index must be a literal integer >= 0 (bars ago)")
+            raise error_at(n, "history index must be a literal integer >= 0 (bars ago)")
         if n.value > MAX_WINDOW:
-            raise _err(n, f"history index above the window limit ({MAX_WINDOW})")
+            raise error_at(n, f"history index above the window limit ({MAX_WINDOW})")
         _expr(node.value, defined, p)
     elif isinstance(node, ast.Call):
         _call(node, defined, p)
     else:
-        raise _err(node, f"{type(node).__name__} is not allowed")
+        raise error_at(node, f"{type(node).__name__} is not allowed")
 
 
 def _call(node: ast.Call, defined: set[str], p: Program) -> None:
     if not isinstance(node.func, ast.Name):
-        raise _err(node, "attribute and method calls are not allowed")
+        raise error_at(node, "attribute and method calls are not allowed")
     if node.func.id not in REGISTRY:
-        raise _err(node, f"unknown function {node.func.id!r}")
+        raise error_at(node, f"unknown function {node.func.id!r}")
     if node.keywords:
-        raise _err(node.keywords[0].value, "keyword arguments are not allowed on builtins")
+        raise error_at(node.keywords[0].value, "keyword arguments are not allowed on builtins")
     b = REGISTRY[node.func.id]
     required = sum(1 for prm in b.params if prm.default is None)
     if not required <= len(node.args) <= len(b.params):
-        raise _err(node, f"{node.func.id}() takes {required}..{len(b.params)} "
+        raise error_at(node, f"{node.func.id}() takes {required}..{len(b.params)} "
                          f"arguments, got {len(node.args)}")
     for prm, arg in zip(b.params, node.args, strict=False):  # trailing params default
         _expr(arg, defined, p)
         if prm.kind != "series" and not _is_const(arg, p):
-            raise _err(arg, f"{node.func.id}() argument {prm.name!r} must be constant "
+            raise error_at(arg, f"{node.func.id}() argument {prm.name!r} must be constant "
                             "(a number, an input, or arithmetic over those)")
 
 
@@ -365,7 +365,7 @@ def const_value(node: ast.expr, consts: dict[str, float | bool]) -> float | bool
             return a % b
         return float(a ** b)
     except (ZeroDivisionError, OverflowError) as e:
-        raise _err(node, f"constant arithmetic failed: {e}") from None
+        raise error_at(node, f"constant arithmetic failed: {e}") from None
 
 
 def resolve_consts(p: Program, inputs: dict[str, Any]) -> dict[str, float | bool]:
@@ -395,7 +395,7 @@ def call_consts(node: ast.Call, consts: dict[str, float | bool]) -> dict[str, fl
         v = float(const_value(arg, consts)) if arg is not None else float(prm.default or 0)
         if prm.kind == "int":
             if v != int(v) or not 1 <= v <= MAX_WINDOW:
-                raise _err(arg or node, f"{prm.name} window must be an integer in "
+                raise error_at(arg or node, f"{prm.name} window must be an integer in "
                                         f"1..{MAX_WINDOW}, got {v:g}")
         out[prm.name] = v
     return out
