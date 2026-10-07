@@ -10,7 +10,7 @@ from fastapi import APIRouter, Body, Depends
 from fastapi.responses import JSONResponse
 
 from ...domain.indicators.lang import ScriptError
-from .. import api, backtest, indicators, schemas
+from .. import api, backtest, indicators, schemas, trade_context
 from ..deps import get_conn
 
 router = APIRouter()
@@ -88,6 +88,20 @@ def api_backtest(body: schemas.IndicatorBacktestRequest,
             symbol=body.symbol, timeframe=body.timeframe, from_ms=body.from_ms,
             to_ms=body.to_ms, split=body.split, exits=body.exits.model_dump(),
             spread_fallback=body.spread_fallback)
+    except ScriptError as e:
+        return _script_error(e)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    return JSONResponse(out)
+
+
+@router.post("/api/indicators/context")
+def api_context(body: schemas.IndicatorContextRequest,
+                conn: sqlite3.Connection = Depends(get_conn)):
+    try:
+        out = trade_context.run(
+            conn, script=body.script, source=body.source, inputs=body.inputs,
+            symbol=body.symbol, timeframe=body.timeframe, window=body.window)
     except ScriptError as e:
         return _script_error(e)
     except ValueError as e:

@@ -86,6 +86,16 @@ class IndicatorBacktestRequest(BaseModel):
     spread_fallback: float | None = Field(None, ge=0)
 
 
+class IndicatorContextRequest(BaseModel):
+    """Exactly one of `script` (an id) or `source` (an unsaved draft)."""
+    script: str | None = None
+    source: str | None = Field(None, max_length=20_000)
+    inputs: dict[str, float | bool] = Field(default_factory=dict)
+    symbol: str = Field(min_length=1)
+    timeframe: str
+    window: int = Field(default=3, ge=1, le=50)
+
+
 class BacktestReplayRequest(BaseModel):
     symbol: str = Field(min_length=1)
     timeframe: str
