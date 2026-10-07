@@ -11,7 +11,10 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from dataclasses import dataclass
 from typing import Any
+
+import pandas as pd
 
 from ..adapter.base import TIMEFRAMES, Candle
 from ..domain.indicators.engine import evaluate
@@ -144,30 +147,25 @@ def _warm_bars(conn: sqlite3.Connection, symbol: str, tf: str, from_ms: int,
         span *= 2
 
 
-def compute(conn: sqlite3.Connection, *, inputs: dict[str, Any], symbol: str,
-            timeframe: str, from_ms: int, to_ms: int, script: str | None = None,
-            source: str | None = None, session_id: int | None = None,
-            include_forming: bool = False) -> dict:
-    if timeframe not in TIMEFRAMES:
-        raise ValueError(f"unknown timeframe {timeframe!r}")
-    if source is None:
-        if script is None:
-            raise ValueError("give a script id or a source")
-        source = _source_of(conn, script)
+@dataclass
+class Frames:
+    """What `load_frames` read: the chart frame (warm-up included), tf() frames,
+    the forming bar's open (if appended), whether a warm-up range was queued,
+    and the first bar whose every input is warm."""
+    f: pd.DataFrame
+    htf: dict[str, pd.DataFrame]
+    forming_msc: int | None
+    pending: bool
+    warm_from_msc: int | None
+
+
+def load_frames(conn: sqlite3.Connection, p: Program, consts: dict[str, float | bool], *,
+                symbol: str, timeframe: str, from_ms: int, to_ms: int, lb: int,
+                reveal_end: int | None = None, include_forming: bool = False) -> Frames:
+    """Chart bars [from_ms, to_ms] plus `lb` warm-up bars, tf() frames with their
+    own warm-up, and the forming bar when asked. `reveal_end`: replay clip — only
+    bars CLOSED by then, on every timeframe. Missing warm-up is queued."""
     tf_ms = timeframe_ms(timeframe)
-
-    reveal_end: int | None = None
-    if session_id is not None:
-        s = ts.get_session(conn, session_id)
-        if s is None:
-            raise ValueError(f"no training session {session_id}")
-        reveal_end = int(s["cursor_msc"]) + timeframe_ms(s["timeframe"])
-        to_ms = min(to_ms, reveal_end - tf_ms)
-        include_forming = False
-
-    p = parse(source)
-    consts = resolve_consts(p, inputs)
-    lb = lookback(p, consts, tf_ms)
 
     view = [b for b in cs.load_bars(conn, symbol, timeframe, from_ms, to_ms)
             if b.time_msc is not None and from_ms <= b.time_msc <= to_ms] \
@@ -194,7 +192,7 @@ def compute(conn: sqlite3.Connection, *, inputs: dict[str, Any], symbol: str,
     # tf() frames: from two HTF bars before the first chart bar (its mapped bar
     # opens after that), plus that TF's own warm-up.
     start = bars[0].time_msc if bars and bars[0].time_msc is not None else from_ms
-    htf: dict[str, Any] = {}
+    htf: dict[str, pd.DataFrame] = {}
     htf_ready: list[int | None] = []      # close time of each TF's first warm bar
     for x, need in htf_lookback(p, consts, tf_ms).items():
         h = timeframe_ms(x)
@@ -212,15 +210,47 @@ def compute(conn: sqlite3.Connection, *, inputs: dict[str, Any], symbol: str,
         htf_ready.append(int(htf[x].index[need]) + h if len(hbars) > need else None)
 
     f = to_frame(bars)
-    r = evaluate(p, f, inputs, tf_ms, htf=htf, forming_msc=forming_msc)
     times = [int(t) for t in f.index]
-    keep = [i for i, t in enumerate(times) if t >= from_ms]
     warm_from: int | None = times[lb] if len(times) > lb else None
     for ready in htf_ready:   # the latest TF to become warm decides
         if warm_from is None or ready is None:
             warm_from = None
             break
         warm_from = next((t for t in times if t >= warm_from and t + tf_ms >= ready), None)
+    return Frames(f, htf, forming_msc, pending, warm_from)
+
+
+def compute(conn: sqlite3.Connection, *, inputs: dict[str, Any], symbol: str,
+            timeframe: str, from_ms: int, to_ms: int, script: str | None = None,
+            source: str | None = None, session_id: int | None = None,
+            include_forming: bool = False) -> dict:
+    if timeframe not in TIMEFRAMES:
+        raise ValueError(f"unknown timeframe {timeframe!r}")
+    if source is None:
+        if script is None:
+            raise ValueError("give a script id or a source")
+        source = _source_of(conn, script)
+    tf_ms = timeframe_ms(timeframe)
+
+    reveal_end: int | None = None
+    if session_id is not None:
+        s = ts.get_session(conn, session_id)
+        if s is None:
+            raise ValueError(f"no training session {session_id}")
+        reveal_end = int(s["cursor_msc"]) + timeframe_ms(s["timeframe"])
+        to_ms = min(to_ms, reveal_end - tf_ms)
+        include_forming = False
+
+    p = parse(source)
+    consts = resolve_consts(p, inputs)
+    lb = lookback(p, consts, tf_ms)
+    fr = load_frames(conn, p, consts, symbol=symbol, timeframe=timeframe, from_ms=from_ms,
+                     to_ms=to_ms, lb=lb, reveal_end=reveal_end,
+                     include_forming=include_forming)
+    f, forming_msc = fr.f, fr.forming_msc
+    r = evaluate(p, f, inputs, tf_ms, htf=fr.htf, forming_msc=forming_msc)
+    times = [int(t) for t in f.index]
+    keep = [i for i, t in enumerate(times) if t >= from_ms]
 
     def values(s: Any) -> list[float | None]:
         arr = s.to_numpy(dtype=float)
@@ -242,9 +272,9 @@ def compute(conn: sqlite3.Connection, *, inputs: dict[str, Any], symbol: str,
         "hlines": [{**h, "value": v} for h, v in zip(meta["hlines"], r.hlines, strict=True)],
         "signals": signals,
         "lookback": lb,
-        "warm_from_msc": warm_from,
+        "warm_from_msc": fr.warm_from_msc,
         "forming_msc": forming_msc,
-        "pending": pending,
+        "pending": fr.pending,
     }
 
 
