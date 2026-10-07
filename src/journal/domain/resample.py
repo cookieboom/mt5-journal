@@ -38,6 +38,11 @@ def _bucket_fully_covered(bstart: int, size: int, covered: list[tuple[int, int]]
     return any(a <= bstart and b >= last_open for a, b in covered)
 
 
+def _time(c: Candle) -> int:
+    assert c.time_msc is not None  # stored candles: time_msc is NOT NULL
+    return c.time_msc
+
+
 def resample_m1(
     m1: list[Candle],
     timeframe: str,
@@ -52,27 +57,31 @@ def resample_m1(
     if timeframe not in _TF_MS:
         raise ValueError(f"unknown timeframe {timeframe!r}; expected one of {list(_TF_MS)}")
     size = _TF_MS[timeframe]
-    ordered = sorted(m1, key=lambda c: c.time_msc)
+    ordered = sorted(m1, key=_time)
     if timeframe == "M1":
         return ordered
 
     groups: dict[int, list[Candle]] = {}
     for c in ordered:
-        groups.setdefault(bucket_start(c.time_msc, timeframe), []).append(c)
+        groups.setdefault(bucket_start(_time(c), timeframe), []).append(c)
 
     out: list[Candle] = []
     for bstart in sorted(groups):
         if covered is not None and not _bucket_fully_covered(bstart, size, covered):
             continue
         bars = groups[bstart]
+        highs = [b.high for b in bars if b.high is not None]
+        lows = [b.low for b in bars if b.low is not None]
+        # Stored candles: OHLC are NOT NULL in the schema (the only caller).
+        assert len(highs) == len(lows) == len(bars)
         tv = sum((b.tick_volume or 0) for b in bars)
         rv = sum((b.real_volume or 0) for b in bars)
         out.append(
             Candle(
                 time_msc=bstart,
                 open=bars[0].open,
-                high=max(b.high for b in bars),
-                low=min(b.low for b in bars),
+                high=max(highs),
+                low=min(lows),
                 close=bars[-1].close,
                 tick_volume=tv,
                 spread=None,          # charts don't need it; not meaningful post-merge
