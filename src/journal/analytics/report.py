@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
+from typing import Any, Mapping, Sequence
 
 from ..domain import MIN_N as _MIN_N
 from ..store.db import one_account_login
@@ -131,7 +132,7 @@ def bucket_stat(label: str, rows: list[sqlite3.Row]) -> BucketStat:
     )
 
 
-def sequence_stats(rows: list[sqlite3.Row]) -> tuple[int, float | None, int, int]:
+def sequence_stats(rows: Sequence[Mapping[str, Any]]) -> tuple[int, float | None, int, int]:
     """`(n_sequenced, max_drawdown, max_win_streak, max_loss_streak)` over the
     closed trades that can be placed in time, in close-time order.
 
