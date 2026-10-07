@@ -232,7 +232,7 @@ export default function Chart() {
   }, [focus, data.candles, data.loadOlder]);
   // Study session around one tester trade, or one period (its start to its end).
   const [replayError, setReplayError] = useState<string | null>(null);
-  useEffect(() => { setReplayError(null); }, [symbol, tf]);
+  useEffect(() => { setReplayError(null); }, [symbol, tf, testerId, tester.result]);
   const onTesterReplay = async (decisionMsc: number, exitMsc: number | null) => {
     const r = await backtestApi.replay({
       symbol, timeframe: tf, decision_msc: decisionMsc, exit_msc: exitMsc,

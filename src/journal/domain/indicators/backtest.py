@@ -232,7 +232,8 @@ def _stats(trades: list[Trade]) -> dict[str, Any]:
     rs = [tr.r for tr in trades if tr.r is not None]
     return {"n": len(trades),
             "win_rate": sum(1 for x in rs if x > 0) / len(rs) if rs else None,
-            "avg_r": sum(rs) / len(rs) if rs else None, "total_r": sum(rs)}
+            "avg_r": sum(rs) / len(rs) if rs else None,
+            "total_r": sum(rs) if rs else None}             # no known R: unknown, not 0
 
 
 def _bucket(trades: list[Trade], key: Any) -> list[dict[str, Any]]:

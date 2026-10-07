@@ -298,3 +298,12 @@ def test_periods_only_in_all_not_oos():
     b = report(trades_frame(), split_msc=0)["breakdown"]
     assert "periods" in b["all"] and "periods" not in b["oos"]
     assert isinstance(b["all"]["session"][0]["key"], str)       # the label breakdown survives
+
+
+def test_a_bucket_with_no_known_r_has_unknown_total_not_zero():
+    sim = trades_frame()
+    for tr in sim.trades:
+        tr.r = None
+    b = report(sim, split_msc=0)["breakdown"]["all"]
+    assert b["hour"][0]["n"] == 4 and b["hour"][0]["total_r"] is None     # rule 4
+    assert b["periods"]["day"][0]["total_r"] is None

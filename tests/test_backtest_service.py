@@ -194,3 +194,31 @@ def test_replay_range_never_ends_past_the_last_stored_bar(conn, exit_msc):
     out = bt.replay_session(conn, symbol="XAUUSDc", timeframe="M5", decision_msc=T0 + 20 * M5,
                             exit_msc=exit_msc)
     assert out["session"]["range_end_msc"] == T0 + 39 * M5
+
+
+def test_replay_with_no_stored_bars_is_refused(conn):
+    # Nothing stored for this symbol: no range can be built, and none that ends
+    # at a raw exit time no bar can fill.
+    with pytest.raises(ValueError, match="no stored bars"):
+        bt.replay_session(conn, symbol="XAUUSDc", timeframe="M5", decision_msc=T0,
+                          exit_msc=10**15)
+
+
+def test_replay_end_follows_load_bars_when_native_lags_m1(conn):
+    # Native H1 stops early; M1 runs on. The range must end where the replay's
+    # own reader (load_bars) ends, never before the cursor.
+    seed(conn)
+    H1 = 3_600_000
+    cs.insert_candle(conn, "XAUUSDc", "H1", Candle(
+        time_msc=T0 - 10 * H1, open=1, high=2, low=0.5, close=1, tick_volume=1, spread=1,
+        real_volume=0))
+    for i in range(0, 600):
+        cs.insert_candle(conn, "XAUUSDc", "M1", Candle(
+            time_msc=T0 + i * 60_000, open=1, high=2, low=0.5, close=1, tick_volume=1, spread=1,
+            real_volume=0))
+    cs.record_coverage(conn, "XAUUSDc", "M1", T0, T0 + 600 * 60_000)
+    conn.commit()
+    out = bt.replay_session(conn, symbol="XAUUSDc", timeframe="H1", decision_msc=T0 + 5 * H1,
+                            exit_msc=T0 + 9 * H1, lead_bars=2)
+    s = out["session"]
+    assert s["range_start_msc"] <= s["range_end_msc"] == T0 + 9 * H1

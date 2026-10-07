@@ -82,7 +82,10 @@ export interface Segment {
   max_loss_streak: number;
 }
 
-export interface Bucket { key: number | string; n: number; win_rate: number | null; avg_r: number | null; total_r: number }
+export interface Bucket {
+  key: number | string; n: number; win_rate: number | null; avg_r: number | null;
+  total_r: number | null;                       // null: no trade in it has a known R (rule 4)
+}
 /** A day / week / session instance `[key, end_msc)` UTC, for the replay jump per period. */
 export interface Period extends Bucket {
   key: number; end_msc: number;

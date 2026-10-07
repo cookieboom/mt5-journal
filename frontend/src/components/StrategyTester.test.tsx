@@ -98,7 +98,7 @@ it("a period row says IS, OOS or both, and its Replay jumps to that period", () 
 const cell = (c: Partial<ContextCell>): ContextCell =>
   ({ n: 0, n_r: 0, win_rate: null, avg_r: null, total_r: null, gated: false, ...c });
 const ctx: ContextResult = {
-  computed_ms: 0, source_hash: "h", window: 3, warm_from_msc: 0, clipped_from_msc: null, pending: false,
+  computed_ms: Date.now(), source_hash: "h", window: 3, warm_from_msc: 0, clipped_from_msc: null, pending: false,
   sources: {
     real: { true: cell({ n: 70, n_r: 18, win_rate: 0.58, gated: true }),
             false: cell({ n: 60, n_r: 18, win_rate: 0.4, gated: true }), n_unknown: 7 },
@@ -181,13 +181,27 @@ it("a context error is shown, not swallowed", async () => {
   expect(await screen.findByText("baris 1: boom")).toBeTruthy();
 });
 
-it("a new tester result refreshes the context beside it", async () => {
+it("a tester re-run on a new bar does not recompute the context (the trades did not change)", async () => {
   const spy = vi.spyOn(backtestApi, "context").mockResolvedValue({ ok: true, data: ctx });
   const { rerender } = setup();
   fireEvent.click(screen.getByLabelText("Buka tester"));
   fireEvent.click(screen.getByRole("tab", { name: "Trade saya" }));
-  await waitFor(() => expect(spy).toHaveBeenCalledTimes(1));
+  await screen.findByText("58%");
   rerender({ ...result, computed_ms: 60_000 });
+  expect(screen.getByText("58%")).toBeTruthy();
+  expect(spy).toHaveBeenCalledTimes(1);
+});
+
+it("reopening the tab after 5 minutes refreshes (trades may have closed since)", async () => {
+  const old = { ...ctx, computed_ms: Date.now() - 6 * 60_000 };
+  const spy = vi.spyOn(backtestApi, "context")
+    .mockResolvedValueOnce({ ok: true, data: old }).mockResolvedValue({ ok: true, data: ctx });
+  setup();
+  fireEvent.click(screen.getByLabelText("Buka tester"));
+  fireEvent.click(screen.getByRole("tab", { name: "Trade saya" }));
+  await screen.findByText("58%");
+  fireEvent.click(screen.getByRole("tab", { name: "Breakdown" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Trade saya" }));
   await waitFor(() => expect(spy).toHaveBeenCalledTimes(2));
 });
 
@@ -203,6 +217,22 @@ it("an error is not kept: reopening the tab tries again", async () => {
   fireEvent.click(screen.getByRole("tab", { name: "Trade saya" }));
   expect(await screen.findByText("58%")).toBeTruthy();
   expect(spy).toHaveBeenCalledTimes(2);
+});
+
+it("a pending result stops retrying after a few tries and says why", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    const spy = vi.spyOn(backtestApi, "context").mockResolvedValue({ ok: true, data: { ...ctx, pending: true } });
+    setup();
+    fireEvent.click(screen.getByLabelText("Buka tester"));
+    fireEvent.click(screen.getByRole("tab", { name: "Trade saya" }));
+    await waitFor(() => expect(spy).toHaveBeenCalledTimes(1));
+    for (let i = 0; i < 10; i++) await act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
+    expect(spy).toHaveBeenCalledTimes(6);                  // the first try + 5 retries
+    expect(screen.getByText(/journal live/)).toBeTruthy();
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 it("a pending (warm-up) result is retried", async () => {
@@ -228,6 +258,19 @@ it("a window typed just before leaving the tab survives the switch", async () =>
   fireEvent.click(screen.getByRole("tab", { name: "Trade saya" }));
   expect((screen.getByLabelText("Jendela (bar)") as HTMLInputElement).value).toBe("15");
   await waitFor(() => expect(spy).toHaveBeenLastCalledWith(QUERY, 15));
+});
+
+it("periods with no known R sort last and read unknown", () => {
+  const r = { ...result, breakdown: { all: { ...bk, periods: {
+    ...periods, day: [per(0, 1.0), { ...per(DAY, 0), total_r: null, avg_r: null, win_rate: null }, per(2 * DAY, -1.0)],
+  } }, oos: bk } };
+  setup(r);
+  fireEvent.click(screen.getByLabelText("Buka tester"));
+  fireEvent.click(screen.getByRole("tab", { name: "Breakdown" }));
+  const keys = () => screen.getAllByTestId("period-row").map((x) => x.getAttribute("data-key"));
+  expect(keys()).toEqual(["0", String(2 * DAY), String(DAY)]);
+  fireEvent.click(screen.getByRole("button", { name: "Urutkan periode" }));
+  expect(keys()).toEqual([String(2 * DAY), "0", String(DAY)]);
 });
 
 it("a refused replay jump is shown, not swallowed", () => {

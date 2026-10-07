@@ -57,19 +57,6 @@ def _rows(conn: sqlite3.Connection, symbol: str) -> dict[str, list[sqlite3.Row]]
             "paper": conn.execute(_PAPER, (symbol,)).fetchall()}
 
 
-def _bar_opens(conn: sqlite3.Connection, symbol: str, timeframe: str,
-               from_ms: int, to_ms: int) -> np.ndarray:
-    """Open times `load_frames` would read for [from_ms, to_ms]: native rows if
-    any (as `candles_store.load_bars`), else the M1 buckets it aggregates."""
-    tf_ms = timeframe_ms(timeframe)
-    t = np.array(cs.bar_times(conn, symbol, timeframe, from_ms, to_ms), dtype="int64")
-    if len(t) or timeframe == "M1":
-        return t
-    m1 = np.array(cs.bar_times(conn, symbol, "M1", from_ms - from_ms % tf_ms, to_ms),
-                  dtype="int64")
-    return np.unique(m1 - m1 % tf_ms)
-
-
 def _real_cell(rows: list[sqlite3.Row]) -> dict[str, Any]:
     b = bucket_stat("", rows)
     return {"n": b.n, "n_r": b.n_with_r, "win_rate": b.win_rate, "avg_r": b.avg_r,
@@ -114,12 +101,14 @@ def run(conn: sqlite3.Connection, *, inputs: dict[str, Any], symbol: str, timefr
         to_ms = max(refs)
         # Too long a span (an old replay trade, or M1): evaluate the newest
         # `cap` bars only. Older trades fall before warm-up and read unknown, and
-        # the clip is reported — one old trade never blanks the tab. Counted from
-        # open times before loading, so nothing outside the cut is read or queued.
-        view = _bar_opens(conn, symbol, timeframe, from_ms, to_ms)
+        # the clip is reported — one old trade never blanks the tab. Counted with
+        # `load_bars` (the reader load_frames uses) and no warm-up, so nothing
+        # before the cut is queued for a fill.
+        view = [b.time_msc for b in cs.load_bars(conn, symbol, timeframe, from_ms, to_ms)
+                if b.time_msc is not None and b.time_msc >= from_ms]
         cap = backtest.MAX_BACKTEST_BARS
         if len(view) > cap:
-            from_ms = clipped_from = int(view[-cap])
+            from_ms = clipped_from = view[-cap]
         fr = load_frames(conn, p, consts, symbol=symbol, timeframe=timeframe,
                          from_ms=from_ms, to_ms=to_ms, lb=lookback(p, consts, tf_ms))
         warm_from, pending = fr.warm_from_msc, fr.pending

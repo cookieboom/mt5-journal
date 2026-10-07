@@ -89,15 +89,18 @@ def replay_session(conn: sqlite3.Connection, *, symbol: str, timeframe: str,
     lead = _warm_bars(conn, symbol, timeframe, decision_msc, lead_bars)
     cursor = lead[-lead_bars].time_msc if len(lead) >= lead_bars else \
         (lead[0].time_msc if lead else decision_msc)
+    assert cursor is not None
     anchor = exit_msc if exit_msc is not None else decision_msc
     tail = training._next_bars(conn, symbol, timeframe, anchor, now_ms(),
                                tail_bars if exit_msc is not None else MAX_BACKTEST_BARS)
     if tail:
         end = tail[-1].time_msc
-    else:   # nothing after the anchor: the last stored bar at or before it
-        end = cs.last_bar_open(conn, symbol, timeframe, anchor)
-        end = anchor if end is None else end
-    assert cursor is not None and end is not None
+    else:   # nothing after the anchor: the last bar the replay's own reader has
+        upto = cs.load_bars(conn, symbol, timeframe, cursor, anchor)
+        if not upto:
+            raise ValueError(f"no stored bars for {symbol} {timeframe} around this trade")
+        end = upto[-1].time_msc
+    assert end is not None
     return training.create_session(conn, symbol=symbol, timeframe=timeframe,
                                    range_start_msc=cursor, range_end_msc=end,
                                    origin="study")

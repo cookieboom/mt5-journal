@@ -284,7 +284,10 @@ function Periods({ ps, onReplay }: { ps: Record<PeriodKind, Period[]>; onReplay:
   const [kind, setKind] = useState<PeriodKind>("day");
   const [worst, setWorst] = useState(false);
   const list = useMemo(
-    () => [...ps[kind]].sort((a, b) => (a.total_r - b.total_r) * (worst ? 1 : -1)),
+    // A period with no known R has no rank: last either way.
+    () => [...ps[kind]].sort((a, b) =>
+      a.total_r === null || b.total_r === null ? Number(a.total_r === null) - Number(b.total_r === null)
+        : (a.total_r - b.total_r) * (worst ? 1 : -1)),
     [ps, kind, worst],
   );
   return (
@@ -340,6 +343,8 @@ const SOURCES: [ContextSourceKey, string][] = [
 interface CtxOut { key: string; res?: ContextResult; err?: string }
 const WIN_DEBOUNCE_MS = 400;
 const PENDING_RETRY_MS = 3000;
+const PENDING_RETRIES = 5;          // then stop: the fill only drains with `journal live` running
+const STALE_MS = 5 * 60_000;        // reopening the tab after this refreshes (trades may have closed)
 
 /** My closed trades, split by whether a same-side signal fired in the last N
  *  closed bars before them. Fetched when the tab opens (it mounts only then),
@@ -359,13 +364,14 @@ function TradeContext({ q, r, nowMs, draft, onDraft, win, onWin, out, onOut }: {
     return () => clearTimeout(t);
   }, [draft, win, onWin]);
 
-  // Keyed by the tester result too: the context always pairs with the headline
-  // beside it, and a new run (new closed bar, new inputs) refreshes it. Only a
-  // clean, settled result is kept: an error retries on the next open, a pending
-  // (warm-up still queued) one retries on a timer.
+  // Keyed by script/inputs/symbol/TF and window — not by each tester re-run:
+  // a new closed bar does not change closed trades. Only a clean, settled,
+  // recent result is kept: an error retries on the next open, a pending one
+  // (warm-up still queued) retries on a timer a few times, an old one refreshes.
   const [retry, setRetry] = useState(0);
-  const key = JSON.stringify([q, win, r?.computed_ms ?? null]);
-  const kept = out?.key === key && !out.err && !out.res?.pending;
+  const key = JSON.stringify([q, win]);
+  const kept = out?.key === key && !out.err && !out.res?.pending &&
+    Date.now() - (out.res?.computed_ms ?? 0) < STALE_MS;
   const ready = q !== null && r !== null;
   useEffect(() => {
     if (!ready || kept) return;
@@ -374,10 +380,12 @@ function TradeContext({ q, r, nowMs, draft, onDraft, win, onWin, out, onOut }: {
     void backtestApi.context(q!, win).then((x) => {
       if (!live) return;
       onOut(x.ok && x.data ? { key, res: x.data } : { key, err: x.error ?? "gagal menghitung" });
-      if (x.ok && x.data?.pending) timer = setTimeout(() => setRetry((n) => n + 1), PENDING_RETRY_MS);
+      if (x.ok && x.data?.pending && retry < PENDING_RETRIES) {
+        timer = setTimeout(() => setRetry((n) => n + 1), PENDING_RETRY_MS);
+      }
     });
     return () => { live = false; if (timer) clearTimeout(timer); };
-  }, [key, ready, retry]);   // key covers q, win and the result; `kept` only short-circuits
+  }, [key, ready, retry]);   // key covers q and win; `kept` only short-circuits
 
   if (!q) return <div className="text-muted">Pilih script dengan signal().</div>;
   if (!r) {
@@ -435,7 +443,12 @@ function TradeContext({ q, r, nowMs, draft, onDraft, win, onWin, out, onOut }: {
           Rentang terlalu panjang: trade sebelum {wib(res.clipped_from_msc)} tidak dievaluasi (masuk "tidak diketahui").
         </div>
       )}
-      {res?.pending && <div className="text-meta text-warn">warm-up belum lengkap — data sedang diambil</div>}
+      {res?.pending && (
+        <div className="text-meta text-warn">
+          {retry < PENDING_RETRIES ? "warm-up belum lengkap — data sedang diambil"
+            : "warm-up belum lengkap — jalankan journal live, lalu buka tab ini lagi"}
+        </div>
+      )}
     </div>
   );
 }
