@@ -48,3 +48,25 @@ class LabTrainRequest(BaseModel):
     model_config = ConfigDict(extra="allow")
     symbol: str
     timeframe: str
+
+
+class IndicatorValidateRequest(BaseModel):
+    source: str = Field(max_length=20_000)
+
+
+class IndicatorScriptRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    source: str = Field(max_length=20_000)
+
+
+class IndicatorComputeRequest(BaseModel):
+    """Exactly one of `script` (an id) or `source` (an unsaved draft)."""
+    script: str | None = None
+    source: str | None = Field(None, max_length=20_000)
+    inputs: dict[str, float | bool] = Field(default_factory=dict)
+    symbol: str = Field(min_length=1)
+    timeframe: str
+    from_ms: int
+    to_ms: int
+    session_id: int | None = None
+    include_forming: bool = False

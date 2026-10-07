@@ -28,6 +28,10 @@ _ROUTES = [
     ("PUT", "/api/risk-prefs", {"mode": "pct"}),
     ("PUT", "/api/prefs/paper", {"account_id": 1}),
     ("PUT", "/api/drawings?symbol=XAUUSDc", {"items": []}),
+    ("POST", "/api/indicators/validate", {"source": "plot(close)"}),
+    ("POST", "/api/indicators/scripts", {"name": "A", "source": "plot(close)"}),
+    ("POST", "/api/indicators/compute", {"source": "plot(close)", "symbol": "XAUUSDc", "timeframe": "M5", "from_ms": 0, "to_ms": 1}),
+    ("PUT", "/api/indicators/layout", {"version": 1}),
 ]
 
 
@@ -41,8 +45,8 @@ def client(tmp_path):
 @pytest.mark.parametrize("bad", [b"not json", b"[1, 2]", b'"a string"', b"{}"],
                          ids=["garbage", "array", "string", "empty-object"])
 def test_malformed_body_is_a_4xx_with_an_error(client, method, path, _ok, bad):
-    if bad == b"{}" and "prefs" in path or bad == b"{}" and "drawings" in path:
-        pytest.skip("an empty object is a valid prefs/drawings blob")
+    if bad == b"{}" and any(k in path for k in ("prefs", "drawings", "layout")):
+        pytest.skip("an empty object is a valid prefs/drawings/layout blob")
     if bad == b"{}" and path.endswith("/prune"):
         pytest.skip("prune has no required field")
     r = client.request(method, path, content=bad, headers={"Content-Type": "application/json"})

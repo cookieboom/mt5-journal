@@ -23,7 +23,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from ..health import FRONTEND_DIR
 from ..store.db import DEFAULT_CACHE_DIR, DEFAULT_DB, connect
 from . import local_only
-from .routes import chart, lab, live, paper, storage, trades, training
+from .routes import chart, indicators, lab, live, paper, storage, trades, training
 
 _DEFAULT_DB = DEFAULT_DB
 _CACHE_DIR = DEFAULT_CACHE_DIR
@@ -61,7 +61,7 @@ def create_app(db_path: str | None = None, cache_dir: str | None = None) -> Fast
         return JSONResponse({"error": str(exc.detail), "detail": exc.detail},
                             status_code=exc.status_code, headers=exc.headers)
 
-    for module in (trades, live, chart, training, paper, lab, storage):
+    for module in (trades, live, chart, training, paper, lab, storage, indicators):
         app.include_router(module.router)
 
     # --------------------------------------------------------------- SPA (React)
