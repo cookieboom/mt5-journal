@@ -6,7 +6,7 @@ from __future__ import annotations
 import pytest
 
 from journal.domain.indicators.lang import (
-    ScriptError, const_value, lookback, parse, resolve_consts,
+    ScriptError, const_value, htf_lookback, lookback, parse, resolve_consts,
 )
 
 MINUTE = 60_000
@@ -134,3 +134,62 @@ def test_total_lookback_is_capped():
     p = parse("plot(ema(ema(ema(close, 5000), 5000), 5000))")
     with pytest.raises(ScriptError, match="warm-up"):
         lookback(p, resolve_consts(p, {}), MINUTE)
+
+
+# --- tf(): multi-timeframe (spec 2026-10-07-indicators-mtf) -------------------
+
+M5, H1 = 5 * MINUTE, 60 * MINUTE
+
+
+@pytest.mark.parametrize("src", [
+    'plot(tf("H1", ema(close, 50)))',
+    'n = input(14)\nplot(tf("H4", rsi(close, n)[1]) - close)',
+    'x = tf("D1", sma(hl2, 3))\nsignal("long", close > x and tf("H1", close) > 0)',
+])
+def test_tf_accepted_forms(src):
+    parse(src)
+
+
+def test_tf_records_the_timeframes():
+    p = parse('plot(tf("H1", close))\nplot(tf("H4", close) + tf("H1", open))')
+    assert p.htfs == {"H1", "H4"}
+
+
+@pytest.mark.parametrize("src, msg", [
+    ('t = 3\nplot(tf(t, close))', "timeframe must be a string literal"),
+    ('plot(tf("H2", close))', "unknown timeframe"),
+    ('x = ema(close, 5)\nplot(tf("H1", x))', "assign it inside tf"),
+    ('plot(tf("H4", tf("H1", close)))', "nested"),
+    ('plot(tf("H1", expr=close))', "tf() takes"),
+    ('plot(tf("H1"))', "tf() takes"),
+    ('tf = 1\nplot(close)', "reserved"),
+])
+def test_tf_refused(src, msg):
+    with pytest.raises(ScriptError, match=msg.replace("(", r"\(").replace(")", r"\)")):
+        parse(src)
+
+
+def test_tf_lookback_is_per_timeframe():
+    p = parse('plot(tf("H1", ema(close, 50)))')
+    c = resolve_consts(p, {})
+    assert lookback(p, c, M5) == 12                # one H1 bar, in M5 bars
+    assert htf_lookback(p, c, M5) == {"H1": 200}   # EMA 4n, in H1 bars
+
+
+def test_tf_lookback_composes_on_the_chart_side():
+    p = parse('plot(sma(tf("H1", close), 10))')
+    assert lookback(p, resolve_consts(p, {}), M5) == 10 + 12
+
+
+def test_tf_must_reach_a_higher_timeframe():
+    p = parse('plot(tf("M5", close))')
+    with pytest.raises(ScriptError, match="only reaches higher timeframes"):
+        lookback(p, resolve_consts(p, {}), H1)
+    with pytest.raises(ScriptError, match="only reaches higher timeframes"):
+        lookback(p, resolve_consts(p, {}), M5)
+
+
+def test_tf_inner_lookback_is_capped():
+    p = parse('plot(tf("H1", ema(ema(ema(ema(ema(close, 5000), 5000), 5000), 5000), 5000)))')
+    with pytest.raises(ScriptError, match="limit"):
+        htf_lookback(p, resolve_consts(p, {}), M5)

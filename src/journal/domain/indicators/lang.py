@@ -10,15 +10,22 @@ Statements: `name = expr`, `name = input(...)`, `plot(...)`, `hline(...)`,
 literal integer >= 0 — n bars AGO. A negative or computed index is refused:
 that is the language half of the no-lookahead guard.
 
+`tf("H1", expr)` evaluates `expr` on higher-timeframe bars (engine maps only
+CLOSED ones back). Inside it: base series, constants, builtins, `x[n]` — no
+chart-TF variable (another time axis) and no nested `tf()`.
+
 Window-like builtin arguments (`int`/`float` params) must be constant: a
 literal, an input, or arithmetic over those. That keeps every window known
 before evaluation, which is what lets `lookback` size the warm-up."""
 from __future__ import annotations
 
 import ast
+import math
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from ...adapter.base import TIMEFRAMES
+from ..resample import timeframe_ms
 from .builtins import REGISTRY
 
 MAX_SOURCE = 20_000
@@ -30,7 +37,7 @@ MAX_WINDOW = 5_000
 MAX_LOOKBACK = 20_000
 
 SERIES = ("open", "high", "low", "close", "volume", "spread", "hl2", "hlc3", "ohlc4")
-OUTPUTS = ("input", "plot", "hline", "signal")
+OUTPUTS = ("input", "plot", "hline", "signal", "tf")
 # Theme token names from frontend/src/lib/theme.ts — never hex (one palette).
 COLORS = ("violet", "cyan", "mark-amber", "mark-sky", "pos", "neg", "warn",
           "mark-chalk", "muted", "ink")
@@ -107,6 +114,8 @@ class Program:
     signals: list[Signal] = field(default_factory=list)
     # Names bound to a constant expression (inputs included), in order.
     consts: dict[str, ast.expr] = field(default_factory=dict)
+    # Timeframes named by tf() calls.
+    htfs: set[str] = field(default_factory=set)
 
 
 # --- parsing ----------------------------------------------------------------
@@ -260,8 +269,9 @@ def _output(p: Program, call: ast.Call, defined: set[str]) -> None:
         p.steps.append(Step("signal", len(p.signals) - 1, call.args[1]))
 
 
-def _expr(node: ast.expr, defined: set[str], p: Program) -> None:
-    """Raise unless `node` is a whitelisted expression over defined names."""
+def _expr(node: ast.expr, defined: set[str], p: Program, inner: bool = False) -> None:
+    """Raise unless `node` is a whitelisted expression over defined names.
+    `inner`: inside tf() — only base series and constants may be named."""
     if isinstance(node, ast.Constant):
         if isinstance(node.value, str):
             raise error_at(node, "a string is not a value here")
@@ -270,34 +280,40 @@ def _expr(node: ast.expr, defined: set[str], p: Program) -> None:
     elif isinstance(node, ast.Name):
         if node.id not in SERIES and node.id not in defined:
             raise error_at(node, f"undefined name {node.id!r}")
+        if inner and node.id not in SERIES and node.id not in p.consts:
+            raise error_at(node, f"{node.id!r} is on the chart timeframe; "
+                                 "assign it inside tf() instead")
     elif isinstance(node, ast.BinOp) and isinstance(node.op, _BINOPS):
-        _expr(node.left, defined, p)
-        _expr(node.right, defined, p)
+        _expr(node.left, defined, p, inner)
+        _expr(node.right, defined, p, inner)
     elif isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.USub, ast.UAdd, ast.Not)):
-        _expr(node.operand, defined, p)
+        _expr(node.operand, defined, p, inner)
     elif isinstance(node, ast.BoolOp):
         for v in node.values:
-            _expr(v, defined, p)
+            _expr(v, defined, p, inner)
     elif isinstance(node, ast.Compare) and all(isinstance(o, _CMPOPS) for o in node.ops):
-        _expr(node.left, defined, p)
+        _expr(node.left, defined, p, inner)
         for c in node.comparators:
-            _expr(c, defined, p)
+            _expr(c, defined, p, inner)
     elif isinstance(node, ast.Subscript):
         n = node.slice
         if not (isinstance(n, ast.Constant) and type(n.value) is int and n.value >= 0):
             raise error_at(n, "history index must be a literal integer >= 0 (bars ago)")
         if n.value > MAX_WINDOW:
             raise error_at(n, f"history index above the window limit ({MAX_WINDOW})")
-        _expr(node.value, defined, p)
+        _expr(node.value, defined, p, inner)
     elif isinstance(node, ast.Call):
-        _call(node, defined, p)
+        _call(node, defined, p, inner)
     else:
         raise error_at(node, f"{type(node).__name__} is not allowed")
 
 
-def _call(node: ast.Call, defined: set[str], p: Program) -> None:
+def _call(node: ast.Call, defined: set[str], p: Program, inner: bool = False) -> None:
     if not isinstance(node.func, ast.Name):
         raise error_at(node, "attribute and method calls are not allowed")
+    if node.func.id == "tf":
+        _tf(node, defined, p, inner)
+        return
     if node.func.id not in REGISTRY:
         raise error_at(node, f"unknown function {node.func.id!r}")
     if node.keywords:
@@ -308,10 +324,40 @@ def _call(node: ast.Call, defined: set[str], p: Program) -> None:
         raise error_at(node, f"{node.func.id}() takes {required}..{len(b.params)} "
                          f"arguments, got {len(node.args)}")
     for prm, arg in zip(b.params, node.args, strict=False):  # trailing params default
-        _expr(arg, defined, p)
+        _expr(arg, defined, p, inner)
         if prm.kind != "series" and not _is_const(arg, p):
             raise error_at(arg, f"{node.func.id}() argument {prm.name!r} must be constant "
                             "(a number, an input, or arithmetic over those)")
+
+
+def _tf(node: ast.Call, defined: set[str], p: Program, inner: bool) -> None:
+    if inner:
+        raise error_at(node, "tf() cannot be nested inside tf()")
+    if len(node.args) != 2 or node.keywords:
+        raise error_at(node, 'tf() takes a timeframe and an expression: tf("H1", expr)')
+    tf = node.args[0]
+    if not (isinstance(tf, ast.Constant) and isinstance(tf.value, str)):
+        raise error_at(tf, 'tf() timeframe must be a string literal, e.g. "H1"')
+    if tf.value not in TIMEFRAMES:
+        raise error_at(tf, f"unknown timeframe {tf.value!r}; one of {', '.join(TIMEFRAMES)}")
+    _expr(node.args[1], defined, p, inner=True)
+    p.htfs.add(tf.value)
+
+
+def tf_of(node: ast.Call) -> str:
+    """The timeframe of a validated tf() call."""
+    tf = node.args[0]
+    assert isinstance(tf, ast.Constant) and isinstance(tf.value, str)  # parse guarantees it
+    return tf.value
+
+
+def check_higher(node: ast.Call, tf_ms: int) -> int:
+    """The tf() call's bar length; raise unless it is above the chart's."""
+    h = timeframe_ms(tf_of(node))
+    if h <= tf_ms:
+        raise error_at(node, f"tf({tf_of(node)!r}, …) on this chart: "
+                             "tf() only reaches higher timeframes")
+    return h
 
 
 def _is_const(node: ast.expr, p: Program) -> bool:
@@ -407,27 +453,48 @@ def call_consts(node: ast.Call, consts: dict[str, float | bool]) -> dict[str, fl
 def lookback(p: Program, consts: dict[str, float | bool], tf_ms: int) -> int:
     """Warm-up bars needed before the first displayed bar. Costs SUM along
     nesting (an EMA of an EMA needs both warm-ups) and take the MAX across
-    siblings and across outputs."""
-    var_lb: dict[str, int] = {}
+    siblings and across outputs. A tf() call costs one HTF bar in chart bars;
+    its inner cost is counted in `htf_lookback`."""
+    return _lookbacks(p, consts, tf_ms)[0]
 
-    def lb(node: ast.expr) -> int:
+
+def htf_lookback(p: Program, consts: dict[str, float | bool], tf_ms: int) -> dict[str, int]:
+    """Warm-up per tf() timeframe, in THAT timeframe's bars."""
+    return _lookbacks(p, consts, tf_ms)[1]
+
+
+def _lookbacks(p: Program, consts: dict[str, float | bool],
+               tf_ms: int) -> tuple[int, dict[str, int]]:
+    var_lb: dict[str, int] = {}
+    htf: dict[str, int] = {}
+
+    def lb(node: ast.expr, bar_ms: int) -> int:
         if isinstance(node, ast.Name):
             return var_lb.get(node.id, 0)
         if isinstance(node, ast.Subscript):
             n = node.slice
             assert isinstance(n, ast.Constant) and type(n.value) is int  # parse guarantees it
-            return n.value + lb(node.value)
+            return n.value + lb(node.value, bar_ms)
+        if isinstance(node, ast.Call) and node.func.id == "tf":  # type: ignore[attr-defined]
+            h = check_higher(node, bar_ms)
+            need = lb(node.args[1], h)
+            if need > MAX_LOOKBACK:
+                raise error_at(node, f"needs {need} {tf_of(node)} bars of warm-up; "
+                                     f"the limit is {MAX_LOOKBACK}")
+            htf[tf_of(node)] = max(htf.get(tf_of(node), 0), need)
+            return math.ceil(h / bar_ms)
         if isinstance(node, ast.Call):
             b = REGISTRY[node.func.id]  # type: ignore[attr-defined]  # validated
             c = call_consts(node, consts)
-            inner = [lb(a) for prm, a in zip(b.params, node.args, strict=False) if prm.kind == "series"]
-            return b.cost(c, tf_ms) + max(inner, default=0)
-        return max((lb(k) for k in ast.iter_child_nodes(node) if isinstance(k, ast.expr)),
-                   default=0)
+            inner = [lb(a, bar_ms) for prm, a in zip(b.params, node.args, strict=False)
+                     if prm.kind == "series"]
+            return b.cost(c, bar_ms) + max(inner, default=0)
+        return max((lb(k, bar_ms) for k in ast.iter_child_nodes(node)
+                    if isinstance(k, ast.expr)), default=0)
 
     out = 0
     for step in p.steps:
-        n = lb(step.expr)
+        n = lb(step.expr, tf_ms)
         if n > MAX_LOOKBACK:
             raise error_at(step.expr, f"needs {n} bars of warm-up; the limit is {MAX_LOOKBACK}")
         if step.kind == "assign":
@@ -435,4 +502,4 @@ def lookback(p: Program, consts: dict[str, float | bool], tf_ms: int) -> int:
             var_lb[step.target] = n
         else:
             out = max(out, n)
-    return out
+    return out, htf
