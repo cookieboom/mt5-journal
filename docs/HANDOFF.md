@@ -31,7 +31,29 @@ home each, and a second copy is a future lie. Point, never duplicate.
 
 ## CURRENT STATE — update this section every session
 
-**Last updated:** 2026-10-06
+**Last updated:** 2026-10-07
+
+**2026-10-07 — the leftovers from 10-06 (`fix/load-active-and-mypy-baseline`).**
+
+- *mypy baseline gone.* All 73 modules are checked, with no override. Narrowing
+  follows the repo idiom (`assert x is not None  # why`), and each site was read
+  before it was asserted. Two of them were reachable, and both were pinned by a
+  failing test first: `journal doctor` crashed (`UnboundLocalError`) on a tick
+  with no `time`; `reconstruct` died with a bare `TypeError` on a BUY/SELL deal
+  whose `price`/`volume`/`symbol` is NULL (`deals_raw` allows it). That deal
+  now raises a `ValueError` naming the ticket. Also: `set_annotation` and the
+  web `_row()` no longer type a guaranteed row as Optional, and `bar_rows()`
+  replaces two copies of the excursion comprehension.
+- *`lab.store.load_active`* derives `<cache_dir>/models/<id>.joblib` instead of
+  opening the stored relative `artifact_path` (it only worked from the repo root).
+- *Stash `caca926` dropped.* Its content (bar-close countdown, rollover
+  promotion) was already on `main` (`b96e220` + later).
+- *`main` == `origin/main`.* The divergence noted below is resolved.
+
+Gates: `pytest` **1008 passed, 8 skipped**; `ruff` clean; `mypy` clean (73/73);
+`journal rebuild` on a snapshot of the live store: 132 trades, identities 1 and
+2 PASS. Still owed by a human: start `journal live` (down since 2026-09-21), and
+retrain the lab models.
 
 **2026-10-06 — architecture cleanup: web hardening, layering, file size
 (`refactor/architecture-cleanup`, spec
