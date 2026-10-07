@@ -44,6 +44,16 @@ export function useReplaySession() {
 
   const start = useCallback((cfg: ReplayConfig) => { cfgRef.current = cfg; return _create(cfg); }, [_create]);
 
+  // A session the server already created (Strategy Tester replay jump).
+  const adopt = useCallback((s: TrainingSession, speed = 4) => {
+    cfgRef.current = {
+      symbol: s.symbol, timeframe: s.timeframe, range_start_msc: s.range_start_msc,
+      range_end_msc: s.range_end_msc, cursor_start_msc: s.cursor_msc, speed,
+    };
+    setError(null); setEvents([]); setPositions([]); setSessionSummary(EMPTY_SUMMARY);
+    setSession(s); setAnchorMsc(s.cursor_msc); setStatus("ready");
+  }, []);
+
   const _sid = () => session?.id ?? null;
 
   const step = useCallback(async (n = 1): Promise<StepEvent[]> => {
@@ -147,6 +157,6 @@ export function useReplaySession() {
     session, positions, events, sessionSummary, status, error, playing,
     cursorMsc: session?.cursor_msc ?? null,
     anchorMsc,
-    start, step, play, pause, jump, reset, open, close, modifySltp, end, discard,
+    start, adopt, step, play, pause, jump, reset, open, close, modifySltp, end, discard,
   };
 }

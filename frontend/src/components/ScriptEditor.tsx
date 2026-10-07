@@ -10,7 +10,9 @@ macd_line macd_signal macd_hist bb_upper bb_mid bb_lower stoch_k stoch_d vwap
 donchian_upper donchian_lower adx crossover crossunder abs log sqrt min max where nz.
 n = input(14, min=1, max=200, title="Len")
 plot(expr, title=, color=, pane="price"|"<nama>", style="line"|"histogram"|"dots", width=)
-hline(70, pane="rsi")   signal("long"|"short", kondisi)
+hline(70, pane="rsi")
+signal("long"|"short", kondisi, stop=harga, target=harga | target_r=2)  — stop/target dibaca di bar sinyal
+exit("long"|"short", kondisi) = tutup posisi sisi itu di open bar berikutnya (Strategy Tester)
 tf("H1", ema(close, 50)) = nilai TF lebih tinggi, hanya bar yang sudah close.`;
 
 // Library scripts are read-only: saving one creates the user's own copy.

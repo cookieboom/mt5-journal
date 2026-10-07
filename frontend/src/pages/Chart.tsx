@@ -43,6 +43,10 @@ import IndicatorPanel from "../components/IndicatorPanel";
 import { useIndicators } from "../hooks/useIndicators";
 import { useIndicatorLayout } from "../hooks/useIndicatorLayout";
 import { indicatorsApi, signalMarkers, type ScriptInfo } from "../lib/indicators";
+import StrategyTester from "../components/StrategyTester";
+import { useBacktest } from "../hooks/useBacktest";
+import { backtestApi, hasSignal, tradeMarkers, type TesterTrade } from "../lib/backtest";
+import type { TrainingSession } from "../lib/replay";
 
 export interface ChartHandle {
   jumpToNow: () => void;
@@ -201,11 +205,71 @@ export default function Chart() {
     live: !replayOpen,
     rev: scriptsRev,
   });
-  // Signal markers are historical-only until a script carries a backtest
-  // (spec 2026-10-07-indicators, Rule 9 amendment): replay, never live.
+  // ------------------------------------------------------------ strategy tester
+  // Live only: a backtest over a replay session's range would read past the
+  // cursor. Rule 9: live signal markers exist ONLY beside a tester result for
+  // the same script/symbol/TF, whose OOS headline the strip always shows.
+  const testerCandidates = useMemo(() => {
+    const byId = new Map(scripts.map((x) => [x.id, x]));
+    return indLayout.layout.items
+      .filter((i) => hasSignal(byId.get(i.script)?.source ?? ""))
+      .map((i) => ({ id: i.id, name: byId.get(i.script)?.name ?? i.script }));
+  }, [indLayout.layout.items, scripts]);
+  const [testerPick, setTesterPick] = useState<string | null>(null);
+  const testerId = testerCandidates.find((c) => c.id === testerPick)?.id ?? testerCandidates[0]?.id ?? null;
+  const testerItem = indLayout.layout.items.find((i) => i.id === testerId) ?? null;
+  const lastClosedMs = data.candles.length ? data.candles[data.candles.length - 1].time_msc : null;
+  const tester = useBacktest({
+    symbol, tf, item: replayOpen ? null : testerItem, lastClosedMs, rev: scriptsRev,
+  });
+  const [focus, setFocus] = useState<{ startMs: number; endMs: number } | null>(null);
+  useEffect(() => { setFocus(null); }, [symbol, tf, replayOpen]);
+  // A trade older than the loaded window: pull older bars until it is in.
+  // ponytail: stops silently at maxBars (useChartData's cap) — raise it in settings.
+  useEffect(() => {
+    const first = data.candles[0]?.time_msc;
+    if (focus && first !== undefined && first > focus.startMs) void data.loadOlder();
+  }, [focus, data.candles, data.loadOlder]);
+  const onTesterReplay = async (t: TesterTrade) => {
+    const r = await backtestApi.replay({
+      symbol, timeframe: tf, decision_msc: t.decision_msc, exit_msc: t.exit_msc,
+    });
+    if (!r.ok || !r.data) return;
+    snapshotRef.current = params.toString();
+    const session = r.data.session as TrainingSession;
+    setReplayOpen(true);
+    setParams(new URLSearchParams({ symbol: session.symbol, tf: session.timeframe }), { replace: true });
+    comp.reset();
+    replay.adopt(session, replayPrefs.prefs.speed);
+  };
+  const testerStrip = !replayOpen && testerId !== null && (
+    <StrategyTester
+      candidates={testerCandidates}
+      activeId={testerId}
+      onActive={setTesterPick}
+      settings={tester.settings}
+      onSettings={(b) => indLayout.setLayout({
+        ...indLayout.layout,
+        items: indLayout.layout.items.map((i) => (i.id === testerId ? { ...i, backtest: b } : i)),
+      })}
+      result={tester.result}
+      error={tester.error}
+      loading={tester.loading}
+      armed={tester.armed}
+      onRun={tester.run}
+      onTradeClick={(t) => setFocus({ startMs: t.entry_msc, endMs: t.exit_msc ?? t.entry_msc })}
+      onReplay={(t) => void onTesterReplay(t)}
+      nowMs={Date.now()}
+    />
+  );
+
+  // Replay: §1's behind-the-cursor signal markers. Live: the tester's simulated
+  // trades, and only while it holds a result (rule 9).
   const indicatorMarkers = useMemo(
-    () => (replayOpen ? signalMarkers(ind.renders.map((r) => r.result.signals)) : undefined),
-    [replayOpen, ind.renders],
+    () => (replayOpen ? signalMarkers(ind.renders.map((r) => r.result.signals))
+      : tester.result && tester.settings.showOnChart ? tradeMarkers(tester.result.trades)
+      : undefined),
+    [replayOpen, ind.renders, tester.result, tester.settings.showOnChart],
   );
   const indicatorPanel = (
     <IndicatorPanel
@@ -335,8 +399,10 @@ export default function Chart() {
   }), [drawings.items, drawings.add, drawings.update, drawings.remove, drawings.clear, drawingsReady]);
 
   const competitive = replayPrefs.prefs.competitiveMode;
+  const [includeStudy, setIncludeStudy] = useState(false);
   const { data: career } = useApi<TrainingSummary>(
-    "/api/training/summary", replayOpen && !competitive ? 3000 : undefined,
+    `/api/training/summary${includeStudy ? "?include_study=true" : ""}`,
+    replayOpen && !competitive ? 3000 : undefined,
   );
   const replayCounts = useMemo(() => outcomeCounts(replay.positions), [replay.positions]);
   // Competitive: stats span the whole run (finished scenarios + current one).
@@ -383,6 +449,12 @@ export default function Chart() {
       {/* Career card is hidden in competitive mode — the run total below
           is the score that matters there. */}
       {!competitive && <ReplaySummary title="Kumulatif" s={career ?? null} />}
+      {!competitive && (
+        <label className="flex items-center gap-2 px-1 text-meta text-muted">
+          <input type="checkbox" checked={includeStudy} onChange={(e) => setIncludeStudy(e.target.checked)} />
+          sertakan sesi studi
+        </label>
+      )}
       <ReplaySummary
         title={competitive ? `Kompetitif · Skenario ${comp.round}` : "Sesi ini"}
         s={sessionSummary}
@@ -455,7 +527,7 @@ export default function Chart() {
           onTf={(t) => setSelection({ tf: t })}
           onSettings={update}
           onReset={reset}
-          onJumpNow={() => chartRef.current?.jumpToNow()}
+          onJumpNow={() => { setFocus(null); chartRef.current?.jumpToNow(); }}
           onReplay={enterReplay}
           replayActive={replayOpen}
           paperMode={paperMode}
@@ -530,6 +602,7 @@ export default function Chart() {
               drawings={drawingsProp}
               indicators={ind.renders}
               markers={indicatorMarkers}
+              fitToRange={focus ?? undefined}
             />
           ) : (
             <ChartPlaceholder status={data.status} error={data.error} onRetry={data.retry}
@@ -564,6 +637,7 @@ export default function Chart() {
           {!panelOpen && sidePanel}
         </aside>
       </div>
+      {testerStrip}
       {panelOpen && (
         <Sheet label={replayOpen ? "Panel replay" : "Panel chart"} onClose={() => setPanelOpen(false)}>
           <div className="flex flex-col gap-3">{sidePanel}</div>

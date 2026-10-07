@@ -15,6 +15,7 @@ export interface TrainingSession {
   cursor_msc: number;
   status: "active" | "ended";
   created_at_msc: number;
+  origin?: "blind" | "study";     // study = a Strategy Tester replay jump (014)
 }
 
 export interface TrainingPosition {

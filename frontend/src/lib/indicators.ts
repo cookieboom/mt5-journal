@@ -4,6 +4,7 @@
 // into lightweight-charts data. Pure except the fetch helpers at the bottom.
 import type { SeriesMarker, Time, UTCTimestamp } from "lightweight-charts";
 import { palette } from "./theme";
+import { normalizeBacktest, type BacktestSettings } from "./backtest";
 
 export type InputValue = number | boolean;
 
@@ -55,6 +56,7 @@ export interface IndicatorInstance {
   script: string;
   inputs: Record<string, InputValue>;
   visible: boolean;
+  backtest?: BacktestSettings;     // Strategy Tester form, per instance
 }
 
 export interface IndicatorLayout { version: 1; items: IndicatorInstance[] }
@@ -72,7 +74,9 @@ export function normalizeLayout(raw: unknown): IndicatorLayout {
     for (const [k, v] of Object.entries((o.inputs ?? {}) as Record<string, unknown>)) {
       if (typeof v === "boolean" || (typeof v === "number" && Number.isFinite(v))) inputs[k] = v;
     }
-    out.push({ id: o.id, script: o.script, inputs, visible: o.visible !== false });
+    const item: IndicatorInstance = { id: o.id, script: o.script, inputs, visible: o.visible !== false };
+    if (o.backtest !== undefined) item.backtest = normalizeBacktest(o.backtest);
+    out.push(item);
   }
   return { version: 1, items: out };
 }
