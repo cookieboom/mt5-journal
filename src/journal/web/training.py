@@ -11,9 +11,10 @@ money (needs symbol_specs) and the excursion (needs candle rows) at close time.
 from __future__ import annotations
 
 import sqlite3
+from typing import TypeGuard
 
 from ..adapter.base import TIMEFRAMES
-from ..domain.excursion import compute_excursion
+from ..domain.excursion import bar_rows, compute_excursion
 from ..domain.resample import timeframe_ms
 from ..domain.symbols import to_base
 from ..domain import replay_eval as ev
@@ -28,10 +29,10 @@ def _check_direction(direction: str, entry_price: float | None,
     Skips whichever side is None (unchanged) or 0 (removed, rule 4) — there's
     nothing to be inconsistent with. If entry_price is unknown yet (position
     still pending), falls back to checking sl vs tp against each other."""
-    def is_set(v: float | None) -> bool:
+    def is_set(v: float | None) -> TypeGuard[float]:
         return v is not None and abs(v) > 1e-9
 
-    ref = entry_price if entry_price is not None else None
+    ref = entry_price
     if ref is None:
         if is_set(sl) and is_set(tp):
             if direction == "buy" and not (sl < tp):
@@ -52,8 +53,10 @@ def _check_direction(direction: str, entry_price: float | None,
             raise ValueError("TP must be below entry price for a sell position")
 
 
-def _row(row: sqlite3.Row | None) -> dict | None:
-    return None if row is None else {k: row[k] for k in row.keys()}
+def _row(row: sqlite3.Row | None) -> dict:
+    # Every caller hands over a row it just wrote or already checked exists.
+    assert row is not None
+    return {k: row[k] for k in row.keys()}
 
 
 def _positions(conn: sqlite3.Connection, session_id: int) -> list[dict]:
@@ -81,7 +84,7 @@ def _next_bars(conn: sqlite3.Connection, symbol: str, timeframe: str,
     while True:
         hi = min(range_end_msc, cursor_msc + span)
         bars = [b for b in cs.load_bars(conn, symbol, timeframe, cursor_msc + 1, hi)
-                if b.time_msc > cursor_msc]
+                if b.time_msc is not None and b.time_msc > cursor_msc]
         if len(bars) >= n or hi >= range_end_msc:
             return bars[:n]
         span *= 2
@@ -164,6 +167,8 @@ def _resolve_close(conn: sqlite3.Connection, symbol: str, timeframe: str,
                    state: ev.PositionState) -> None:
     """Persist a just-closed position with money, R, and MAE/MFE. Reuses the same
     pure helpers the real pipeline uses; degrades to null money if no symbol_specs."""
+    # Called only on an "exit" event, which stamps both.
+    assert state.exit_msc is not None and state.exit_reason is not None
     net = r = mae = mfe = mae_r = mfe_r = None
     specs = _specs(conn, symbol)
     if specs is not None and state.entry_price is not None and state.exit_price is not None:
@@ -172,10 +177,10 @@ def _resolve_close(conn: sqlite3.Connection, symbol: str, timeframe: str,
                                 state.volume, tick_size, tick_value)
     if state.entry_price is not None and state.exit_price is not None:
         r = ev.r_multiple(state.direction, state.entry_price, state.exit_price, state.sl)
-    if state.entry_msc is not None and state.exit_msc is not None:
+    if state.entry_msc is not None and state.entry_price is not None:
         bars = cs.load_bars(conn, symbol, timeframe, state.entry_msc, state.exit_msc)
         mae, mfe = compute_excursion(
-            [(b.time_msc, b.low, b.high) for b in bars],
+            bar_rows(bars),
             state.entry_msc, state.exit_msc, state.entry_price, state.direction,
         )
         risk = abs(state.entry_price - state.sl) if state.sl else None
@@ -187,7 +192,9 @@ def _resolve_close(conn: sqlite3.Connection, symbol: str, timeframe: str,
     ts.mark_close(conn, state.id, exit_msc=state.exit_msc, exit_price=state.exit_price,
                   exit_reason=state.exit_reason, net_profit=net, r_multiple=r,
                   mae=mae, mfe=mfe, mae_r=mae_r, mfe_r=mfe_r)
-    session_id = ts.get_position(conn, state.id)["session_id"]
+    pos = ts.get_position(conn, state.id)
+    assert pos is not None  # mark_close just updated it
+    session_id = pos["session_id"]
     ts.record_close_stat(conn, session_id, state.exit_reason)
 
 
@@ -212,6 +219,8 @@ def step(conn: sqlite3.Connection, session_id: int, n: int = 1) -> dict:
         for e in events:
             st = by_id[e.position_id]
             if e.kind == "fill":
+                # step_bar stamps both on the fill it reports.
+                assert st.entry_msc is not None and st.entry_price is not None
                 ts.mark_fill(conn, st.id, entry_msc=st.entry_msc, entry_price=st.entry_price)
             else:  # exit
                 _resolve_close(conn, symbol, tf, st)
@@ -238,7 +247,9 @@ def end_session(conn: sqlite3.Connection, session_id: int) -> dict:
                       mae=None, mfe=None, mae_r=None, mfe_r=None)
         ts.record_close_stat(conn, session_id, "eod")
     ts.set_session_status(conn, session_id, "ended")
-    return session_view(conn, session_id)
+    view = session_view(conn, session_id)
+    assert view is not None  # the session was read at the top
+    return view
 
 
 def career_summary(conn: sqlite3.Connection) -> dict:

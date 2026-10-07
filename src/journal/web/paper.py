@@ -18,7 +18,7 @@ from ..domain import commands as cmd
 from ..domain import paper_eval as pe
 from ..domain import replay_eval as rev
 from ..domain import risk
-from ..domain.excursion import compute_excursion
+from ..domain.excursion import bar_rows, compute_excursion
 from ..domain.sim_stats import summary as sim_summary
 from ..domain.symbols import to_base
 from ..execute import FEED_STALE_MS
@@ -33,8 +33,10 @@ class PaperError(Exception):
     """A refusal the human should read. Routes turn it into a 400."""
 
 
-def _row(row: sqlite3.Row | None) -> dict | None:
-    return None if row is None else {k: row[k] for k in row.keys()}
+def _row(row: sqlite3.Row | None) -> dict:
+    # Every caller hands over a row it just wrote or already checked exists.
+    assert row is not None
+    return {k: row[k] for k in row.keys()}
 
 
 def _specs(conn: sqlite3.Connection, symbol: str) -> pe.Specs | None:
@@ -139,6 +141,7 @@ def account_view(conn: sqlite3.Connection, account_id: int) -> dict | None:
         curve.append({"exit_msc": r["exit_msc"], "balance": balance,
                       "position_id": r["id"], "symbol_base": r["symbol_base"]})
 
+    closed = [_row(r) for r in closed_rows]
     return {
         "account": _row(account),
         "header": {
@@ -161,8 +164,8 @@ def account_view(conn: sqlite3.Connection, account_id: int) -> dict | None:
             for r in open_rows
         ],
         "pending": [_row(r) for r in pending_rows],
-        "closed": [_row(r) for r in closed_rows],
-        "summary": sim_summary(closed_rows),
+        "closed": closed,
+        "summary": sim_summary(closed),
         "max_drawdown": max_dd,
         "equity_curve": curve,
     }
@@ -280,6 +283,7 @@ def place_order(conn: sqlite3.Connection, account_id: int, *, symbol: str,
                 "Risiko yang diminta lebih kecil dari satu step volume broker."
             )
 
+    assert volume is not None  # given, or sized above (exactly one of the two)
     try:
         cmd.check_volume("open", None, spec_row, volume)
         cmd.check_level("sl", sl, direction, reference, spec_row)
@@ -332,7 +336,7 @@ def _excursion(conn: sqlite3.Connection, row: sqlite3.Row,
     if not bars:
         return (None, None, None, None)
     mae, mfe = compute_excursion(
-        [(b.time_msc, b.low, b.high) for b in bars],
+        bar_rows(bars),
         row["entry_msc"], exit_msc, float(row["entry_price"]), row["direction"],
     )
     mae_r = mfe_r = None
@@ -391,6 +395,7 @@ def close_position(conn: sqlite3.Connection, position_id: int, *,
     if volume is not None and volume < float(row["volume"]) - 1e-9:
         child_id = paper_store.split_for_partial(conn, position_id, float(volume))
         child = paper_store.get_position(conn, child_id)
+        assert child is not None  # split_for_partial just inserted it
         return _close_row(conn, child, exit_price=exit_price, exit_msc=now,
                           reason=reason, specs=specs)
 

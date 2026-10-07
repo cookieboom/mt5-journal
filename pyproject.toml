@@ -71,7 +71,5 @@ ignore_missing_imports = true
 module = [
     "journal.cli",
     "journal.domain.reconstruct",
-    "journal.web.paper",
-    "journal.web.training",
 ]
 ignore_errors = true

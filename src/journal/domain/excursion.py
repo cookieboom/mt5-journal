@@ -16,6 +16,18 @@ trade's own [open,close] window at its own TF cannot.
 
 from __future__ import annotations
 
+from ..adapter.base import Candle
+
+
+def bar_rows(bars: list[Candle]) -> list[tuple[int, float, float]]:
+    """`compute_excursion`'s rows from stored candles (time and OHLC are NOT
+    NULL in `candles`)."""
+    out = []
+    for b in bars:
+        assert b.time_msc is not None and b.low is not None and b.high is not None
+        out.append((b.time_msc, b.low, b.high))
+    return out
+
 
 def compute_excursion(
     rows: list[tuple[int, float, float]],
