@@ -13,6 +13,8 @@ against tests/fixtures, exactly as the M1 suite does.
 
 from __future__ import annotations
 
+import dataclasses
+
 import logging
 
 import pytest
@@ -393,6 +395,20 @@ def test_inout_raises_naming_position_id():
         _deal(4242, DealEntry.INOUT, DealType.BUY, 4000.0, 0.10, 1, time_msc=1),
     ]
     with pytest.raises(NotImplementedError, match="4242"):
+        reconstruct(deals, {}, _SPECS)
+
+
+@pytest.mark.parametrize("field", ["price", "volume", "symbol"])
+def test_a_trade_deal_missing_a_field_raises_naming_the_ticket(field):
+    """deals_raw allows NULL price/volume/symbol (non-trade deals carry none). A
+    BUY/SELL deal without one must stop the rebuild by name, not surface as a
+    bare TypeError deep in the VWAP or fold into a plausible-looking trade."""
+    bad = dataclasses.replace(
+        _deal(5151, DealEntry.IN, DealType.BUY, 4000.0, 0.10, 99, time_msc=1),
+        **{field: None},
+    )
+    deals = [bad, _deal(5151, DealEntry.OUT, DealType.SELL, 4010.0, 0.10, 2, time_msc=2)]
+    with pytest.raises(ValueError, match=f"ticket=99.*{field}"):
         reconstruct(deals, {}, _SPECS)
 
 

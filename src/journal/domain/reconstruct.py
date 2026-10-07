@@ -154,9 +154,25 @@ def _is_trade_deal(d: Deal) -> bool:
     )
 
 
+def _need[T](value: T | None, field: str, d: Deal) -> T:
+    """A BUY/SELL deal's field that deals_raw allows NULL (non-trade deals carry
+    none). Missing on a trade deal is malformed history: stop the rebuild by
+    ticket, the Trap 4/5 way, rather than a bare TypeError mid-VWAP."""
+    if value is None:
+        raise ValueError(
+            f"trade deal ticket={d.ticket} position_id={d.position_id} has no {field}"
+        )
+    return value
+
+
+def _time(d: Deal) -> int:
+    assert d.time_msc is not None  # _is_trade_deal admitted it
+    return d.time_msc
+
+
 def _vwap(deals: list[Deal]) -> float:
-    num = sum(d.price * d.volume for d in deals)
-    den = sum(d.volume for d in deals)
+    num = sum(_need(d.price, "price", d) * _need(d.volume, "volume", d) for d in deals)
+    den = sum(_need(d.volume, "volume", d) for d in deals)
     return num / den  # den > 0: a group only reaches here with real fills
 
 
@@ -246,6 +262,7 @@ def reconstruct(
     groups: dict[int, list[Deal]] = {}
     for d in deals:
         if _is_trade_deal(d):
+            assert d.position_id is not None  # _is_trade_deal: truthy
             groups.setdefault(d.position_id, []).append(d)
 
     trades: list[Trade] = []
@@ -253,7 +270,7 @@ def reconstruct(
         # time_msc is guaranteed present by _is_trade_deal, so no `or 0` fallback —
         # that would have masked a bad deal as a 1970 timestamp (the silent error this
         # whole document exists to prevent). ticket breaks ties within the same ms.
-        group = sorted(groups[pid], key=lambda d: (d.time_msc, d.ticket or 0))
+        group = sorted(groups[pid], key=lambda d: (_time(d), d.ticket or 0))
 
         # Traps 4 & 5 — caught BEFORE the IN/OUT split. An INOUT/OUT_BY deal belongs
         # to neither `ins` nor `outs`, so letting it fall through would silently drop
@@ -280,11 +297,11 @@ def reconstruct(
             )
             continue
 
-        symbol = ins[0].symbol
+        symbol = _need(ins[0].symbol, "symbol", ins[0])
         spec = specs.get(symbol)
 
-        vol_in = sum(d.volume for d in ins)
-        vol_out = sum(d.volume for d in outs)
+        vol_in = sum(_need(d.volume, "volume", d) for d in ins)
+        vol_out = sum(_need(d.volume, "volume", d) for d in outs)
         if not outs:
             status = "open"
         elif abs(vol_in - vol_out) < _VOL_TOL:
@@ -292,8 +309,8 @@ def reconstruct(
         else:
             status = "partially_open"
 
-        open_time = min(d.time_msc for d in ins)
-        close_time = max((d.time_msc for d in outs), default=None)
+        open_time = min(_time(d) for d in ins)
+        close_time = max((_time(d) for d in outs), default=None)
         duration_s = (close_time - open_time) // 1000 if close_time is not None else None
 
         # sl_initial from the EARLIEST IN deal's order (group is time-ordered).
@@ -304,7 +321,8 @@ def reconstruct(
                 "earliest. Unexpected on hedging — investigate.",
                 pid, len(in_orders), sorted(in_orders),
             )
-        open_order = orders.get(ins[0].order)
+        # No order ticket -> no order -> sl_initial NULL (Trap 6).
+        open_order = orders.get(ins[0].order) if ins[0].order is not None else None
         sl_initial = _sl_from_order(open_order)
         tp_initial = _tp_from_order(open_order)
         sl_source = "order" if sl_initial is not None else None
@@ -489,6 +507,8 @@ def _fill_excursions(conn: sqlite3.Connection, trades: list[Trade]) -> int:
     for t in trades:
         if t.status != "closed":
             continue
+        # closed => it has OUT deals, so close time and duration are set.
+        assert t.close_time_msc is not None and t.duration_s is not None
         tf = choose_timeframe(t.duration_s)
         from_msc, to_msc = window_for(t.open_time_msc, t.close_time_msc, tf)
         rows = conn.execute(
@@ -547,6 +567,8 @@ def _fill_auto_tags(conn: sqlite3.Connection, trades: list[Trade]) -> None:
 
     login = one_account_login(conn)
     closed = [t for t in trades if t.status == "closed"]
+    big_win: float | None
+    big_loss: float | None
     if len(closed) >= _MIN_N:
         big_win, big_loss = _outlier_thresholds([t.net_profit for t in closed])
     else:

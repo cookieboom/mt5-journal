@@ -61,14 +61,3 @@ files = ["src/journal"]
 # mplfinance, siliconmetatrader5, lightgbm, joblib and friends ship no stubs.
 ignore_missing_imports = true
 
-# Baseline, 2026-10-06: 96 errors, almost all one shape — an Optional field on
-# an adapter dataclass (Deal.time_msc, Candle.time_msc, ...) that is validated
-# in one function and used in another, which mypy cannot follow. Fixing them
-# means tightening the adapter types, and reconstruct.py is read-before-edit
-# territory (docs/mt5-deal-model.md). Every other module is checked; shrink
-# this list, never grow it.
-[[tool.mypy.overrides]]
-module = [
-    "journal.domain.reconstruct",
-]
-ignore_errors = true
