@@ -8,6 +8,8 @@ client-owned and free-form: the server only insists they are JSON objects.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 
@@ -57,6 +59,31 @@ class IndicatorValidateRequest(BaseModel):
 class IndicatorScriptRequest(BaseModel):
     name: str = Field(min_length=1, max_length=80)
     source: str = Field(max_length=20_000)
+
+
+class BacktestExits(BaseModel):
+    """The tester form's exit defaults (`domain/indicators/backtest.Settings`)."""
+    sl: Literal["atr", "points", "none"] = "atr"
+    sl_value: float = Field(default=1.5, gt=0)
+    atr_len: int = Field(default=14, ge=1, le=5_000)
+    tp_r: float | None = Field(default=2.0, gt=0)
+    max_hold: int | None = Field(default=None, ge=1)
+    opposite_closes: bool = True
+    overlap: bool = False
+
+
+class IndicatorBacktestRequest(BaseModel):
+    """Exactly one of `script` (an id) or `source` (an unsaved draft)."""
+    script: str | None = None
+    source: str | None = Field(None, max_length=20_000)
+    inputs: dict[str, float | bool] = Field(default_factory=dict)
+    symbol: str = Field(min_length=1)
+    timeframe: str
+    from_ms: int
+    to_ms: int
+    split: float = Field(0.7, ge=0.05, le=0.95)
+    exits: BacktestExits = Field(default_factory=BacktestExits)
+    spread_fallback: float | None = Field(None, ge=0)
 
 
 class IndicatorComputeRequest(BaseModel):
