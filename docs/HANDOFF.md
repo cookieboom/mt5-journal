@@ -31,7 +31,47 @@ home each, and a second copy is a future lie. Point, never duplicate.
 
 ## CURRENT STATE — update this section every session
 
-**Last updated:** 2026-10-07
+**Last updated:** 2026-10-08
+
+**2026-10-08 — indicators, spec §3: Strategy Tester (`feat/indicators-tester`,
+spec `docs/superpowers/specs/2026-10-07-indicators-strategy-tester-design.md`).**
+The umbrella's §4 backtest moved up to §3; real-trade context is deferred.
+
+- *Language.* `signal(side, cond, stop=, target=, target_r=)` (stop/target are
+  price series read at the signal bar; `target_r` constant, exclusive with
+  `target`) and `exit(side, cond)`. New `Step` kinds `stop|target|exit`, so
+  lookback and the engine need no special path; prefix-invariance covers them.
+- *Simulator* `domain/indicators/backtest.py` drives `replay_eval.step_bar` —
+  the one fill model (next open, stop-first). exit()/opposite/max-hold closes,
+  ATR/points/script brackets, wrong-side → `rejected`, open at window end is
+  never in stats. R net of the entry bar's spread (points × `symbol_specs.point`);
+  unknown spread → fallback or `r = None`. A prefix test (random cut, `tf()`
+  script) guards lookahead.
+- *Report* IS/OOS split on decision time (OOS headline), PF, max DD in R,
+  streaks, equity, hour/session/weekday buckets. Ungated (CLAUDE.md third §8
+  exception); rule 9 rewritten to admit `signal()` beside a tester result.
+- *API* `POST /api/indicators/backtest` (cap 200k bars, nothing stored) via
+  `web/indicators.load_frames`, extracted from `compute`.
+  `POST /api/indicators/backtest/replay` → **migration 014**
+  `training_sessions.origin` blind|study; `career_summary` excludes study unless
+  `include_study`.
+- *FE* `StrategyTester.tsx` strip under the chart (live only): first run is a
+  click, then re-runs on settings change / new closed bar. Tabs Ringkasan,
+  Daftar trade (row → chart focus via `fitToRange`, Replay → study session),
+  Breakdown, Pengaturan (stored per instance in the layout blob). Live markers =
+  simulated trades, only with a result. Not done: the below-`md` sheet, and the
+  equity curve is SVG rather than lightweight-charts.
+- Verified on a DB copy, browser: XAUUSDc M5 EMA cross 90 d → OOS −0.14 R/trade,
+  n 78; trade click scrolls to the 14:00 trade (+1.96R marker); Replay opens a
+  study session at the cursor 50 bars before, range end 20 bars past the exit.
+  90 d runs in 0.1 s, 365 d in 0.43 s.
+
+**Restart `journal live` and `journal serve` after this merge** — migration 014;
+old code refuses the migrated store.
+
+Gates: `pytest` **1297 passed, 9 skipped**; `ruff` clean; `mypy` clean (83);
+`vitest` **447 passed**; `tsc` clean; `journal rebuild` + `verify` on a
+snapshot: PASS.
 
 **2026-10-07 — indicators, spec §2: multi-timeframe `tf()`
 (`feat/indicators-mtf`, spec
@@ -217,20 +257,6 @@ ran until 2026-09-21 was started from this checkout it was the old
 single-loop code (unverified). Treat the next start as the first real run of
 the two-thread daemon: watch the first position close hand off to
 `symbol_cycle` and land in `trades`.
-
-**2026-09-04 — decoupled the live loop: position and symbol-data paths split
-onto two threads** (`worktree-decouple-live-loop-spec`, 8 tasks, spec in
-`docs/superpowers/specs/2026-09-04-decouple-live-loop-design.md`; merged
-2026-09-07, PR #13). `journal live` now
-runs `position_loop`/`symbol_loop` as two threads with independently
-configurable `--interval-positions`/`--interval-symbols`. A position close
-hands off to `symbol_cycle` via an in-memory `queue.Queue` instead of
-ingesting inline, so candle serving and backfill are no longer blocked by
-ingest-on-close — the multi-second sync/rebuild/candles round trip that used
-to sit in front of the position mirror and command execution is now entirely
-on the symbol side. Bridge access is serialized through one
-`LockedMT5Client` wrapping the single adapter connection, so both threads
-share it without two sessions ever landing on the terminal at once.
 
 ## Who does what
 

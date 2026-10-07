@@ -4,6 +4,20 @@ Verbatim overflow from `docs/HANDOFF.md` § CURRENT STATE. Nothing here was
 edited; entries were moved out so the file an agent reads at the start of a
 session stays small. Newest-first, same as the live file. Split 2026-08-13.
 
+**2026-09-04 — decoupled the live loop: position and symbol-data paths split
+onto two threads** (`worktree-decouple-live-loop-spec`, 8 tasks, spec in
+`docs/superpowers/specs/2026-09-04-decouple-live-loop-design.md`; merged
+2026-09-07, PR #13). `journal live` now
+runs `position_loop`/`symbol_loop` as two threads with independently
+configurable `--interval-positions`/`--interval-symbols`. A position close
+hands off to `symbol_cycle` via an in-memory `queue.Queue` instead of
+ingesting inline, so candle serving and backfill are no longer blocked by
+ingest-on-close — the multi-second sync/rebuild/candles round trip that used
+to sit in front of the position mirror and command execution is now entirely
+on the symbol side. Bridge access is serialized through one
+`LockedMT5Client` wrapping the single adapter connection, so both threads
+share it without two sessions ever landing on the terminal at once.
+
 **2026-09-04 — paper orders on a fresh symbol.** `paper_step` now also fetches
 a tick for the chart's watched symbol, not only for symbols that already carry
 a paper position — the first paper order on any symbol was refused with

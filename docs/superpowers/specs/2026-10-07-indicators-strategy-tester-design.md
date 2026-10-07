@@ -1,6 +1,6 @@
 # Indicators §3 — Strategy Tester — design + implementation plan
 
-**Status:** designed 2026-10-07 with the user, not started. Umbrella spec:
+**Status:** designed 2026-10-07, built and merged 2026-10-08 (`feat/indicators-tester`). Umbrella spec:
 `2026-10-07-indicators-design.md`. This spec **re-sequences** the umbrella:
 
 - the umbrella's §3 (indicator context of *real* trades) is **deferred** — the
