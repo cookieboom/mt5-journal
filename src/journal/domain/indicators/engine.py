@@ -45,6 +45,32 @@ def base_series(f: pd.DataFrame) -> dict[str, pd.Series]:
     }
 
 
+def map_closed(values: pd.Series, htf_ms: int, index: pd.Index, tf_ms: int,
+               forming_msc: int | None = None) -> pd.Series:
+    """HTF `values` (indexed by bar open T) onto chart bars `index` (open t).
+    Chart bar [t, t+L) gets the latest HTF bar with T+H <= t+L — closed by the
+    time the chart bar closed; the forming chart bar uses t, since its close
+    lies in the future. A missing HTF bar carries the previous one forward,
+    unless more than 2 HTF buckets that HAVE chart bars went missing since:
+    then it is stale, NaN. A market closure has no chart bars, so it carries."""
+    t = index.to_numpy(dtype="int64")
+    out = np.full(len(t), np.nan)
+    if len(values) == 0 or len(t) == 0:
+        return pd.Series(out, index=index, dtype="float64")
+    ref = t + tf_ms
+    if forming_msc is not None:
+        ref[t == forming_msc] = forming_msc
+    opens = values.index.to_numpy(dtype="int64")
+    k = np.searchsorted(opens + htf_ms, ref, side="right") - 1
+    hit = k >= 0
+    out[hit] = values.to_numpy(dtype="float64")[k[hit]]
+    buckets = np.unique(t - t % htf_ms)
+    missing = (np.searchsorted(buckets, ref - htf_ms, side="right")
+               - np.searchsorted(buckets, opens[np.maximum(k, 0)], side="right"))
+    out[hit & (missing > 2)] = np.nan
+    return pd.Series(out, index=index, dtype="float64")
+
+
 def evaluate(p: Program, f: pd.DataFrame, inputs: dict[str, Any], tf_ms: int) -> Result:
     consts = resolve_consts(p, inputs)
     env: dict[str, pd.Series] = base_series(f)
