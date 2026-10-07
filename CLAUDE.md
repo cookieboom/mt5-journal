@@ -33,6 +33,8 @@ Single user, local-only, macOS (Apple Silicon M4).
   sequence block in `analytics/report.py` (max drawdown, longest win/loss
   streak)** — they report what happened, not an average of it, so gating them
   would hide history. `n` still ships with every metric (`n_sequenced` there).
+  **Third exception: the Strategy Tester (`domain/indicators/backtest.report`)**
+  — simulated trades, same reasoning as replay; `n` on every segment and bucket.
 
 ## Hard rules
 
@@ -56,13 +58,16 @@ Single user, local-only, macOS (Apple Silicon M4).
 7. **Tests before implementation** for anything in `domain/` and `analytics/`.
    Use fixtures in `tests/fixtures/`, not live MT5.
 8. **Do not add dependencies without asking.** Stack is `pyproject.toml`.
-9. **Descriptive by default; `lab/` is the one predictive part.** Everything
-   outside `src/journal/lab/` describes past data and must not generate signals
-   or recommendations. `lab/` does predict, under three non-optional conditions:
-   its output always renders with the model's out-of-sample expectancy and age;
-   it never places, modifies, or sizes an order (`trade_commands` still needs a
-   human click); it is never the input to another automated step. No "should I
-   take this trade" features anywhere, `lab/` included.
+9. **Descriptive by default; two predictive parts.** Everything outside
+   `src/journal/lab/` and indicator `signal()` output describes past data and
+   must not generate signals or recommendations. `lab/` and `signal()` may
+   predict, under non-optional conditions: the output always renders beside its
+   out-of-sample expectancy (R), `n`, and age (for `signal()`: the Strategy
+   Tester result for that script/symbol/timeframe — no result, no live
+   markers); it never places, modifies, or sizes an order (`trade_commands`
+   still needs a human click; the tester has no order button); it is never the
+   input to another automated step; it fires on closed bars only. No "should I
+   take this trade" features anywhere.
 10. **Never commit `data/`, `cache/`, or anything with a real account login.**
     Fixtures sanitised (login → 0, broker name stripped). `origin` is a
     **public** repo and this rule has been broken twice, so
